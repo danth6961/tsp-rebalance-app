@@ -22,7 +22,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="TSP Rebalance Engine",
-    page_icon="📊",
+    page_icon="🏛️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -188,7 +188,7 @@ st.markdown(
     """
     <div class="app-header">
         <div style="display:flex; align-items:center; gap:0.75rem; margin-top:0.85rem;">
-            <div style="font-size:2.2rem; line-height:1;">📊</div>
+            <div style="font-size:2.2rem; line-height:1;">🏛️</div>
             <div>
                 <div class="app-title">TSP Rebalance Engine</div>
                 <div class="app-subtitle">Decision support dashboard for TSP allocation management and IFT discipline.</div>
@@ -866,10 +866,6 @@ if run:
                 )
 
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
-
-        st.markdown("### Allocation Table")
-        alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
-        st.dataframe(alloc_df, use_container_width=True, hide_index=True)
 
         st.markdown("### Baseline Allocation")
         st.json(baseline)
