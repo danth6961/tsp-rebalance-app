@@ -170,18 +170,6 @@ def inject_custom_css():
     )
 
 
-def regime_badge(regime: str) -> str:
-    if regime == "RISK-ON OVERRIDE":
-        return "<span class='badge badge-green'>RISK-ON OVERRIDE</span>"
-    if regime == "OPTIMIZED NEUTRAL":
-        return "<span class='badge badge-blue'>OPTIMIZED NEUTRAL</span>"
-    if regime == "DEFENSIVE ALLOCATION":
-        return "<span class='badge badge-amber'>DEFENSIVE ALLOCATION</span>"
-    if regime == "EMERGENCY DISPATCH":
-        return "<span class='badge badge-red'>EMERGENCY DISPATCH</span>"
-    return f"<span class='badge badge-gray'>{regime}</span>"
-
-
 inject_custom_css()
 
 st.markdown(
@@ -659,7 +647,6 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
             unsafe_allow_html=True,
         )
 
-    st.markdown(regime_badge(regime), unsafe_allow_html=True)
     st.caption(reason)
 
 
