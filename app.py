@@ -219,7 +219,6 @@ def append_log_row(row: Dict[str, Any]) -> None:
                 writer.writeheader()
             writer.writerow(row)
     except Exception:
-        # Graceful handling if the environment is read-only (e.g. some web hosts)
         pass
 
 
@@ -888,7 +887,6 @@ if run:
             market_data = snapshot["market_data"]
             market_sources = snapshot["market_sources"]
         except Exception as e:
-            # Clean fallback if web network requests completely fail
             st.error(f"Could not connect to live feeds. Using system offline baselines. (Info: {e})")
             market_data = DEFAULTS.copy()
             market_data["vix_spot"] = DEFAULTS["vix_spot"]
@@ -986,8 +984,23 @@ if run:
 
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
+        st.markdown("---")
         st.markdown("### Baseline Allocation")
-        st.json(baseline)
+        
+        # Display baseline metrics side-by-side using Streamlit columns
+        base_cols = st.columns(5)
+        for idx, fund in enumerate(["G", "C", "I", "S", "F"]):
+            val = float(baseline.get(fund, 0.0))
+            with base_cols[idx]:
+                st.metric(label=f"Baseline {fund}", value=f"{val:.1f}%")
+        
+        # Display a bar chart for the baseline allocation
+        baseline_df = pd.DataFrame({
+            "Fund": ["G", "C", "I", "S", "F"],
+            "Baseline Allocation (%)": [float(baseline.get(f, 0.0)) for f in ["G", "C", "I", "S", "F"]]
+        }).set_index("Fund")
+        
+        st.bar_chart(baseline_df, y="Baseline Allocation (%)")
 
     with tab2:
         # Panic Valve Auditing & Verification Displays
