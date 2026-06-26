@@ -957,6 +957,7 @@ if run:
         st.subheader("🔍 Engine Explanation")
         
         st.write(f"**Composite Score:** {total_score}")
+        st.write(f"**Current Regime:** {regime}")
         st.write("This section will explain why the engine made its decision.")
 
     with tab3:
