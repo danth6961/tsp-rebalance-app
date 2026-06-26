@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, date
+import re
 import csv
 import json
 import math
@@ -311,6 +312,7 @@ def load_config() -> Dict[str, Any]:
         "shiller_cape": DEFAULTS["shiller_cape"],
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "market_breadth_pct": DEFAULTS["market_breadth_pct"],
+        "use_live_macro": True,
     }
     if not CONFIG_FILE.exists():
         return default_cfg
@@ -333,7 +335,7 @@ def save_config(cfg: Dict[str, Any]) -> None:
 
 
 # ==============================================================================
-# DATA HELPERS
+# DATA HELPERS & ADVANCED SCAPING LOGIC
 # ==============================================================================
 
 def fetch_fred_latest(series_id: str) -> Optional[float]:
@@ -352,6 +354,58 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
         if series.empty:
             return None
         return float(series.iloc[-1])
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return None
+
+
+def fetch_fred_core_pce_yoy() -> Optional[float]:
+    """Downloads monthly core PCE index values from FRED and calculates the 12-month change %."""
+    def _load():
+        base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        url = f"{base_url}?id=PCEPILFE"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            df = pd.read_csv(response)
+
+        if df.empty or len(df.columns) < 2:
+            return None
+
+        value_col = df.columns[1]
+        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if len(series) < 13:
+            return None
+        
+        latest_val = float(series.iloc[-1])
+        past_val = float(series.iloc[-13])
+        return round(((latest_val - past_val) / past_val) * 100.0, 2)
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return None
+
+
+def fetch_shiller_cape_live() -> Optional[float]:
+    """Parses multpl.com's HTML payload to read the latest cyclically adjusted P/E."""
+    def _load():
+        url = "https://www.multpl.com/shiller-pe"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode('utf-8')
+        
+        # S&P 500 Shiller P/E main number is typically inside <span class="num">
+        match = re.search(r'class=["\']num["\']>\s*([0-9\.]+)\s*<', html)
+        if match:
+            return float(match.group(1))
+        
+        match_alt = re.search(r'Current Shiller PE Ratio is\s+([0-9\.]+)', html, re.IGNORECASE)
+        if match_alt:
+            return float(match_alt.group(1))
+            
+        return None
 
     try:
         return retry_call(_load)
@@ -452,6 +506,16 @@ def cached_fred(series_id: str) -> Optional[float]:
 
 
 @st.cache_data(ttl=900)
+def cached_fred_core_pce_yoy() -> Optional[float]:
+    return fetch_fred_core_pce_yoy()
+
+
+@st.cache_data(ttl=900)
+def cached_shiller_cape_live() -> Optional[float]:
+    return fetch_shiller_cape_live()
+
+
+@st.cache_data(ttl=900)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
@@ -464,15 +528,18 @@ def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
 @st.cache_data(ttl=900)
 def get_market_snapshot() -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
             executor.submit(cached_fred, "STLFSI4"): "stlfsi_val",
             executor.submit(cached_fred, "DGS10"): "bond_val",
+            executor.submit(cached_fred_core_pce_yoy): "pce_yoy_val",
+            executor.submit(cached_shiller_cape_live): "shiller_cape_val",
             executor.submit(cached_yahoo_closes, "^VIX", "1mo", "1d"): "vix_closes",
             executor.submit(cached_yahoo_closes, "DX-Y.NYB", "1mo", "1d"): "dxy_closes",
             executor.submit(cached_yahoo_closes, "^GSPC", "1y", "1d"): "spx_closes",
+            executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
         }
         for future in as_completed(futures):
             key = futures[future]
@@ -484,7 +551,13 @@ def get_market_snapshot() -> Dict[str, Any]:
     vix_closes = results.get("vix_closes") or []
     dxy_closes = results.get("dxy_closes") or []
     spx_closes = results.get("spx_closes") or []
+    breadth_closes = results.get("breadth_closes") or []
+    
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
+    
+    pce_yoy = results.get("pce_yoy_val")
+    shiller_cape = results.get("shiller_cape_val")
+    live_breadth = breadth_closes[-1] if breadth_closes else None
 
     # 3-day Panic Valve Logic Evaluations
     vix_3d_panic = False
@@ -509,11 +582,11 @@ def get_market_snapshot() -> Dict[str, Any]:
         spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
 
     market_data = {
-        "core_pce_yoy": DEFAULTS["core_pce_yoy"],
+        "core_pce_yoy": pce_yoy if pce_yoy is not None else DEFAULTS["core_pce_yoy"],
         "ism_pmi": DEFAULTS["ism_pmi"],
         "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else DEFAULTS["sloos_net_pct"],
         "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else DEFAULTS["hy_oas"],
-        "shiller_cape": DEFAULTS["shiller_cape"],
+        "shiller_cape": shiller_cape if shiller_cape is not None else DEFAULTS["shiller_cape"],
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
         "pct_dist_200_sma": sma_dist_live,
@@ -521,7 +594,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else DEFAULTS["stlfsi_index"],
         "bond_yield_10y": results.get("bond_val") if results.get("bond_val") is not None else DEFAULTS["bond_yield_10y"],
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
-        "market_breadth_pct": DEFAULTS["market_breadth_pct"],
+        "market_breadth_pct": live_breadth if live_breadth is not None else DEFAULTS["market_breadth_pct"],
         "spx_spot": spx_spot,
         "vix_3d_panic": vix_3d_panic,
         "vix_last_3": vix_last_3,
@@ -531,11 +604,11 @@ def get_market_snapshot() -> Dict[str, Any]:
     }
 
     market_sources = {
-        "core_pce_yoy": "CONFIG/DEFAULT",
+        "core_pce_yoy": "LIVE (FRED PCEPILFE YoY)" if pce_yoy is not None else "CONFIG/DEFAULT",
         "ism_pmi": "CONFIG/DEFAULT",
         "sloos_net_pct": "LIVE" if results.get("sloos_val") is not None else "DEFAULT",
         "hy_oas": "LIVE" if results.get("hy_val") is not None else "DEFAULT",
-        "shiller_cape": "CONFIG/DEFAULT",
+        "shiller_cape": "LIVE (Multpl.com CAPE)" if shiller_cape is not None else "CONFIG/DEFAULT",
         "fwd_eps_growth_yoy": "CONFIG/DEFAULT",
         "vix_spot": "LIVE" if vix_closes else "DEFAULT",
         "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
@@ -543,7 +616,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "DEFAULT",
         "bond_yield_10y": "LIVE" if results.get("bond_val") is not None else "DEFAULT",
         "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
-        "market_breadth_pct": "CONFIG/DEFAULT",
+        "market_breadth_pct": "LIVE (Yahoo Finance ^S5TH)" if live_breadth is not None else "CONFIG/DEFAULT",
         "spx_spot": "LIVE" if spx_closes else "DEFAULT",
     }
 
@@ -848,7 +921,7 @@ def score_card_html(label: str, value: Any, note: str, color: str, icon: str) ->
 
 
 def source_pill_html(source: str) -> str:
-    cls = "pill-live" if source == "LIVE" else "pill-default"
+    cls = "pill-live" if source.startswith("LIVE") else "pill-default"
     return f"<span class='pill {cls}'>{source}</span>"
 
 
@@ -887,7 +960,9 @@ with st.sidebar:
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
 
     with st.expander("📊 Market Overrides (Advanced)", expanded=False):
-        st.warning("These are default baseline values. Modify only if you have specific up-to-date data updates.")
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation from FRED, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
+        st.markdown("---")
+        st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
         ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
         shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
@@ -912,6 +987,7 @@ if save_config_btn:
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
+    cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
     st.sidebar.success("Config saved.")
 
@@ -966,12 +1042,30 @@ if run:
             market_data["spx_spot"] = 5000.0
             market_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
-        # Override defaults with user defined config settings
-        market_data["core_pce_yoy"] = core_pce_yoy
+        # Core logic: Prioritize automated live data OR revert to manual inputs
+        if not use_live_macro:
+            market_data["core_pce_yoy"] = core_pce_yoy
+            market_data["shiller_cape"] = shiller_cape
+            market_data["market_breadth_pct"] = market_breadth_pct
+            
+            market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
+            market_sources["shiller_cape"] = "MANUAL OVERRIDE"
+            market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
+        else:
+            # Revert only if live calculation returned None
+            if market_data.get("core_pce_yoy") is None:
+                market_data["core_pce_yoy"] = core_pce_yoy
+                market_sources["core_pce_yoy"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+            if market_data.get("shiller_cape") is None:
+                market_data["shiller_cape"] = shiller_cape
+                market_sources["shiller_cape"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+            if market_data.get("market_breadth_pct") is None:
+                market_data["market_breadth_pct"] = market_breadth_pct
+                market_sources["market_breadth_pct"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+
+        # Set variables that do not have automated feeds
         market_data["ism_pmi"] = ism_pmi
-        market_data["shiller_cape"] = shiller_cape
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
-        market_data["market_breadth_pct"] = market_breadth_pct
 
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
@@ -1013,6 +1107,7 @@ if run:
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
+    cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
 
     append_log_row({
