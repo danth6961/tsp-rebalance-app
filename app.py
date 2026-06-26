@@ -14,14 +14,18 @@ from typing import Optional, List, Tuple, Dict, Any
 import pandas as pd
 import yfinance as yf
 import streamlit as st
-import plotly.graph_objects as go
 
 
 # ==============================================================================
 # PAGE CONFIG
 # ==============================================================================
 
-st.set_page_config(page_title="TSP Rebalance Engine", layout="wide", page_icon="📊")
+st.set_page_config(
+    page_title="TSP Rebalance Engine",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
 # ==============================================================================
@@ -51,7 +55,7 @@ DEFAULTS = {
 
 
 # ==============================================================================
-# THEME / STYLING
+# STYLE
 # ==============================================================================
 
 def inject_custom_css():
@@ -59,44 +63,39 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 1.25rem;
+            padding-top: 1.7rem;
             padding-bottom: 2rem;
-            padding-left: 1.8rem;
-            padding-right: 1.8rem;
-            max-width: 1500px;
+            padding-left: 2rem;
+            padding-right: 2rem;
+            max-width: 1450px;
         }
 
         .app-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
+            padding: 0.2rem 0 0.8rem 0;
             margin-bottom: 0.8rem;
+            border-bottom: 1px solid rgba(148,163,184,0.22);
         }
 
         .app-title {
-            font-size: 2.4rem;
+            font-size: 2.35rem;
             font-weight: 800;
-            line-height: 1.1;
+            line-height: 1.15;
             margin: 0;
+            padding-top: 0.15rem;
         }
 
         .app-subtitle {
-            color: #94a3b8;
+            color: #64748b;
             font-size: 0.98rem;
             margin-top: 0.25rem;
         }
 
-        .muted {
-            color: #94a3b8;
-        }
-
         .hero-card {
-            border: 1px solid rgba(148,163,184,0.18);
+            border: 1px solid rgba(148,163,184,0.22);
             border-radius: 18px;
-            padding: 1rem 1.15rem;
-            background: rgba(15, 23, 42, 0.72);
-            box-shadow: 0 8px 28px rgba(0,0,0,0.20);
+            padding: 1rem 1.1rem;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: 0 6px 18px rgba(15,23,42,0.06);
             margin-bottom: 1rem;
         }
 
@@ -107,83 +106,34 @@ def inject_custom_css():
             font-weight: 800;
             font-size: 0.82rem;
             letter-spacing: 0.03em;
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.65rem;
         }
 
-        .badge-green { background: rgba(34,197,94,0.18); color: #4ade80; border: 1px solid rgba(34,197,94,0.35); }
-        .badge-blue  { background: rgba(59,130,246,0.18); color: #60a5fa; border: 1px solid rgba(59,130,246,0.35); }
-        .badge-amber { background: rgba(245,158,11,0.18); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
-        .badge-red   { background: rgba(239,68,68,0.18); color: #f87171; border: 1px solid rgba(239,68,68,0.35); }
-        .badge-gray  { background: rgba(148,163,184,0.14); color: #cbd5e1; border: 1px solid rgba(148,163,184,0.25); }
+        .badge-green { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+        .badge-blue  { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+        .badge-amber { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+        .badge-red   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+        .badge-gray  { background: #e5e7eb; color: #374151; border: 1px solid #cbd5e1; }
 
         div[data-testid="metric-container"] {
-            background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(15,23,42,0.84));
-            border: 1px solid rgba(148,163,184,0.18);
+            background: #ffffff;
+            border: 1px solid rgba(148,163,184,0.22);
             padding: 0.85rem 1rem;
             border-radius: 16px;
-            box-shadow: 0 8px 18px rgba(0,0,0,0.14);
-        }
-
-        div[data-testid="metric-container"] label {
-            color: #94a3b8 !important;
-            font-weight: 600 !important;
-        }
-
-        div[data-testid="metric-container"] div[data-testid="metric-value"] {
-            color: #f8fafc !important;
-            font-weight: 800 !important;
-        }
-
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
-            border-right: 1px solid rgba(148,163,184,0.14);
-        }
-
-        [data-testid="stSidebar"] * {
-            color: #e2e8f0;
-        }
-
-        .finance-card {
-            border: 1px solid rgba(148,163,184,0.18);
-            border-radius: 18px;
-            padding: 1rem;
-            background: rgba(15,23,42,0.72);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.16);
-        }
-
-        .section-title {
-            font-size: 1.05rem;
-            font-weight: 800;
-            margin: 0.2rem 0 0.7rem 0;
-            color: #e2e8f0;
-        }
-
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 0.5rem;
-        }
-
-        .stTabs [data-baseweb="tab"] {
-            background: rgba(15,23,42,0.60);
-            border-radius: 12px 12px 0 0;
-            padding: 0.65rem 1rem;
-            border: 1px solid rgba(148,163,184,0.14);
-        }
-
-        .stTabs [aria-selected="true"] {
-            background: rgba(37,99,235,0.20) !important;
-            border-color: rgba(59,130,246,0.45) !important;
+            box-shadow: 0 4px 14px rgba(15,23,42,0.05);
         }
 
         .small-kpi {
             padding: 0.8rem 0.9rem;
             border-radius: 14px;
-            border: 1px solid rgba(148,163,184,0.16);
-            background: rgba(15,23,42,0.65);
+            border: 1px solid rgba(148,163,184,0.18);
+            background: #ffffff;
+            box-shadow: 0 3px 10px rgba(15,23,42,0.04);
         }
 
         .small-kpi-title {
             font-size: 0.78rem;
-            color: #94a3b8;
+            color: #64748b;
             text-transform: uppercase;
             letter-spacing: 0.08em;
             margin-bottom: 0.3rem;
@@ -191,16 +141,51 @@ def inject_custom_css():
         }
 
         .small-kpi-value {
-            font-size: 1.3rem;
+            font-size: 1.28rem;
             font-weight: 800;
-            color: #f8fafc;
+            color: #0f172a;
+            line-height: 1.1;
         }
 
         .small-kpi-note {
             font-size: 0.82rem;
-            color: #94a3b8;
+            color: #64748b;
             margin-top: 0.2rem;
         }
+
+        [data-testid="stSidebar"] {
+            background: #f8fafc;
+            border-right: 1px solid rgba(148,163,184,0.14);
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.4rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: #f8fafc;
+            border-radius: 12px 12px 0 0;
+            padding: 0.65rem 1rem;
+            border: 1px solid rgba(148,163,184,0.16);
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: #e0f2fe !important;
+            border-color: #7dd3fc !important;
+        }
+
+        .legend-box {
+            display: inline-block;
+            padding: 0.25rem 0.55rem;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            margin-right: 0.35rem;
+            border: 1px solid rgba(148,163,184,0.18);
+        }
+
+        .legend-current { background: #94a3b8; color: white; }
+        .legend-target  { background: #22c55e; color: white; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -224,9 +209,12 @@ inject_custom_css()
 st.markdown(
     """
     <div class="app-header">
-        <div>
-            <div class="app-title">📊 TSP Rebalance Engine</div>
-            <div class="app-subtitle">Professional allocation dashboard for daily TSP monitoring, regime detection, and IFT discipline.</div>
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+            <div style="font-size:2.2rem; line-height:1;">📊</div>
+            <div>
+                <div class="app-title">TSP Rebalance Engine</div>
+                <div class="app-subtitle">Decision support dashboard for TSP allocation management and IFT discipline.</div>
+            </div>
         </div>
     </div>
     """,
@@ -492,7 +480,7 @@ def get_market_snapshot() -> Dict[str, Any]:
 
 
 # ==============================================================================
-# ENGINE
+# ENGINE / IFT DECISION
 # ==============================================================================
 
 def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
@@ -639,7 +627,7 @@ def should_use_tsp_ift(
 
 
 # ==============================================================================
-# CHARTS / DISPLAY
+# DISPLAY HELPERS
 # ==============================================================================
 
 def render_metric_cards(total_score, regime, action, ift_used, reason):
@@ -693,7 +681,6 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
             unsafe_allow_html=True,
         )
 
-    st.markdown("<div style='margin-top: 0.4rem;'></div>", unsafe_allow_html=True)
     st.markdown(regime_badge(regime), unsafe_allow_html=True)
     st.caption(reason)
 
@@ -716,41 +703,47 @@ def make_alloc_chart(target_alloc: Dict[str, float], current_alloc: Dict[str, fl
     })
 
 
-def plot_allocation_comparison(df: pd.DataFrame):
-    fig = go.Figure()
-
-    fig.add_trace(go.Bar(
-        x=df["Fund"],
-        y=df["Current"],
-        name="Current",
-        marker_color="#64748b",
-        text=[f"{v:.1f}%" for v in df["Current"]],
-        textposition="outside",
-        cliponaxis=False,
-    ))
-
-    fig.add_trace(go.Bar(
-        x=df["Fund"],
-        y=df["Target"],
-        name="Target",
-        marker_color="#22c55e",
-        text=[f"{v:.1f}%" for v in df["Target"]],
-        textposition="outside",
-        cliponaxis=False,
-    ))
-
-    fig.update_layout(
-        barmode="group",
-        height=430,
-        margin=dict(l=20, r=20, t=30, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,0.3)",
-        font=dict(color="#e2e8f0"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis=dict(title="Allocation %", gridcolor="rgba(148,163,184,0.18)", rangemode="tozero"),
-        xaxis=dict(title="Fund"),
-    )
-    return fig
+def make_allocation_bars_html(df: pd.DataFrame) -> str:
+    rows = []
+    for _, r in df.iterrows():
+        current = float(r["Current"])
+        target = float(r["Target"])
+        diff = target - current
+        max_width = 100
+        rows.append(f"""
+        <tr>
+            <td style="padding:10px 8px; font-weight:700; width:50px;">{r["Fund"]}</td>
+            <td style="padding:10px 8px; width:120px;">{current:.1f}%</td>
+            <td style="padding:10px 8px;">
+                <div style="background:#e2e8f0; border-radius:999px; height:18px; position:relative; overflow:hidden;">
+                    <div style="width:{min(max_width, max(0, current))}%; background:#94a3b8; height:18px;"></div>
+                    <div style="width:{min(max_width, max(0, target))}%; background:rgba(34,197,94,0.45); height:18px; position:absolute; top:0; left:0;"></div>
+                </div>
+            </td>
+            <td style="padding:10px 8px; width:120px;">{target:.1f}%</td>
+            <td style="padding:10px 8px; width:90px; color:{'#16a34a' if diff > 0 else '#dc2626' if diff < 0 else '#64748b'}; font-weight:700;">
+                {diff:+.1f}%
+            </td>
+        </tr>
+        """)
+    return f"""
+    <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; background:#fff; border:1px solid rgba(148,163,184,0.18); border-radius:14px;">
+            <thead>
+                <tr style="text-align:left; background:#f8fafc; border-bottom:1px solid rgba(148,163,184,0.18);">
+                    <th style="padding:10px 8px;">Fund</th>
+                    <th style="padding:10px 8px;">Current</th>
+                    <th style="padding:10px 8px;">Comparison</th>
+                    <th style="padding:10px 8px;">Target</th>
+                    <th style="padding:10px 8px;">Drift</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows)}
+            </tbody>
+        </table>
+    </div>
+    """
 
 
 def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
@@ -900,8 +893,10 @@ if run:
     with tab1:
         st.markdown("### Allocation Comparison")
         alloc_df = make_alloc_chart(allocations, current_alloc)
-        st.plotly_chart(plot_allocation_comparison(alloc_df), use_container_width=True)
+        st.markdown(make_allocation_bars_html(alloc_df), unsafe_allow_html=True)
+        st.caption("Gray bar = current allocation. Green overlay = target allocation. Drift shown at right.")
 
+        st.markdown("### Allocation Table")
         alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
 
