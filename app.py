@@ -1,4 +1,4 @@
-from __future__ import annotationsfrom __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, date
 import csv
