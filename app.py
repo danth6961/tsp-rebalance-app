@@ -17,6 +17,13 @@ import streamlit as st
 
 
 # ==============================================================================
+# PAGE CONFIG
+# ==============================================================================
+
+st.set_page_config(page_title="TSP Rebalance Engine", layout="wide")
+
+
+# ==============================================================================
 # FILES / CONFIG
 # ==============================================================================
 
@@ -40,6 +47,102 @@ DEFAULTS = {
     "vix_spot": 19.0,
     "dxy_spot": 105.80,
 }
+
+
+# ==============================================================================
+# UI STYLING
+# ==============================================================================
+
+def inject_custom_css():
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+            padding-left: 2rem;
+            padding-right: 2rem;
+            max-width: 1400px;
+        }
+
+        h1 {
+            font-size: 2.3rem !important;
+            margin-bottom: 0.2rem !important;
+        }
+
+        .subtle-caption {
+            color: #6b7280;
+            font-size: 0.98rem;
+            margin-top: -0.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero-card {
+            border: 1px solid rgba(128,128,128,0.2);
+            border-radius: 18px;
+            padding: 1rem 1.25rem;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            margin-bottom: 1rem;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.38rem 0.8rem;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            margin-bottom: 0.75rem;
+            letter-spacing: 0.02em;
+        }
+
+        .badge-green { background: #dcfce7; color: #166534; }
+        .badge-blue  { background: #dbeafe; color: #1d4ed8; }
+        .badge-amber { background: #fef3c7; color: #92400e; }
+        .badge-red   { background: #fee2e2; color: #991b1b; }
+        .badge-gray  { background: #e5e7eb; color: #374151; }
+
+        div[data-testid="metric-container"] {
+            background-color: #ffffff;
+            border: 1px solid rgba(128,128,128,0.18);
+            padding: 0.75rem 1rem;
+            border-radius: 14px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+
+        [data-testid="stSidebar"] {
+            background: #f8fafc;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin: 1.2rem 0 0.5rem 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def regime_badge(regime: str) -> str:
+    if regime == "RISK-ON OVERRIDE":
+        return "<span class='badge badge-green'>RISK-ON OVERRIDE</span>"
+    if regime == "OPTIMIZED NEUTRAL":
+        return "<span class='badge badge-blue'>OPTIMIZED NEUTRAL</span>"
+    if regime == "DEFENSIVE ALLOCATION":
+        return "<span class='badge badge-amber'>DEFENSIVE ALLOCATION</span>"
+    if regime == "EMERGENCY DISPATCH":
+        return "<span class='badge badge-red'>EMERGENCY DISPATCH</span>"
+    return f"<span class='badge badge-gray'>{regime}</span>"
+
+
+inject_custom_css()
+st.markdown("<h1>TSP Rebalance Engine</h1>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='subtle-caption'>Decision support dashboard for TSP allocation management and IFT discipline.</div>",
+    unsafe_allow_html=True,
+)
 
 
 # ==============================================================================
@@ -458,12 +561,15 @@ def should_use_tsp_ift(
 # ==============================================================================
 
 def render_metric_cards(total_score, regime, action, ift_used, reason):
+    st.markdown("<div class='hero-card'>", unsafe_allow_html=True)
+    st.markdown(regime_badge(regime), unsafe_allow_html=True)
+    st.caption(reason)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Composite Score", total_score)
-    c2.metric("Regime", regime)
-    c3.metric("Action", action)
-    c4.metric("IFTs Used", f"{ift_used}/2")
-    st.caption(reason)
+    c2.metric("Action", action)
+    c3.metric("IFTs Used", f"{ift_used}/2")
+    c4.metric("Regime", regime)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def make_score_chart(state: Dict[str, Any]):
@@ -518,16 +624,17 @@ def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
 
 
 # ==============================================================================
-# STREAMLIT APP
+# APP STATE
 # ==============================================================================
-
-st.set_page_config(page_title="TSP Rebalance Engine", layout="wide")
-st.title("TSP Rebalance Engine")
-st.caption("Final polished dashboard with charts, exports, state controls, and TSP IFT logic")
 
 today = date.today()
 state = reset_monthly_if_needed(load_state(), today)
 cfg = load_config()
+
+
+# ==============================================================================
+# SIDEBAR
+# ==============================================================================
 
 with st.sidebar:
     st.header("Current Allocation")
@@ -571,6 +678,11 @@ if reset_state_btn:
     state = default_state()
     save_state(state)
     st.sidebar.warning("State reset.")
+
+
+# ==============================================================================
+# MAIN ACTION
+# ==============================================================================
 
 run = st.button("Fetch & Run Engine")
 
@@ -616,90 +728,91 @@ if run:
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
-    col_left, col_right = st.columns(2)
-    with col_left:
-        st.subheader("Factor Scores")
-        st.json(factor_scores)
-    with col_right:
-        st.subheader("Market Snapshot")
-        st.json(market_data)
+    tab1, tab2, tab3, tab4 = st.tabs(["Allocation", "Factors", "History", "Logs & State"])
 
-    st.subheader("Current vs Target")
-    alloc_df = pd.DataFrame({
-        "Fund": ["G", "C", "I", "S", "F"],
-        "Current": [current_alloc[f] for f in ["G", "C", "I", "S", "F"]],
-        "Target": [allocations.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
-    })
-    alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
-    st.dataframe(alloc_df, use_container_width=True)
+    with tab1:
+        st.markdown("### Allocation View")
+        alloc_df = pd.DataFrame({
+            "Fund": ["G", "C", "I", "S", "F"],
+            "Current": [current_alloc[f] for f in ["G", "C", "I", "S", "F"]],
+            "Target": [allocations.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
+        })
+        alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
+        st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+        st.bar_chart(alloc_df.set_index("Fund")[["Current", "Target"]])
+        st.markdown("### Baseline Allocation")
+        st.json(baseline)
 
-    st.subheader("Charts")
-    chart_col1, chart_col2 = st.columns(2)
-    with chart_col1:
+    with tab2:
+        left_col, right_col = st.columns(2)
+        with left_col:
+            st.markdown("### Factor Scores")
+            st.json(factor_scores)
+        with right_col:
+            st.markdown("### Market Snapshot")
+            st.json(market_data)
+
+        st.markdown("### Regime Summary")
+        regime_summary_df = make_regime_summary_df(regime)
+        st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
+
+    with tab3:
+        st.markdown("### Score History")
         score_df = make_score_chart(state)
         if score_df is not None:
             st.line_chart(score_df)
         else:
             st.info("No score history yet.")
-    with chart_col2:
-        alloc_chart_df = make_alloc_chart(allocations)
-        st.bar_chart(alloc_chart_df)
 
-    st.subheader("Regime Summary")
-    regime_summary_df = make_regime_summary_df(regime)
-    st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
+        st.markdown("### State Summary")
+        st.json({
+            "month": state["month"],
+            "ift_count_this_month": state["ift_count_this_month"],
+            "last_ift_date": state["last_ift_date"],
+            "recent_regimes": state["recent_regimes"],
+            "recent_scores": state["recent_scores"],
+        })
 
-    st.subheader("Baseline Allocation")
-    st.json(baseline)
+    with tab4:
+        st.markdown("### Log Viewer")
+        if LOG_FILE.exists():
+            log_df = pd.read_csv(LOG_FILE)
+            st.dataframe(log_df.tail(25), use_container_width=True, hide_index=True)
 
-    st.subheader("State Summary")
-    st.json({
-        "month": state["month"],
-        "ift_count_this_month": state["ift_count_this_month"],
-        "last_ift_date": state["last_ift_date"],
-        "recent_regimes": state["recent_regimes"],
-        "recent_scores": state["recent_scores"],
-    })
-
-    st.subheader("Log Viewer")
-    if LOG_FILE.exists():
-        log_df = pd.read_csv(LOG_FILE)
-        st.dataframe(log_df.tail(25), use_container_width=True)
-
-        export_col1, export_col2, export_col3 = st.columns(3)
-        with export_col1:
-            st.download_button(
-                "Download Log CSV",
-                data=df_to_csv_bytes(log_df),
-                file_name="tsp_daily_log.csv",
-                mime="text/csv",
-            )
-        with export_col2:
-            st.download_button(
-                "Download Log JSON",
-                data=df_to_json_bytes(log_df),
-                file_name="tsp_daily_log.json",
-                mime="application/json",
-            )
-        with export_col3:
-            st.download_button(
-                "Download Latest Snapshot JSON",
-                data=json.dumps({
-                    "market_data": market_data,
-                    "factor_scores": factor_scores,
-                    "regime": regime,
-                    "total_score": total_score,
-                    "action": action,
-                    "reason": reason,
-                    "current_alloc": current_alloc,
-                    "target_alloc": allocations,
-                    "state": state,
-                }, indent=2).encode("utf-8"),
-                file_name="tsp_snapshot.json",
-                mime="application/json",
-            )
-    else:
-        st.info("No log file yet.")
+            export_col1, export_col2, export_col3 = st.columns(3)
+            with export_col1:
+                st.download_button(
+                    "Download Log CSV",
+                    data=df_to_csv_bytes(log_df),
+                    file_name="tsp_daily_log.csv",
+                    mime="text/csv",
+                )
+            with export_col2:
+                st.download_button(
+                    "Download Log JSON",
+                    data=df_to_json_bytes(log_df),
+                    file_name="tsp_daily_log.json",
+                    mime="application/json",
+                )
+            with export_col3:
+                st.download_button(
+                    "Download Latest Snapshot JSON",
+                    data=json.dumps({
+                        "market_data": market_data,
+                        "factor_scores": factor_scores,
+                        "regime": regime,
+                        "total_score": total_score,
+                        "action": action,
+                        "reason": reason,
+                        "current_alloc": current_alloc,
+                        "target_alloc": allocations,
+                        "state": state,
+                    }, indent=2).encode("utf-8"),
+                    file_name="tsp_snapshot.json",
+                    mime="application/json",
+                )
+        else:
+            st.info("No log file yet.")
 
     append_log_row({
         "date": today.isoformat(),
