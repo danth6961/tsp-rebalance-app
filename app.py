@@ -644,7 +644,6 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
             executor.submit(cached_fred, "STLFSI4"): "stlfsi_val",
-            executor.submit(cached_fred, "DGS10"): "bond_val",
             executor.submit(get_te_live_data): "te_live",
             executor.submit(cached_shiller_cape_live): "shiller_cape_val",
             executor.submit(cached_yahoo_closes, "^VIX", "1mo", "1d"): "vix_closes",
@@ -652,6 +651,7 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "^GSPC", "1y", "1d"): "spx_closes",
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
             executor.submit(cached_barchart_s5th): "barchart_breadth",
+            executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
         }
         for future in as_completed(futures):
             key = futures[future]
@@ -664,6 +664,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     dxy_closes = results.get("dxy_closes") or []
     spx_closes = results.get("spx_closes") or []
     breadth_closes = results.get("breadth_closes") or []
+    bond_yield_closes = results.get("bond_yield_closes") or []
     
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
     
@@ -709,6 +710,19 @@ def get_market_snapshot() -> Dict[str, Any]:
             live_breadth = DEFAULTS["market_breadth_pct"]
             breadth_source = "CONFIG/DEFAULT"
 
+    # 10Y Yield: Prioritize Yahoo Finance ^TNX (Divided by 10), Fallback to FRED DGS10, Fallback to defaults
+    if bond_yield_closes:
+        live_bond_yield = round(bond_yield_closes[-1] / 10.0, 3)
+        bond_source = "LIVE (Yahoo Finance ^TNX)"
+    else:
+        fred_dgs10 = fetch_fred_latest("DGS10")
+        if fred_dgs10 is not None:
+            live_bond_yield = fred_dgs10
+            bond_source = "LIVE (FRED DGS10 Fallback)"
+        else:
+            live_bond_yield = DEFAULTS["bond_yield_10y"]
+            bond_source = "CONFIG/DEFAULT"
+
     # 3-day Panic Valve Logic Evaluations
     vix_3d_panic = False
     vix_last_3 = []
@@ -742,7 +756,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         "pct_dist_200_sma": sma_dist_live,
         "drawdown_pct": drawdown_live,
         "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else DEFAULTS["stlfsi_index"],
-        "bond_yield_10y": results.get("bond_val") if results.get("bond_val") is not None else DEFAULTS["bond_yield_10y"],
+        "bond_yield_10y": live_bond_yield,
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
         "market_breadth_pct": live_breadth,
         "spx_spot": spx_spot,
@@ -764,7 +778,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
         "drawdown_pct": "LIVE" if spx_closes else "DEFAULT",
         "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "DEFAULT",
-        "bond_yield_10y": "LIVE" if results.get("bond_val") is not None else "DEFAULT",
+        "bond_yield_10y": bond_source,
         "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
         "market_breadth_pct": breadth_source,
         "spx_spot": "LIVE" if spx_closes else "DEFAULT",
@@ -1214,20 +1228,24 @@ if run:
             market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
             market_sources["bond_yield_10y"] = "MANUAL OVERRIDE"
         else:
-            # Revert only if live calculation returned None
-            if te_pce is None and fetch_fred_core_pce_yoy() is None:
+            # Overwrite only if the live snapshot calculation resulted in a DEFAULT
+            if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
                 market_data["core_pce_yoy"] = core_pce_yoy
                 market_sources["core_pce_yoy"] = "LIVE FETCH FAILED (Manual Fallback)"
-            if te_pmi is None:
+                
+            if "DEFAULT" in str(market_sources.get("ism_pmi")).upper():
                 market_data["ism_pmi"] = ism_pmi
                 market_sources["ism_pmi"] = "LIVE FETCH FAILED (Manual Fallback)"
-            if market_data.get("shiller_cape") is None:
+                
+            if "DEFAULT" in str(market_sources.get("shiller_cape")).upper():
                 market_data["shiller_cape"] = shiller_cape
                 market_sources["shiller_cape"] = "LIVE FETCH FAILED (Manual Fallback)"
-            if market_data.get("market_breadth_pct") is None:
+                
+            if "DEFAULT" in str(market_sources.get("market_breadth_pct")).upper():
                 market_data["market_breadth_pct"] = market_breadth_pct
                 market_sources["market_breadth_pct"] = "LIVE FETCH FAILED (Manual Fallback)"
-            if market_data.get("bond_yield_10y") is None:
+                
+            if "DEFAULT" in str(market_sources.get("bond_yield_10y")).upper():
                 market_data["bond_yield_10y"] = bond_yield_10y
                 market_sources["bond_yield_10y"] = "LIVE FETCH FAILED (Manual Fallback)"
 
