@@ -203,6 +203,24 @@ def safe_float(x, default=None):
     return float(x) if is_finite_number(x) else default
 
 
+def clean_and_parse_float(val) -> Optional[float]:
+    if val is None:
+        return None
+    try:
+        if isinstance(val, (int, float)):
+            if math.isfinite(val):
+                return float(val)
+            return None
+        
+        val_str = str(val).strip().replace("%", "").replace(",", "")
+        match = re.search(r'^([-+]?[0-9]*\.?[0-9]+)', val_str)
+        if match:
+            return float(match.group(1))
+    except Exception:
+        pass
+    return None
+
+
 def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kwargs):
     last_err = None
     for attempt in range(retries):
@@ -335,7 +353,7 @@ def save_config(cfg: Dict[str, Any]) -> None:
 
 
 # ==============================================================================
-# DATA HELPERS & ADVANCED SCAPING LOGIC
+# DATA HELPERS & ADVANCED SCRAPING LOGIC
 # ==============================================================================
 
 def fetch_fred_latest(series_id: str) -> Optional[float]:
@@ -388,6 +406,47 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
         return None
 
 
+def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
+    """Requests and extracts core indicator table values directly from Trading Economics."""
+    url = "https://tradingeconomics.com/united-states/indicators"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    
+    results = {
+        "core_pce_yoy": None,
+        "ism_pmi": None
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode('utf-8')
+            
+        dfs = pd.read_html(html)
+        for df in dfs:
+            if df.empty or len(df.columns) < 2:
+                continue
+            
+            col_name = df.columns[0]
+            for _, row in df.iterrows():
+                indicator_text = str(row[col_name]).strip()
+                
+                if "Core PCE Price Index YoY" in indicator_text or "Core PCE Price Index Annual Change" in indicator_text:
+                    val = clean_and_parse_float(row.iloc[1])
+                    if val is not None:
+                        results["core_pce_yoy"] = val
+                        
+                if "ISM Manufacturing PMI" in indicator_text or "Manufacturing PMI" in indicator_text:
+                    val = clean_and_parse_float(row.iloc[1])
+                    if val is not None:
+                        results["ism_pmi"] = val
+    except Exception:
+        pass
+    
+    return results
+
+
 def fetch_shiller_cape_live() -> Optional[float]:
     """Parses multpl.com's HTML payload to read the latest cyclically adjusted P/E."""
     def _load():
@@ -396,7 +455,6 @@ def fetch_shiller_cape_live() -> Optional[float]:
         with urllib.request.urlopen(req, timeout=15) as response:
             html = response.read().decode('utf-8')
         
-        # S&P 500 Shiller P/E main number is typically inside <span class="num">
         match = re.search(r'class=["\']num["\']>\s*([0-9\.]+)\s*<', html)
         if match:
             return float(match.group(1))
@@ -511,6 +569,11 @@ def cached_fred_core_pce_yoy() -> Optional[float]:
 
 
 @st.cache_data(ttl=900)
+def get_te_live_data() -> Dict[str, Optional[float]]:
+    return fetch_indicators_from_te_indicators_page()
+
+
+@st.cache_data(ttl=900)
 def cached_shiller_cape_live() -> Optional[float]:
     return fetch_shiller_cape_live()
 
@@ -528,13 +591,13 @@ def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
 @st.cache_data(ttl=900)
 def get_market_snapshot() -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=9) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
             executor.submit(cached_fred, "STLFSI4"): "stlfsi_val",
             executor.submit(cached_fred, "DGS10"): "bond_val",
-            executor.submit(cached_fred_core_pce_yoy): "pce_yoy_val",
+            executor.submit(get_te_live_data): "te_live",
             executor.submit(cached_shiller_cape_live): "shiller_cape_val",
             executor.submit(cached_yahoo_closes, "^VIX", "1mo", "1d"): "vix_closes",
             executor.submit(cached_yahoo_closes, "DX-Y.NYB", "1mo", "1d"): "dxy_closes",
@@ -555,9 +618,33 @@ def get_market_snapshot() -> Dict[str, Any]:
     
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
     
-    pce_yoy = results.get("pce_yoy_val")
+    te_live = results.get("te_live") or {"core_pce_yoy": None, "ism_pmi": None}
+    te_pce = te_live.get("core_pce_yoy")
+    te_pmi = te_live.get("ism_pmi")
+    
     shiller_cape = results.get("shiller_cape_val")
     live_breadth = breadth_closes[-1] if breadth_closes else None
+
+    # Core PCE YoY: Prioritize Trading Economics, Fallback to FRED index YoY, Fallback to defaults
+    if te_pce is not None:
+        final_pce = te_pce
+        pce_source = "LIVE (Trading Economics)"
+    else:
+        fred_pce_yoy = fetch_fred_core_pce_yoy()
+        if fred_pce_yoy is not None:
+            final_pce = fred_pce_yoy
+            pce_source = "LIVE (FRED PCEPILFE YoY calculation)"
+        else:
+            final_pce = DEFAULTS["core_pce_yoy"]
+            pce_source = "CONFIG/DEFAULT"
+
+    # ISM PMI: Prioritize Trading Economics, Fallback to defaults
+    if te_pmi is not None:
+        final_pmi = te_pmi
+        pmi_source = "LIVE (Trading Economics)"
+    else:
+        final_pmi = DEFAULTS["ism_pmi"]
+        pmi_source = "CONFIG/DEFAULT"
 
     # 3-day Panic Valve Logic Evaluations
     vix_3d_panic = False
@@ -582,8 +669,8 @@ def get_market_snapshot() -> Dict[str, Any]:
         spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
 
     market_data = {
-        "core_pce_yoy": pce_yoy if pce_yoy is not None else DEFAULTS["core_pce_yoy"],
-        "ism_pmi": DEFAULTS["ism_pmi"],
+        "core_pce_yoy": final_pce,
+        "ism_pmi": final_pmi,
         "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else DEFAULTS["sloos_net_pct"],
         "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else DEFAULTS["hy_oas"],
         "shiller_cape": shiller_cape if shiller_cape is not None else DEFAULTS["shiller_cape"],
@@ -604,8 +691,8 @@ def get_market_snapshot() -> Dict[str, Any]:
     }
 
     market_sources = {
-        "core_pce_yoy": "LIVE (FRED PCEPILFE YoY)" if pce_yoy is not None else "CONFIG/DEFAULT",
-        "ism_pmi": "CONFIG/DEFAULT",
+        "core_pce_yoy": pce_source,
+        "ism_pmi": pmi_source,
         "sloos_net_pct": "LIVE" if results.get("sloos_val") is not None else "DEFAULT",
         "hy_oas": "LIVE" if results.get("hy_val") is not None else "DEFAULT",
         "shiller_cape": "LIVE (Multpl.com CAPE)" if shiller_cape is not None else "CONFIG/DEFAULT",
@@ -960,7 +1047,7 @@ with st.sidebar:
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
 
     with st.expander("📊 Market Overrides (Advanced)", expanded=False):
-        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation from FRED, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation from Trading Economics (with FRED YoY as fallback), reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
         st.markdown("---")
         st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
@@ -1045,10 +1132,12 @@ if run:
         # Core logic: Prioritize automated live data OR revert to manual inputs
         if not use_live_macro:
             market_data["core_pce_yoy"] = core_pce_yoy
+            market_data["ism_pmi"] = ism_pmi
             market_data["shiller_cape"] = shiller_cape
             market_data["market_breadth_pct"] = market_breadth_pct
             
             market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
+            market_sources["ism_pmi"] = "MANUAL OVERRIDE"
             market_sources["shiller_cape"] = "MANUAL OVERRIDE"
             market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
         else:
@@ -1056,6 +1145,9 @@ if run:
             if market_data.get("core_pce_yoy") is None:
                 market_data["core_pce_yoy"] = core_pce_yoy
                 market_sources["core_pce_yoy"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+            if market_data.get("ism_pmi") is None:
+                market_data["ism_pmi"] = ism_pmi
+                market_sources["ism_pmi"] = "MANUAL OVERRIDE (Live Fetch Failed)"
             if market_data.get("shiller_cape") is None:
                 market_data["shiller_cape"] = shiller_cape
                 market_sources["shiller_cape"] = "MANUAL OVERRIDE (Live Fetch Failed)"
@@ -1064,7 +1156,6 @@ if run:
                 market_sources["market_breadth_pct"] = "MANUAL OVERRIDE (Live Fetch Failed)"
 
         # Set variables that do not have automated feeds
-        market_data["ism_pmi"] = ism_pmi
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
 
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
