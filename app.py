@@ -958,7 +958,6 @@ if run:
         
         st.write(f"**Composite Score:** {total_score}")
         st.write(f"**Current Regime:** {regime}")
-
         if regime == "RISK-ON OVERRIDE":
     st.success(f"🟢 Current Regime: {regime}")
 
