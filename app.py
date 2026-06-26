@@ -73,40 +73,42 @@ def max_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, flo
     return max(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
 
 
+def append_log_row(row: Dict[str, Any]) -> None:
+    file_exists = LOG_FILE.exists()
+    with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 # ==============================================================================
 # STATE
 # ==============================================================================
 
+def default_state() -> Dict[str, Any]:
+    return {
+        "month": None,
+        "ift_count_this_month": 0,
+        "last_ift_date": None,
+        "recent_regimes": [],
+        "recent_scores": [],
+        "recent_allocations": [],
+    }
+
+
 def load_state() -> Dict[str, Any]:
     if not STATE_FILE.exists():
-        return {
-            "month": None,
-            "ift_count_this_month": 0,
-            "last_ift_date": None,
-            "recent_regimes": [],
-            "recent_scores": [],
-            "recent_allocations": [],
-        }
+        return default_state()
     try:
         with STATE_FILE.open("r", encoding="utf-8") as f:
             state = json.load(f)
     except Exception:
-        return {
-            "month": None,
-            "ift_count_this_month": 0,
-            "last_ift_date": None,
-            "recent_regimes": [],
-            "recent_scores": [],
-            "recent_allocations": [],
-        }
+        return default_state()
 
-    state.setdefault("month", None)
-    state.setdefault("ift_count_this_month", 0)
-    state.setdefault("last_ift_date", None)
-    state.setdefault("recent_regimes", [])
-    state.setdefault("recent_scores", [])
-    state.setdefault("recent_allocations", [])
-    return state
+    base = default_state()
+    base.update(state)
+    return base
 
 
 def save_state(state: Dict[str, Any]) -> None:
@@ -131,15 +133,6 @@ def update_signal_history(state: Dict[str, Any], regime: str, total_score: int, 
     state["recent_scores"] = state["recent_scores"][-10:]
     state["recent_allocations"] = state["recent_allocations"][-10:]
     return state
-
-
-def append_log_row(row: Dict[str, Any]) -> None:
-    file_exists = LOG_FILE.exists()
-    with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
 
 
 # ==============================================================================
@@ -433,29 +426,44 @@ def should_use_tsp_ift(
 # STREAMLIT APP
 # ==============================================================================
 
-st.set_page_config(page_title="TSP Rebalance Engine - Stage 3", layout="wide")
-st.title("TSP Rebalance Engine — Stage 3")
-st.caption("Live data + scoring + current allocation + IFT decision")
+st.set_page_config(page_title="TSP Rebalance Engine - Stage 4", layout="wide")
+st.title("TSP Rebalance Engine — Stage 4")
+st.caption("Live data + scoring + current allocation + state controls + IFT decision")
 
-state = load_state()
 today = date.today()
-state = reset_monthly_if_needed(state, today)
+state = reset_monthly_if_needed(load_state(), today)
 
-st.sidebar.header("Current Allocation")
-current_alloc = {
-    "G": st.sidebar.number_input("G %", value=40.0, step=1.0),
-    "C": st.sidebar.number_input("C %", value=30.0, step=1.0),
-    "I": st.sidebar.number_input("I %", value=20.0, step=1.0),
-    "S": st.sidebar.number_input("S %", value=5.0, step=1.0),
-    "F": st.sidebar.number_input("F %", value=5.0, step=1.0),
-}
+with st.sidebar:
+    st.header("Current Allocation")
+    current_alloc = {
+        "G": st.number_input("G %", value=40.0, step=1.0),
+        "C": st.number_input("C %", value=30.0, step=1.0),
+        "I": st.number_input("I %", value=20.0, step=1.0),
+        "S": st.number_input("S %", value=5.0, step=1.0),
+        "F": st.number_input("F %", value=5.0, step=1.0),
+    }
 
-st.sidebar.header("IFT Policy")
-allow_second_ift = st.sidebar.checkbox("Allow second IFT", value=False)
-normal_drift_threshold_pct = st.sidebar.number_input("Normal drift threshold %", value=7.5, step=0.5)
-score_change_threshold = st.sidebar.number_input("Score change threshold", value=3, step=1)
-confirmation_days = st.sidebar.number_input("Confirmation days", value=3, step=1)
-cooldown_days = st.sidebar.number_input("Cooldown days", value=5, step=1)
+    st.header("IFT Policy")
+    allow_second_ift = st.checkbox("Allow second IFT", value=False)
+    normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=7.5, step=0.5)
+    score_change_threshold = st.number_input("Score change threshold", value=3, step=1)
+    confirmation_days = st.number_input("Confirmation days", value=3, step=1)
+    cooldown_days = st.number_input("Cooldown days", value=5, step=1)
+
+    st.header("State Controls")
+    mark_ift = st.button("Mark IFT Used Today")
+    reset_state = st.button("Reset State File")
+
+if mark_ift:
+    state["ift_count_this_month"] += 1
+    state["last_ift_date"] = today.isoformat()
+    save_state(state)
+    st.sidebar.success("IFT marked for today.")
+
+if reset_state:
+    state = default_state()
+    save_state(state)
+    st.sidebar.warning("State reset.")
 
 if st.button("Fetch & Run Engine"):
     with st.spinner("Loading live data and running engine..."):
@@ -484,28 +492,31 @@ if st.button("Fetch & Run Engine"):
     )
 
     action = "SUBMIT IFT" if use_ift else "HOLD"
+
     if use_ift:
         state["ift_count_this_month"] += 1
         state["last_ift_date"] = today.isoformat()
 
     save_state(state)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Composite Score", total_score)
-    col2.metric("Regime", regime)
-    col3.metric("Action", action)
+    top1, top2, top3, top4 = st.columns(4)
+    top1.metric("Composite Score", total_score)
+    top2.metric("Regime", regime)
+    top3.metric("Action", action)
+    top4.metric("IFTs Used", f"{state['ift_count_this_month']}/2")
 
     st.write(f"**Reason:** {reason}")
-    st.write(f"**IFTs used this month:** {state['ift_count_this_month']}/2")
-    st.write(f"**Last IFT date:** {state['last_ift_date'] or 'None'}")
+    st.write(f"**Last IFT Date:** {state['last_ift_date'] or 'None'}")
 
-    st.subheader("Factor Scores")
-    st.json(factor_scores)
+    s1, s2 = st.columns(2)
+    with s1:
+        st.subheader("Factor Scores")
+        st.json(factor_scores)
+    with s2:
+        st.subheader("Market Snapshot")
+        st.json(market_data)
 
-    st.subheader("Market Snapshot")
-    st.json(market_data)
-
-    st.subheader("Allocation")
+    st.subheader("Allocation Comparison")
     alloc_df = pd.DataFrame({
         "Fund": ["G", "C", "I", "S", "F"],
         "Current": [current_alloc[f] for f in ["G", "C", "I", "S", "F"]],
@@ -519,6 +530,15 @@ if st.button("Fetch & Run Engine"):
 
     st.write(f"**Asymmetric Vol Trigger:** {vol_t}")
     st.write(f"**Strong DXY Trigger:** {dxy_t}")
+
+    st.subheader("State Summary")
+    st.json({
+        "month": state["month"],
+        "ift_count_this_month": state["ift_count_this_month"],
+        "last_ift_date": state["last_ift_date"],
+        "recent_regimes": state["recent_regimes"],
+        "recent_scores": state["recent_scores"],
+    })
 
     append_log_row({
         "date": today.isoformat(),
@@ -535,4 +555,4 @@ if st.button("Fetch & Run Engine"):
     })
 
 else:
-    st.info("Click **Fetch & Run Engine** to load live data and compute the decision.")
+    st.info("Use the sidebar to set allocations and policy, then click **Fetch & Run Engine**.")
