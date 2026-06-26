@@ -173,19 +173,6 @@ def inject_custom_css():
             background: #e0f2fe !important;
             border-color: #7dd3fc !important;
         }
-
-        .legend-box {
-            display: inline-block;
-            padding: 0.25rem 0.55rem;
-            border-radius: 8px;
-            font-size: 0.78rem;
-            font-weight: 700;
-            margin-right: 0.35rem;
-            border: 1px solid rgba(148,163,184,0.18);
-        }
-
-        .legend-current { background: #94a3b8; color: white; }
-        .legend-target  { background: #22c55e; color: white; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -345,7 +332,7 @@ def load_config() -> Dict[str, Any]:
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
-    with CONFIG_FILE.open("w", encoding="utf-8") as f:
+    with CONFIG_FILE.open("w", newline="", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, sort_keys=True, default=str)
 
 
@@ -892,7 +879,8 @@ if run:
     with tab1:
         st.markdown("### Allocation Comparison")
         alloc_df = make_alloc_chart(allocations, current_alloc)
-        st.markdown(make_allocation_bars_html(alloc_df), unsafe_allow_html=True)
+        html_block = make_allocation_bars_html(alloc_df)
+        st.markdown(html_block, unsafe_allow_html=True)
         st.caption("Gray bar = current allocation. Green overlay = target allocation. Drift shown at right.")
 
         st.markdown("### Allocation Table")
