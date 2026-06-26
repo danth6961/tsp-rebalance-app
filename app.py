@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
+import csv
+import json
 import math
 import time
 import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
 import pandas as pd
@@ -14,11 +17,14 @@ import streamlit as st
 
 
 # ==============================================================================
-# CONFIG
+# CONFIG / FILES
 # ==============================================================================
 
 MAX_RETRIES = 3
 RETRY_SLEEP_SEC = 1.5
+
+STATE_FILE = Path("tsp_state.json")
+LOG_FILE = Path("tsp_daily_log.csv")
 
 DEFAULTS = {
     "core_pce_yoy": 3.4,
@@ -60,6 +66,80 @@ def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kw
             if attempt < retries - 1:
                 time.sleep(sleep_sec)
     raise last_err
+
+
+def max_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, float]) -> float:
+    funds = set(current_alloc.keys()) | set(target_alloc.keys())
+    return max(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
+
+
+# ==============================================================================
+# STATE
+# ==============================================================================
+
+def load_state() -> Dict[str, Any]:
+    if not STATE_FILE.exists():
+        return {
+            "month": None,
+            "ift_count_this_month": 0,
+            "last_ift_date": None,
+            "recent_regimes": [],
+            "recent_scores": [],
+            "recent_allocations": [],
+        }
+    try:
+        with STATE_FILE.open("r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        return {
+            "month": None,
+            "ift_count_this_month": 0,
+            "last_ift_date": None,
+            "recent_regimes": [],
+            "recent_scores": [],
+            "recent_allocations": [],
+        }
+
+    state.setdefault("month", None)
+    state.setdefault("ift_count_this_month", 0)
+    state.setdefault("last_ift_date", None)
+    state.setdefault("recent_regimes", [])
+    state.setdefault("recent_scores", [])
+    state.setdefault("recent_allocations", [])
+    return state
+
+
+def save_state(state: Dict[str, Any]) -> None:
+    with STATE_FILE.open("w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, sort_keys=True, default=str)
+
+
+def reset_monthly_if_needed(state: Dict[str, Any], today: date) -> Dict[str, Any]:
+    current_month = today.strftime("%Y-%m")
+    if state.get("month") != current_month:
+        state["month"] = current_month
+        state["ift_count_this_month"] = 0
+        state["last_ift_date"] = None
+    return state
+
+
+def update_signal_history(state: Dict[str, Any], regime: str, total_score: int, alloc: Dict[str, float]) -> Dict[str, Any]:
+    state["recent_regimes"].append(regime)
+    state["recent_scores"].append(int(total_score))
+    state["recent_allocations"].append(alloc)
+    state["recent_regimes"] = state["recent_regimes"][-10:]
+    state["recent_scores"] = state["recent_scores"][-10:]
+    state["recent_allocations"] = state["recent_allocations"][-10:]
+    return state
+
+
+def append_log_row(row: Dict[str, Any]) -> None:
+    file_exists = LOG_FILE.exists()
+    with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 # ==============================================================================
@@ -135,7 +215,7 @@ def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, flo
 
 
 # ==============================================================================
-# CACHED FUNCTIONS
+# CACHED SNAPSHOT
 # ==============================================================================
 
 @st.cache_data(ttl=900)
@@ -215,7 +295,6 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     bond_yield = safe_float(data.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
     dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
 
-    # Scoring
     if pce < 1.8: scores["inflation"] = 3
     elif pce < 2.0: scores["inflation"] = 1
     elif pce <= 2.3: scores["inflation"] = 0
@@ -314,25 +393,111 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
 
+def should_use_tsp_ift(
+    today: date,
+    current_alloc: Dict[str, float],
+    target_alloc: Dict[str, float],
+    recent_regimes: List[str],
+    recent_scores: List[int],
+    emergency_triggered: bool,
+    ift_count_this_month: int,
+    last_ift_date: Optional[date],
+    allow_second_ift: bool,
+    normal_drift_threshold_pct: float,
+    score_change_threshold: int,
+    confirmation_days: int,
+    cooldown_days: int,
+) -> Tuple[bool, str]:
+    if ift_count_this_month >= 2:
+        return False, "No IFTs remaining this month"
+    if last_ift_date is not None and (today - last_ift_date).days < cooldown_days:
+        return False, f"Cooldown active ({cooldown_days} days)"
+    if emergency_triggered:
+        return True, "Emergency trigger activated"
+    if ift_count_this_month >= 1 and not allow_second_ift:
+        return False, "Preserving final IFT reserve"
+    if len(recent_regimes) < confirmation_days or len(recent_scores) < confirmation_days:
+        return False, "Insufficient confirmation history"
+    if len(set(recent_regimes[-confirmation_days:])) != 1:
+        return False, "Regime not yet confirmed"
+    score_span = max(recent_scores[-confirmation_days:]) - min(recent_scores[-confirmation_days:])
+    if score_span < score_change_threshold:
+        return False, "Score change not strong enough"
+    drift = max_alloc_drift(current_alloc, target_alloc)
+    if drift < normal_drift_threshold_pct:
+        return False, f"Allocation drift too small ({drift:.1f}%)"
+    return True, f"Confirmed regime shift with {drift:.1f}% drift"
+
+
 # ==============================================================================
 # STREAMLIT APP
 # ==============================================================================
 
-st.set_page_config(page_title="TSP Rebalance Engine - Stage 2", layout="wide")
-st.title("TSP Rebalance Engine — Stage 2")
-st.caption("Live data + scoring + regime + target allocation")
+st.set_page_config(page_title="TSP Rebalance Engine - Stage 3", layout="wide")
+st.title("TSP Rebalance Engine — Stage 3")
+st.caption("Live data + scoring + current allocation + IFT decision")
+
+state = load_state()
+today = date.today()
+state = reset_monthly_if_needed(state, today)
+
+st.sidebar.header("Current Allocation")
+current_alloc = {
+    "G": st.sidebar.number_input("G %", value=40.0, step=1.0),
+    "C": st.sidebar.number_input("C %", value=30.0, step=1.0),
+    "I": st.sidebar.number_input("I %", value=20.0, step=1.0),
+    "S": st.sidebar.number_input("S %", value=5.0, step=1.0),
+    "F": st.sidebar.number_input("F %", value=5.0, step=1.0),
+}
+
+st.sidebar.header("IFT Policy")
+allow_second_ift = st.sidebar.checkbox("Allow second IFT", value=False)
+normal_drift_threshold_pct = st.sidebar.number_input("Normal drift threshold %", value=7.5, step=0.5)
+score_change_threshold = st.sidebar.number_input("Score change threshold", value=3, step=1)
+confirmation_days = st.sidebar.number_input("Confirmation days", value=3, step=1)
+cooldown_days = st.sidebar.number_input("Cooldown days", value=5, step=1)
 
 if st.button("Fetch & Run Engine"):
     with st.spinner("Loading live data and running engine..."):
         market_data = get_market_snapshot()
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
-    st.success("Engine run complete")
+    emergency_triggered = (total_score == -50)
+    state = update_signal_history(state, regime, total_score, allocations)
+
+    last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
+
+    use_ift, reason = should_use_tsp_ift(
+        today=today,
+        current_alloc=current_alloc,
+        target_alloc=allocations,
+        recent_regimes=state["recent_regimes"],
+        recent_scores=state["recent_scores"],
+        emergency_triggered=emergency_triggered,
+        ift_count_this_month=state["ift_count_this_month"],
+        last_ift_date=last_ift_date,
+        allow_second_ift=allow_second_ift,
+        normal_drift_threshold_pct=float(normal_drift_threshold_pct),
+        score_change_threshold=int(score_change_threshold),
+        confirmation_days=int(confirmation_days),
+        cooldown_days=int(cooldown_days),
+    )
+
+    action = "SUBMIT IFT" if use_ift else "HOLD"
+    if use_ift:
+        state["ift_count_this_month"] += 1
+        state["last_ift_date"] = today.isoformat()
+
+    save_state(state)
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Composite Score", total_score)
     col2.metric("Regime", regime)
-    col3.metric("Emergency Valve", "ACTIVE" if total_score <= -20 else "CLEAR")
+    col3.metric("Action", action)
+
+    st.write(f"**Reason:** {reason}")
+    st.write(f"**IFTs used this month:** {state['ift_count_this_month']}/2")
+    st.write(f"**Last IFT date:** {state['last_ift_date'] or 'None'}")
 
     st.subheader("Factor Scores")
     st.json(factor_scores)
@@ -340,18 +505,34 @@ if st.button("Fetch & Run Engine"):
     st.subheader("Market Snapshot")
     st.json(market_data)
 
-    c1, c2 = st.columns(2)
+    st.subheader("Allocation")
+    alloc_df = pd.DataFrame({
+        "Fund": ["G", "C", "I", "S", "F"],
+        "Current": [current_alloc[f] for f in ["G", "C", "I", "S", "F"]],
+        "Target": [allocations.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
+    })
+    alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
+    st.dataframe(alloc_df, use_container_width=True)
 
-    with c1:
-        st.subheader("Baseline Allocation")
-        st.json(baseline)
-
-    with c2:
-        st.subheader("Final Target Allocation")
-        st.json(allocations)
+    st.subheader("Baseline Allocation")
+    st.json(baseline)
 
     st.write(f"**Asymmetric Vol Trigger:** {vol_t}")
     st.write(f"**Strong DXY Trigger:** {dxy_t}")
 
+    append_log_row({
+        "date": today.isoformat(),
+        "action": action,
+        "reason": reason,
+        "regime": regime,
+        "total_score": total_score,
+        "ift_count_this_month": state["ift_count_this_month"],
+        "current_alloc": json.dumps(current_alloc),
+        "target_alloc": json.dumps(allocations),
+        "vix": market_data["vix_spot"],
+        "spx_200sma_dist": market_data["pct_dist_200_sma"],
+        "drawdown_pct": market_data["drawdown_pct"],
+    })
+
 else:
-    st.info("Click **Fetch & Run Engine** to load live data and compute the allocation.")
+    st.info("Click **Fetch & Run Engine** to load live data and compute the decision.")
