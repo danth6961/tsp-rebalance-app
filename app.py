@@ -29,7 +29,7 @@ st.set_page_config(
 
 
 # ==============================================================================
-# FILES / CONFIG
+# FILES / CONFIG & ROBUST FALLBACKS
 # ==============================================================================
 
 MAX_RETRIES = 3
@@ -55,7 +55,7 @@ DEFAULTS = {
 
 
 # ==============================================================================
-# STYLE
+# STYLE (Dark-Mode Compliant & Modern Cards)
 # ==============================================================================
 
 def inject_custom_css():
@@ -63,7 +63,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 3.4rem;
+            padding-top: 2.5rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -72,75 +72,66 @@ def inject_custom_css():
 
         .app-header {
             padding: 0.2rem 0 0.8rem 0;
-            margin-bottom: 0.8rem;
-            border-bottom: 1px solid rgba(148,163,184,0.22);
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(148,163,184,0.2);
         }
 
         .app-title {
-            font-size: 2.35rem;
+            font-size: 2.2rem;
             font-weight: 800;
             line-height: 1.15;
             margin: 0;
-            padding-top: 0.15rem;
         }
 
         .app-subtitle {
             color: #64748b;
-            font-size: 0.98rem;
+            font-size: 0.95rem;
             margin-top: 0.25rem;
         }
 
         .pill {
             display: inline-block;
-            padding: 0.22rem 0.55rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 999px;
-            font-size: 0.72rem;
-            font-weight: 800;
-            letter-spacing: 0.06em;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
             text-transform: uppercase;
             border: 1px solid rgba(148,163,184,0.18);
         }
 
-        .pill-live { background: #dcfce7; color: #166534; border-color: #86efac; }
-        .pill-default { background: #e5e7eb; color: #374151; border-color: #cbd5e1; }
-
-        div[data-testid="metric-container"] {
-            background: #ffffff;
-            border: 1px solid rgba(148,163,184,0.22);
-            padding: 0.85rem 1rem;
-            border-radius: 16px;
-            box-shadow: 0 4px 14px rgba(15,23,42,0.05);
-        }
+        .pill-live { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+        .pill-default { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
 
         .small-kpi {
-            padding: 0.8rem 0.9rem;
-            border-radius: 14px;
+            padding: 0.9rem;
+            border-radius: 12px;
             border: 1px solid rgba(148,163,184,0.18);
-            background: #ffffff;
-            box-shadow: 0 3px 10px rgba(15,23,42,0.04);
+            background-color: rgba(248, 250, 252, 0.5);
+            box-shadow: 0 2px 8px rgba(15,23,42,0.02);
+            margin-bottom: 0.6rem;
         }
 
         .small-kpi-title {
-            font-size: 0.78rem;
+            font-size: 0.75rem;
             color: #64748b;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 0.3rem;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.25rem;
             font-weight: 700;
         }
 
         .small-kpi-value {
-            font-size: 1.28rem;
+            font-size: 1.2rem;
             font-weight: 800;
-            color: #0f172a;
             line-height: 1.15;
             word-break: break-word;
         }
 
         .small-kpi-note {
-            font-size: 0.82rem;
+            font-size: 0.8rem;
             color: #64748b;
-            margin-top: 0.2rem;
+            margin-top: 0.15rem;
         }
 
         [data-testid="stSidebar"] {
@@ -154,8 +145,8 @@ def inject_custom_css():
 
         .stTabs [data-baseweb="tab"] {
             background: #f8fafc;
-            border-radius: 12px 12px 0 0;
-            padding: 0.65rem 1rem;
+            border-radius: 8px 8px 0 0;
+            padding: 0.5rem 0.9rem;
             border: 1px solid rgba(148,163,184,0.16);
         }
 
@@ -174,8 +165,8 @@ inject_custom_css()
 st.markdown(
     """
     <div class="app-header">
-        <div style="display:flex; align-items:center; gap:0.75rem; margin-top:0.85rem;">
-            <div style="font-size:2.2rem; line-height:1;">🏛️</div>
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+            <div style="font-size:2rem; line-height:1;">🏛️</div>
             <div>
                 <div class="app-title">TSP Rebalance Engine</div>
                 <div class="app-subtitle">Decision support dashboard for TSP allocation management and IFT discipline.</div>
@@ -220,12 +211,16 @@ def max_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, flo
 
 
 def append_log_row(row: Dict[str, Any]) -> None:
-    file_exists = LOG_FILE.exists()
-    with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
+    try:
+        file_exists = LOG_FILE.exists()
+        with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+    except Exception:
+        # Graceful handling if the environment is read-only (e.g. some web hosts)
+        pass
 
 
 def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -252,21 +247,28 @@ def default_state() -> Dict[str, Any]:
 
 
 def load_state() -> Dict[str, Any]:
+    if "session_state_fallback" not in st.session_state:
+        st.session_state["session_state_fallback"] = default_state()
+        
     if not STATE_FILE.exists():
-        return default_state()
+        return st.session_state["session_state_fallback"]
     try:
         with STATE_FILE.open("r", encoding="utf-8") as f:
             state = json.load(f)
     except Exception:
-        return default_state()
+        return st.session_state["session_state_fallback"]
     base = default_state()
     base.update(state)
     return base
 
 
 def save_state(state: Dict[str, Any]) -> None:
-    with STATE_FILE.open("w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, sort_keys=True, default=str)
+    st.session_state["session_state_fallback"] = state
+    try:
+        with STATE_FILE.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True, default=str)
+    except Exception:
+        pass
 
 
 def reset_monthly_if_needed(state: Dict[str, Any], today: date) -> Dict[str, Any]:
@@ -315,8 +317,11 @@ def load_config() -> Dict[str, Any]:
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
-    with CONFIG_FILE.open("w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, sort_keys=True, default=str)
+    try:
+        with CONFIG_FILE.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, sort_keys=True, default=str)
+    except Exception:
+        pass
 
 
 # ==============================================================================
@@ -806,39 +811,42 @@ cfg = load_config()
 
 
 # ==============================================================================
-# SIDEBAR
+# SIDEBAR (Decluttered with drop-down expanders & Plain-English tooltips)
 # ==============================================================================
 
 with st.sidebar:
-    st.markdown("## ⚙️ Controls")
+    st.markdown("## ⚙️ Settings Dashboard")
 
-    st.header("Current Allocation")
-    current_alloc = {
-        "G": st.number_input("G %", value=float(cfg.get("current_alloc", {}).get("G", 40.0)), step=1.0),
-        "C": st.number_input("C %", value=float(cfg.get("current_alloc", {}).get("C", 30.0)), step=1.0),
-        "I": st.number_input("I %", value=float(cfg.get("current_alloc", {}).get("I", 20.0)), step=1.0),
-        "S": st.number_input("S %", value=float(cfg.get("current_alloc", {}).get("S", 5.0)), step=1.0),
-        "F": st.number_input("F %", value=float(cfg.get("current_alloc", {}).get("F", 5.0)), step=1.0),
-    }
+    with st.expander("💼 Your Current Allocation", expanded=True):
+        st.info("Input your current TSP holdings percentage. They must sum to 100%.")
+        current_alloc = {
+            "G": st.number_input("G Fund %", value=float(cfg.get("current_alloc", {}).get("G", 40.0)), step=1.0, help="Government Securities Fund: Extremely low-risk; safe interest-earning fund."),
+            "C": st.number_input("C Fund %", value=float(cfg.get("current_alloc", {}).get("C", 30.0)), step=1.0, help="Common Stock Index Fund: Mimics the S&P 500 Index (large US companies)."),
+            "I": st.number_input("I Fund %", value=float(cfg.get("current_alloc", {}).get("I", 20.0)), step=1.0, help="International Stock Index Fund: Tracks international company stocks."),
+            "S": st.number_input("S Fund %", value=float(cfg.get("current_alloc", {}).get("S", 5.0)), step=1.0, help="Small Cap Stock Index Fund: Tracks smaller-sized US company stocks."),
+            "F": st.number_input("F Fund %", value=float(cfg.get("current_alloc", {}).get("F", 5.0)), step=1.0, help="Fixed Income Index Fund: Tracks US bond market index."),
+        }
 
-    st.header("IFT Policy")
-    allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)))
-    normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5)
-    score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1)
-    confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1)
-    cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1)
+    with st.expander("🛡️ Transfer Rules & Safeties", expanded=False):
+        st.info("Safety limits designed to preserve your monthly transfer quotas.")
+        allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)), help="Normally you are limited to 2 transfers a month. Enabling this allows the system to make a second transfer in normal regimes if conditions are favorable.")
+        normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5, help="How far out of alignment your real portfolio is from target before recommending an adjustment.")
+        score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1, help="Required point difference to qualify as a strong trend adjustment.")
+        confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Number of consecutive days a signal must remain in a new regime before triggering action.")
+        cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
 
-    st.header("Macro & Fundamentals (Defaults)")
-    core_pce_yoy = st.number_input("Core PCE YoY %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1)
-    ism_pmi = st.number_input("ISM PMI", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5)
-    shiller_cape = st.number_input("Shiller CAPE", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5)
-    fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth YoY %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5)
-    market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5)
+    with st.expander("📊 Market Overrides (Advanced)", expanded=False):
+        st.warning("These are default baseline values. Modify only if you have specific up-to-date data updates.")
+        core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
+        ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
+        shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
+        fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
+        market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
 
-    st.header("State Controls")
-    mark_ift = st.button("✅ Mark IFT Used Today")
-    reset_state_btn = st.button("♻️ Reset State File")
-    save_config_btn = st.button("💾 Save Config")
+    st.markdown("---")
+    mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
+    reset_state_btn = st.button("♻️ Reset State File", use_container_width=True, help="Resets your transfer counters back to zero.")
+    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and safety preferences permanently.")
 
 if save_config_btn:
     cfg["current_alloc"] = current_alloc
@@ -868,16 +876,30 @@ if reset_state_btn:
 
 
 # ==============================================================================
-# MAIN
+# MAIN ENGINE EXECUTION
 # ==============================================================================
 
-run = st.button("🚀 Fetch & Run Engine")
+run = st.button("🚀 Fetch & Run Engine", use_container_width=True)
 
 if run:
     with st.spinner("Loading live data and running engine..."):
-        snapshot = get_market_snapshot()
-        market_data = snapshot["market_data"]
-        market_sources = snapshot["market_sources"]
+        try:
+            snapshot = get_market_snapshot()
+            market_data = snapshot["market_data"]
+            market_sources = snapshot["market_sources"]
+        except Exception as e:
+            # Clean fallback if web network requests completely fail
+            st.error(f"Could not connect to live feeds. Using system offline baselines. (Info: {e})")
+            market_data = DEFAULTS.copy()
+            market_data["vix_spot"] = DEFAULTS["vix_spot"]
+            market_data["pct_dist_200_sma"] = 1.2
+            market_data["drawdown_pct"] = 2.5
+            market_data["vix_3d_panic"] = False
+            market_data["vix_last_3"] = [19.0, 19.1, 19.0]
+            market_data["spx_3d_panic"] = False
+            market_data["spx_dist_last_3"] = [1.1, 1.2, 1.2]
+            market_data["spx_spot"] = 5000.0
+            market_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
         # Override defaults with user defined config settings
         market_data["core_pce_yoy"] = core_pce_yoy
