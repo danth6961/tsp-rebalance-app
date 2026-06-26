@@ -951,28 +951,28 @@ if run:
                 )
 
         st.markdown("### Regime Summary")
-regime_summary_df = make_regime_summary_df(regime)
-st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
-st.markdown("---")
-
-st.subheader("🔍 Engine Explanation")
-st.write(f"**Composite Score:** {total_score}")
-
-# Colored visual indicators for the current engine regime
-if regime == "RISK-ON OVERRIDE":
-    st.success(f"🟢 Current Regime: {regime}")
-
-elif regime == "OPTIMIZED NEUTRAL":
-    st.info(f"🟡 Current Regime: {regime}")
-
-elif regime == "DEFENSIVE ALLOCATION":
-    st.warning(f"🟠 Current Regime: {regime}")
-
-elif regime == "EMERGENCY DISPATCH":
-    st.error(f"🔴 Current Regime: {regime}")
-
-else:
-    st.write(f"Current Regime: {regime}")
+        regime_summary_df = make_regime_summary_df(regime)
+        st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
+        st.markdown("---")
+        
+        st.subheader("🔍 Engine Explanation")
+        st.write(f"**Composite Score:** {total_score}")
+        
+        # Colored visual indicators for the current engine regime
+        if regime == "RISK-ON OVERRIDE":
+            st.success(f"🟢 Current Regime: {regime}")
+        
+        elif regime == "OPTIMIZED NEUTRAL":
+            st.info(f"🟡 Current Regime: {regime}")
+        
+        elif regime == "DEFENSIVE ALLOCATION":
+            st.warning(f"🟠 Current Regime: {regime}")
+        
+        elif regime == "EMERGENCY DISPATCH":
+            st.error(f"🔴 Current Regime: {regime}")
+        
+        else:
+            st.write(f"Current Regime: {regime}")
         
     with tab3:
         st.markdown("### Score History")
