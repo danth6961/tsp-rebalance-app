@@ -152,6 +152,42 @@ def calculate_sp500_metrics() -> Tuple[float, float, float]:
 
 
 # ==============================================================================
+# CACHED MARKET SNAPSHOT
+# ==============================================================================
+
+@st.cache_data(ttl=900)
+def get_market_snapshot():
+    sloos_val = fetch_fred_latest("DRTSCIS")
+    hy_val = fetch_fred_latest("BAMLH0A0HYM2")
+    stlfsi_val = fetch_fred_latest("STLFSI4")
+    bond_val = fetch_fred_latest("DGS10")
+
+    vix_closes = fetch_yfinance_closes("^VIX", period="1mo", interval="1d")
+    dxy_closes = fetch_yfinance_closes("DX-Y.NYB", period="1mo", interval="1d")
+
+    sma_dist_live, drawdown_live, spx_spot = calculate_sp500_metrics()
+
+    market_data = {
+        "core_pce_yoy": DEFAULTS["core_pce_yoy"],
+        "ism_pmi": DEFAULTS["ism_pmi"],
+        "sloos_net_pct": sloos_val if sloos_val is not None else DEFAULTS["sloos_net_pct"],
+        "hy_oas": hy_val if hy_val is not None else DEFAULTS["hy_oas"],
+        "shiller_cape": DEFAULTS["shiller_cape"],
+        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
+        "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
+        "pct_dist_200_sma": sma_dist_live,
+        "drawdown_pct": drawdown_live,
+        "stlfsi_index": stlfsi_val if stlfsi_val is not None else DEFAULTS["stlfsi_index"],
+        "bond_yield_10y": bond_val if bond_val is not None else DEFAULTS["bond_yield_10y"],
+        "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
+        "market_breadth_pct": DEFAULTS["market_breadth_pct"],
+        "spx_spot": spx_spot,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    return market_data
+
+
+# ==============================================================================
 # STREAMLIT APP
 # ==============================================================================
 
@@ -159,49 +195,31 @@ st.set_page_config(page_title="TSP Rebalance Engine - Stage 1", layout="wide")
 st.title("TSP Rebalance Engine — Stage 1")
 st.caption("Live data fetch and market snapshot")
 
-if st.button("Fetch Live Data"):
+col_a, col_b = st.columns([1, 1])
+
+with col_a:
+    fetch_now = st.button("Fetch Live Data")
+
+with col_b:
+    st.write("Cached for 15 minutes to reduce slow reloads.")
+
+if fetch_now:
     with st.spinner("Loading live data..."):
-        sloos_val = fetch_fred_latest("DRTSCIS")
-        hy_val = fetch_fred_latest("BAMLH0A0HYM2")
-        stlfsi_val = fetch_fred_latest("STLFSI4")
-        bond_val = fetch_fred_latest("DGS10")
-
-        vix_closes = fetch_yfinance_closes("^VIX", period="1mo", interval="1d")
-        dxy_closes = fetch_yfinance_closes("DX-Y.NYB", period="1mo", interval="1d")
-
-        sma_dist_live, drawdown_live, spx_spot = calculate_sp500_metrics()
-
-        market_data = {
-            "core_pce_yoy": DEFAULTS["core_pce_yoy"],
-            "ism_pmi": DEFAULTS["ism_pmi"],
-            "sloos_net_pct": sloos_val if sloos_val is not None else DEFAULTS["sloos_net_pct"],
-            "hy_oas": hy_val if hy_val is not None else DEFAULTS["hy_oas"],
-            "shiller_cape": DEFAULTS["shiller_cape"],
-            "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
-            "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
-            "pct_dist_200_sma": sma_dist_live,
-            "drawdown_pct": drawdown_live,
-            "stlfsi_index": stlfsi_val if stlfsi_val is not None else DEFAULTS["stlfsi_index"],
-            "bond_yield_10y": bond_val if bond_val is not None else DEFAULTS["bond_yield_10y"],
-            "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
-            "market_breadth_pct": DEFAULTS["market_breadth_pct"],
-            "spx_spot": spx_spot,
-        }
+        market_data = get_market_snapshot()
 
     st.success("Live data loaded")
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
+    with c1:
         st.subheader("Market Snapshot")
         st.json(market_data)
 
-    with col2:
+    with c2:
         st.subheader("Data Source Notes")
         st.write("- Core PCE, ISM PMI, CAPE, and forward EPS are still defaults for now.")
         st.write("- SLOOS, HY OAS, STLFSI, and 10Y yield are fetched from FRED.")
         st.write("- VIX, DXY, and S&P 500 are fetched from Yahoo Finance.")
         st.write("- Next stage will add scoring and allocation logic.")
-
 else:
     st.info("Click **Fetch Live Data** to load the latest market snapshot.")
