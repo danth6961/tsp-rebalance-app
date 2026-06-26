@@ -135,7 +135,8 @@ def inject_custom_css():
             font-size: 1.28rem;
             font-weight: 800;
             color: #0f172a;
-            line-height: 1.1;
+            line-height: 1.15;
+            word-break: break-word;
         }
 
         .small-kpi-note {
@@ -597,7 +598,7 @@ def should_use_tsp_ift(
 # ==============================================================================
 
 def render_metric_cards(total_score, regime, action, ift_used, reason):
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1:
         st.markdown(
@@ -612,11 +613,12 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
         )
 
     with c2:
+        action_color = "#22c55e" if action == "SUBMIT IFT" else "#64748b"
         st.markdown(
             f"""
-            <div class="small-kpi" style="border-left: 5px solid #22c55e;">
+            <div class="small-kpi" style="border-left: 5px solid {action_color};">
                 <div class="small-kpi-title">Action</div>
-                <div class="small-kpi-value">{action}</div>
+                <div class="small-kpi-value" style="color:{action_color};">{action}</div>
                 <div class="small-kpi-note">Decision recommendation</div>
             </div>
             """,
@@ -647,7 +649,20 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
             unsafe_allow_html=True,
         )
 
-    st.caption(reason)
+    with c5:
+        reason_color = "#16a34a" if action == "SUBMIT IFT" else "#64748b"
+        st.markdown(
+            f"""
+            <div class="small-kpi" style="border-left: 5px solid {reason_color};">
+                <div class="small-kpi-title">IFT Reason</div>
+                <div class="small-kpi-value" style="font-size:0.95rem; color:{reason_color}; line-height:1.2;">
+                    {reason}
+                </div>
+                <div class="small-kpi-note">Why this action was chosen</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def make_score_chart(state: Dict[str, Any]):
