@@ -63,7 +63,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 2.6rem;
+            padding-top: 3.4rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -88,15 +88,6 @@ def inject_custom_css():
             color: #64748b;
             font-size: 0.98rem;
             margin-top: 0.25rem;
-        }
-
-        .hero-card {
-            border: 1px solid rgba(148,163,184,0.22);
-            border-radius: 18px;
-            padding: 1rem 1.1rem;
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-            box-shadow: 0 6px 18px rgba(15,23,42,0.06);
-            margin-bottom: 1rem;
         }
 
         .badge {
@@ -332,7 +323,7 @@ def load_config() -> Dict[str, Any]:
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
-    with CONFIG_FILE.open("w", newline="", encoding="utf-8") as f:
+    with CONFIG_FILE.open("w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, sort_keys=True, default=str)
 
 
@@ -690,48 +681,6 @@ def make_alloc_chart(target_alloc: Dict[str, float], current_alloc: Dict[str, fl
     })
 
 
-def make_allocation_bars_html(df: pd.DataFrame) -> str:
-    rows = []
-    for _, r in df.iterrows():
-        current = float(r["Current"])
-        target = float(r["Target"])
-        diff = target - current
-        rows.append(f"""
-        <tr>
-            <td style="padding:10px 8px; font-weight:700; width:50px;">{r["Fund"]}</td>
-            <td style="padding:10px 8px; width:120px;">{current:.1f}%</td>
-            <td style="padding:10px 8px;">
-                <div style="background:#e2e8f0; border-radius:999px; height:18px; position:relative; overflow:hidden;">
-                    <div style="width:{min(100, max(0, current))}%; background:#94a3b8; height:18px;"></div>
-                    <div style="width:{min(100, max(0, target))}%; background:rgba(34,197,94,0.45); height:18px; position:absolute; top:0; left:0;"></div>
-                </div>
-            </td>
-            <td style="padding:10px 8px; width:120px;">{target:.1f}%</td>
-            <td style="padding:10px 8px; width:90px; color:{'#16a34a' if diff > 0 else '#dc2626' if diff < 0 else '#64748b'}; font-weight:700;">
-                {diff:+.1f}%
-            </td>
-        </tr>
-        """)
-    return f"""
-    <div style="overflow-x:auto;">
-        <table style="width:100%; border-collapse:collapse; background:#fff; border:1px solid rgba(148,163,184,0.18); border-radius:14px;">
-            <thead>
-                <tr style="text-align:left; background:#f8fafc; border-bottom:1px solid rgba(148,163,184,0.18);">
-                    <th style="padding:10px 8px;">Fund</th>
-                    <th style="padding:10px 8px;">Current</th>
-                    <th style="padding:10px 8px;">Comparison</th>
-                    <th style="padding:10px 8px;">Target</th>
-                    <th style="padding:10px 8px;">Drift</th>
-                </tr>
-            </thead>
-            <tbody>
-                {''.join(rows)}
-            </tbody>
-        </table>
-    </div>
-    """
-
-
 def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
     df = pd.DataFrame([
         {
@@ -879,9 +828,34 @@ if run:
     with tab1:
         st.markdown("### Allocation Comparison")
         alloc_df = make_alloc_chart(allocations, current_alloc)
-        html_block = make_allocation_bars_html(alloc_df)
-        st.markdown(html_block, unsafe_allow_html=True)
-        st.caption("Gray bar = current allocation. Green overlay = target allocation. Drift shown at right.")
+
+        for _, row in alloc_df.iterrows():
+            fund = row["Fund"]
+            current = float(row["Current"])
+            target = float(row["Target"])
+            drift = target - current
+
+            c1, c2, c3, c4 = st.columns([0.5, 1.1, 1.1, 0.6])
+
+            with c1:
+                st.markdown(f"**{fund}**")
+
+            with c2:
+                st.markdown(f"Current: **{current:.1f}%**")
+                st.progress(min(max(current / 100.0, 0.0), 1.0))
+
+            with c3:
+                st.markdown(f"Target: **{target:.1f}%**")
+                st.progress(min(max(target / 100.0, 0.0), 1.0))
+
+            with c4:
+                color = "#16a34a" if drift > 0 else "#dc2626" if drift < 0 else "#64748b"
+                st.markdown(
+                    f"<div style='color:{color}; font-weight:700; padding-top:0.9rem;'>{drift:+.1f}%</div>",
+                    unsafe_allow_html=True,
+                )
+
+        st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
         st.markdown("### Allocation Table")
         alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
