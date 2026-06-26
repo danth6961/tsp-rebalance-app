@@ -63,7 +63,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 1.7rem;
+            padding-top: 2.6rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -209,7 +209,7 @@ inject_custom_css()
 st.markdown(
     """
     <div class="app-header">
-        <div style="display:flex; align-items:center; gap:0.75rem;">
+        <div style="display:flex; align-items:center; gap:0.75rem; margin-top:0.85rem;">
             <div style="font-size:2.2rem; line-height:1;">📊</div>
             <div>
                 <div class="app-title">TSP Rebalance Engine</div>
@@ -709,15 +709,14 @@ def make_allocation_bars_html(df: pd.DataFrame) -> str:
         current = float(r["Current"])
         target = float(r["Target"])
         diff = target - current
-        max_width = 100
         rows.append(f"""
         <tr>
             <td style="padding:10px 8px; font-weight:700; width:50px;">{r["Fund"]}</td>
             <td style="padding:10px 8px; width:120px;">{current:.1f}%</td>
             <td style="padding:10px 8px;">
                 <div style="background:#e2e8f0; border-radius:999px; height:18px; position:relative; overflow:hidden;">
-                    <div style="width:{min(max_width, max(0, current))}%; background:#94a3b8; height:18px;"></div>
-                    <div style="width:{min(max_width, max(0, target))}%; background:rgba(34,197,94,0.45); height:18px; position:absolute; top:0; left:0;"></div>
+                    <div style="width:{min(100, max(0, current))}%; background:#94a3b8; height:18px;"></div>
+                    <div style="width:{min(100, max(0, target))}%; background:rgba(34,197,94,0.45); height:18px; position:absolute; top:0; left:0;"></div>
                 </div>
             </td>
             <td style="padding:10px 8px; width:120px;">{target:.1f}%</td>
