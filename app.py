@@ -112,6 +112,7 @@ def inject_custom_css():
 
         .pill-live { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
         .pill-default { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+        .pill-failed { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
 
         .small-kpi {
             padding: 0.9rem;
@@ -1069,7 +1070,13 @@ def score_card_html(label: str, value: Any, note: str, color: str, icon: str) ->
 
 
 def source_pill_html(source: str) -> str:
-    cls = "pill-live" if source.startswith("LIVE") else "pill-default"
+    source_upper = source.upper()
+    if "FAILED" in source_upper or "DEFAULT" in source_upper or "FALLBACK" in source_upper:
+        cls = "pill-failed"
+    elif source_upper.startswith("LIVE"):
+        cls = "pill-live"
+    else:
+        cls = "pill-default"
     return f"<span class='pill {cls}'>{source}</span>"
 
 
@@ -1205,16 +1212,16 @@ if run:
             # Revert only if live calculation returned None
             if market_data.get("core_pce_yoy") is None:
                 market_data["core_pce_yoy"] = core_pce_yoy
-                market_sources["core_pce_yoy"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+                market_sources["core_pce_yoy"] = "LIVE FETCH FAILED (Manual Fallback)"
             if market_data.get("ism_pmi") is None:
                 market_data["ism_pmi"] = ism_pmi
-                market_sources["ism_pmi"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+                market_sources["ism_pmi"] = "LIVE FETCH FAILED (Manual Fallback)"
             if market_data.get("shiller_cape") is None:
                 market_data["shiller_cape"] = shiller_cape
-                market_sources["shiller_cape"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+                market_sources["shiller_cape"] = "LIVE FETCH FAILED (Manual Fallback)"
             if market_data.get("market_breadth_pct") is None:
                 market_data["market_breadth_pct"] = market_breadth_pct
-                market_sources["market_breadth_pct"] = "MANUAL OVERRIDE (Live Fetch Failed)"
+                market_sources["market_breadth_pct"] = "LIVE FETCH FAILED (Manual Fallback)"
 
         # Set variables that do not have automated feeds
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
@@ -1433,12 +1440,27 @@ if st.session_state["engine_ran"]:
             with market_cols[i % 4]:
                 # Format floats cleanly
                 val_formatted = f"{value:.2f}%" if label in ["Core PCE YoY", "Breadth %"] and isinstance(value, (int, float)) else (f"{value:.2f}" if isinstance(value, (int, float)) else str(value))
+                
+                # Check download status
+                is_failed = False
+                source_str = str(source).upper()
+                if "FAILED" in source_str or "DEFAULT" in source_str or "FALLBACK" in source_str:
+                    is_failed = True
+                
+                # Design visual variables based on status
+                border_style = "border-left: 5px solid #dc2626;" if is_failed else "border-left: 5px solid #10b981;"
+                status_icon = "⚠️" if is_failed else "✅"
+                status_tooltip = "Failed to fetch live data (reverted to default/config fallback)" if is_failed else "Downloaded live data successfully"
+                
                 st.markdown(
                     f"""
-                    <div class="small-kpi" style="margin-bottom:0.6rem;">
-                        <div class="small-kpi-title">{label}</div>
+                    <div class="small-kpi" style="margin-bottom:0.6rem; {border_style}" title="{status_tooltip}">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                            <span class="small-kpi-title" style="margin-bottom: 0;">{label}</span>
+                            <span style="font-size: 0.85rem;" title="{status_tooltip}">{status_icon}</span>
+                        </div>
                         <div class="small-kpi-value">{val_formatted if value is not None else 'N/A'}</div>
-                        <div class="small-kpi-note">{source_pill_html(source)}</div>
+                        <div class="small-kpi-note" style="margin-top: 0.35rem;">{source_pill_html(source)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
