@@ -954,6 +954,8 @@ if run:
         regime_summary_df = make_regime_summary_df(regime)
         st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
         st.markdown("---")
+        st.subheader("🔍 Engine Explanation")
+        st.write("This section will explain why the engine made its decision.")
 
     with tab3:
         st.markdown("### Score History")
