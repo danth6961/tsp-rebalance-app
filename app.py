@@ -8,7 +8,6 @@ import time
 import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from io import StringIO
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -40,11 +39,6 @@ DEFAULTS = {
     "market_breadth_pct": 73.20,
     "vix_spot": 19.0,
     "dxy_spot": 105.80,
-}
-
-PLOTS_STYLE = {
-    "plot_bgcolor": "rgba(0,0,0,0)",
-    "paper_bgcolor": "rgba(0,0,0,0)",
 }
 
 
@@ -475,18 +469,51 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
 def make_score_chart(state: Dict[str, Any]):
     if not state["recent_scores"]:
         return None
-    df = pd.DataFrame({
+    return pd.DataFrame({
         "Run": list(range(1, len(state["recent_scores"]) + 1)),
         "Score": state["recent_scores"],
     }).set_index("Run")
-    return df
 
 
 def make_alloc_chart(target_alloc: Dict[str, float]):
-    df = pd.DataFrame({
+    return pd.DataFrame({
         "Fund": ["G", "C", "I", "S", "F"],
         "Weight": [target_alloc.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
     }).set_index("Fund")
+
+
+def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
+    df = pd.DataFrame([
+        {
+            "Regime": "RISK-ON OVERRIDE",
+            "Score Range": ">= 5",
+            "Base Allocation": "G 35 / C 45 / I 15 / S 5 / F 0",
+            "Profile": "Aggressive",
+            "Notes": "Strong macro backdrop and supportive momentum."
+        },
+        {
+            "Regime": "OPTIMIZED NEUTRAL",
+            "Score Range": ">= 0",
+            "Base Allocation": "G 45 / C 35 / I 10 / S 10 / F 0",
+            "Profile": "Balanced",
+            "Notes": "Default regime when the signal is constructive but mixed."
+        },
+        {
+            "Regime": "DEFENSIVE ALLOCATION",
+            "Score Range": "< 0",
+            "Base Allocation": "G 65 / C 20 / I 10 / S 5 / F 0",
+            "Profile": "Defensive",
+            "Notes": "Used when risk rises or the composite turns negative."
+        },
+        {
+            "Regime": "EMERGENCY DISPATCH",
+            "Score Range": "-50",
+            "Base Allocation": "G 90 / C 0 / I 0 / S 0 / F 10",
+            "Profile": "Maximum defense",
+            "Notes": "3-day panic valve breach."
+        },
+    ])
+    df["Current"] = df["Regime"].eq(current_regime).map({True: "★", False: ""})
     return df
 
 
@@ -578,6 +605,7 @@ if run:
         state["last_ift_date"] = today.isoformat()
 
     save_state(state)
+
     cfg["current_alloc"] = current_alloc
     cfg["allow_second_ift"] = allow_second_ift
     cfg["normal_drift_threshold_pct"] = float(normal_drift_threshold_pct)
@@ -606,16 +634,20 @@ if run:
     st.dataframe(alloc_df, use_container_width=True)
 
     st.subheader("Charts")
-    c1, c2 = st.columns(2)
-    with c1:
+    chart_col1, chart_col2 = st.columns(2)
+    with chart_col1:
         score_df = make_score_chart(state)
         if score_df is not None:
             st.line_chart(score_df)
         else:
             st.info("No score history yet.")
-    with c2:
+    with chart_col2:
         alloc_chart_df = make_alloc_chart(allocations)
         st.bar_chart(alloc_chart_df)
+
+    st.subheader("Regime Summary")
+    regime_summary_df = make_regime_summary_df(regime)
+    st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
 
     st.subheader("Baseline Allocation")
     st.json(baseline)
