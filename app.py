@@ -716,6 +716,16 @@ def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
     return df
 
 
+def score_card_html(label: str, value: Any, note: str, color: str, icon: str) -> str:
+    return f"""
+    <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom:0.6rem;">
+        <div class="small-kpi-title">{label}</div>
+        <div class="small-kpi-value" style="color:{color};">{icon} {value}</div>
+        <div class="small-kpi-note">{note}</div>
+    </div>
+    """
+
+
 # ==============================================================================
 # APP STATE
 # ==============================================================================
@@ -865,13 +875,58 @@ if run:
         st.json(baseline)
 
     with tab2:
-        left_col, right_col = st.columns([1, 1])
-        with left_col:
-            st.markdown("### Factor Scores")
-            st.json(factor_scores)
-        with right_col:
-            st.markdown("### Market Snapshot")
-            st.json(market_data)
+        st.markdown("### Factor Scores")
+        score_order = [
+            ("inflation", "Inflation"),
+            ("growth", "Growth"),
+            ("liquidity", "Liquidity"),
+            ("credit_spreads", "Credit Spreads"),
+            ("valuation", "Valuation"),
+            ("market_stress", "Market Stress"),
+            ("momentum", "Momentum"),
+            ("drawdown", "Drawdown"),
+        ]
+        factor_cols = st.columns(4)
+        for i, (key, label) in enumerate(score_order):
+            val = factor_scores.get(key, 0)
+            color = "#16a34a" if val > 0 else "#dc2626" if val < 0 else "#64748b"
+            icon = "▲" if val > 0 else "▼" if val < 0 else "●"
+            with factor_cols[i % 4]:
+                st.markdown(
+                    score_card_html(label, val, "Factor contribution", color, icon),
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("### Market Snapshot")
+        market_items = [
+            ("Core PCE YoY", market_data.get("core_pce_yoy")),
+            ("ISM PMI", market_data.get("ism_pmi")),
+            ("SLOOS Net %", market_data.get("sloos_net_pct")),
+            ("HY OAS", market_data.get("hy_oas")),
+            ("Shiller CAPE", market_data.get("shiller_cape")),
+            ("Fwd EPS Growth YoY", market_data.get("fwd_eps_growth_yoy")),
+            ("VIX Spot", market_data.get("vix_spot")),
+            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma")),
+            ("Drawdown %", market_data.get("drawdown_pct")),
+            ("STLFSI", market_data.get("stlfsi_index")),
+            ("10Y Yield", market_data.get("bond_yield_10y")),
+            ("DXY Spot", market_data.get("dxy_spot")),
+            ("Breadth %", market_data.get("market_breadth_pct")),
+            ("SPX Spot", market_data.get("spx_spot")),
+        ]
+        market_cols = st.columns(4)
+        for i, (label, value) in enumerate(market_items):
+            with market_cols[i % 4]:
+                st.markdown(
+                    f"""
+                    <div class="small-kpi" style="margin-bottom:0.6rem;">
+                        <div class="small-kpi-title">{label}</div>
+                        <div class="small-kpi-value">{value if value is not None else 'N/A'}</div>
+                        <div class="small-kpi-note">Live or default input</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
         st.markdown("### Regime Summary")
         regime_summary_df = make_regime_summary_df(regime)
