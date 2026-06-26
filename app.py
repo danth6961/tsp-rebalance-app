@@ -332,6 +332,9 @@ def load_config() -> Dict[str, Any]:
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "bond_yield_10y": DEFAULTS["bond_yield_10y"],
         "market_breadth_pct": DEFAULTS["market_breadth_pct"],
+        "sloos_net_pct": DEFAULTS["sloos_net_pct"],
+        "hy_oas": DEFAULTS["hy_oas"],
+        "stlfsi_index": DEFAULTS["stlfsi_index"],
         "use_live_macro": True,
     }
     if not CONFIG_FILE.exists():
@@ -770,14 +773,14 @@ def get_market_snapshot() -> Dict[str, Any]:
     market_sources = {
         "core_pce_yoy": pce_source,
         "ism_pmi": pmi_source,
-        "sloos_net_pct": "LIVE" if results.get("sloos_val") is not None else "DEFAULT",
-        "hy_oas": "LIVE" if results.get("hy_val") is not None else "DEFAULT",
+        "sloos_net_pct": "LIVE (FRED DRTSCIS)" if results.get("sloos_val") is not None else "CONFIG/DEFAULT",
+        "hy_oas": "LIVE (FRED BAMLH0A0HYM2)" if results.get("hy_val") is not None else "CONFIG/DEFAULT",
         "shiller_cape": "LIVE (Multpl.com CAPE)" if shiller_cape is not None else "CONFIG/DEFAULT",
         "fwd_eps_growth_yoy": "CONFIG/DEFAULT",
         "vix_spot": "LIVE" if vix_closes else "DEFAULT",
         "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
         "drawdown_pct": "LIVE" if spx_closes else "DEFAULT",
-        "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "DEFAULT",
+        "stlfsi_index": "LIVE (FRED STLFSI4)" if results.get("stlfsi_val") is not None else "CONFIG/DEFAULT",
         "bond_yield_10y": bond_source,
         "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
         "market_breadth_pct": breadth_source,
@@ -1139,6 +1142,9 @@ with st.sidebar:
         fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
         bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
         market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
+        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
+        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
+        stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
 
     st.markdown("---")
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
@@ -1159,6 +1165,9 @@ if save_config_btn:
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["bond_yield_10y"] = float(bond_yield_10y)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
+    cfg["sloos_net_pct"] = float(sloos_net_pct)
+    cfg["hy_oas"] = float(hy_oas)
+    cfg["stlfsi_index"] = float(stlfsi_index)
     cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
     st.sidebar.success("Config saved.")
@@ -1221,12 +1230,18 @@ if run:
             market_data["shiller_cape"] = shiller_cape
             market_data["market_breadth_pct"] = market_breadth_pct
             market_data["bond_yield_10y"] = bond_yield_10y
+            market_data["sloos_net_pct"] = sloos_net_pct
+            market_data["hy_oas"] = hy_oas
+            market_data["stlfsi_index"] = stlfsi_index
             
             market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
             market_sources["ism_pmi"] = "MANUAL OVERRIDE"
             market_sources["shiller_cape"] = "MANUAL OVERRIDE"
             market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
             market_sources["bond_yield_10y"] = "MANUAL OVERRIDE"
+            market_sources["sloos_net_pct"] = "MANUAL OVERRIDE"
+            market_sources["hy_oas"] = "MANUAL OVERRIDE"
+            market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
         else:
             # Overwrite only if the live snapshot calculation resulted in a DEFAULT
             if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
@@ -1248,6 +1263,18 @@ if run:
             if "DEFAULT" in str(market_sources.get("bond_yield_10y")).upper():
                 market_data["bond_yield_10y"] = bond_yield_10y
                 market_sources["bond_yield_10y"] = "LIVE FETCH FAILED (Manual Fallback)"
+
+            if "DEFAULT" in str(market_sources.get("sloos_net_pct")).upper():
+                market_data["sloos_net_pct"] = sloos_net_pct
+                market_sources["sloos_net_pct"] = "LIVE FETCH FAILED (Manual Fallback)"
+
+            if "DEFAULT" in str(market_sources.get("hy_oas")).upper():
+                market_data["hy_oas"] = hy_oas
+                market_sources["hy_oas"] = "LIVE FETCH FAILED (Manual Fallback)"
+
+            if "DEFAULT" in str(market_sources.get("stlfsi_index")).upper():
+                market_data["stlfsi_index"] = stlfsi_index
+                market_sources["stlfsi_index"] = "LIVE FETCH FAILED (Manual Fallback)"
 
         # Set variables that do not have automated feeds
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
@@ -1293,6 +1320,9 @@ if run:
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["bond_yield_10y"] = float(bond_yield_10y)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
+    cfg["sloos_net_pct"] = float(sloos_net_pct)
+    cfg["hy_oas"] = float(hy_oas)
+    cfg["stlfsi_index"] = float(stlfsi_index)
     cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
 
