@@ -380,7 +380,8 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
 
     try:
         return retry_call(_load)
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Live fetch for FRED series '{series_id}' failed: {e}")
         return None
 
 
@@ -407,7 +408,8 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
 
     try:
         return retry_call(_load)
-    except Exception:
+    except Exception as e:
+        print(f"Live Core PCE YoY calculation from FRED failed: {e}")
         return None
 
 
@@ -446,7 +448,8 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["ism_pmi"] = val
-    except Exception:
+    except Exception as e:
+        print(f"Error scraping indicators from Trading Economics: {e}")
         pass
     
     return results
@@ -472,7 +475,8 @@ def fetch_shiller_cape_live() -> Optional[float]:
 
     try:
         return retry_call(_load)
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching Shiller CAPE: {e}")
         return None
 
 
@@ -497,7 +501,8 @@ def fetch_barchart_s5th_fallback() -> Optional[float]:
                 val = float(match.group(1))
                 if 0.0 <= val <= 100.0:
                     return val
-    except Exception:
+    except Exception as e:
+        print(f"Error scraping Barchart $S5TH: {e}")
         pass
     return None
 
@@ -547,7 +552,8 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
 
     try:
         return retry_call(_load)
-    except Exception:
+    except Exception as e:
+        print(f"Live closes fetch for {ticker} failed: {e}")
         return []
 
 
@@ -585,7 +591,8 @@ def fetch_yfinance_dataframe(ticker: str, period: str = "1y") -> pd.DataFrame:
 
     try:
         return retry_call(_load)
-    except Exception:
+    except Exception as e:
+        print(f"Dataframe fetch for {ticker} failed: {e}")
         return pd.DataFrame()
 
 
@@ -660,7 +667,8 @@ def get_market_snapshot() -> Dict[str, Any]:
             key = futures[future]
             try:
                 results[key] = future.result()
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Live download task failed for key '{key}': {e}")
                 results[key] = None
 
     vix_closes = results.get("vix_closes") or []
@@ -1441,7 +1449,7 @@ if st.session_state["engine_ran"]:
             spx_status = "🔴 TRIGGERED (SMA Dist <= -5%)" if market_data.get("spx_3d_panic") else "🟢 Normal"
             spx_hist_str = ", ".join(map(str, market_data.get("spx_dist_last_3", []))) if market_data.get("spx_dist_last_3") else "N/A"
             st.markdown(
-                score_card_html("SPX 200SMA 3-Day State", spx_status, f"Last 3 dist %: [{spx_hist_str}]", "#dc2626" if market_data.get("spx_3d_panic") else "#16a34a", "⚠️"),
+                score_card_html("SPX 200SMA 3-Day State", spx_status, f"Last 3 closes: [{spx_hist_str}]", "#dc2626" if market_data.get("spx_3d_panic") else "#16a34a", "⚠️"),
                 unsafe_allow_html=True,
             )
         with pv_cols[2]:
