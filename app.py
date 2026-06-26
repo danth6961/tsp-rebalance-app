@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotationsfrom __future__ import annotations
 
 from datetime import datetime, date
 import csv
@@ -8,6 +8,7 @@ import time
 import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import StringIO
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -17,13 +18,14 @@ import streamlit as st
 
 
 # ==============================================================================
-# CONFIG / FILES
+# FILES / CONFIG
 # ==============================================================================
 
 MAX_RETRIES = 3
 RETRY_SLEEP_SEC = 1.5
 
 STATE_FILE = Path("tsp_state.json")
+CONFIG_FILE = Path("tsp_config.json")
 LOG_FILE = Path("tsp_daily_log.csv")
 
 DEFAULTS = {
@@ -38,6 +40,11 @@ DEFAULTS = {
     "market_breadth_pct": 73.20,
     "vix_spot": 19.0,
     "dxy_spot": 105.80,
+}
+
+PLOTS_STYLE = {
+    "plot_bgcolor": "rgba(0,0,0,0)",
+    "paper_bgcolor": "rgba(0,0,0,0)",
 }
 
 
@@ -82,8 +89,23 @@ def append_log_row(row: Dict[str, Any]) -> None:
         writer.writerow(row)
 
 
+def fmt_num(x, digits=2, suffix=""):
+    x = safe_float(x, None)
+    if x is None:
+        return "N/A"
+    return f"{x:.{digits}f}{suffix}"
+
+
+def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
+
+
+def df_to_json_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_json(orient="records", indent=2).encode("utf-8")
+
+
 # ==============================================================================
-# STATE
+# STATE / CONFIG
 # ==============================================================================
 
 def default_state() -> Dict[str, Any]:
@@ -105,7 +127,6 @@ def load_state() -> Dict[str, Any]:
             state = json.load(f)
     except Exception:
         return default_state()
-
     base = default_state()
     base.update(state)
     return base
@@ -129,10 +150,36 @@ def update_signal_history(state: Dict[str, Any], regime: str, total_score: int, 
     state["recent_regimes"].append(regime)
     state["recent_scores"].append(int(total_score))
     state["recent_allocations"].append(alloc)
-    state["recent_regimes"] = state["recent_regimes"][-10:]
-    state["recent_scores"] = state["recent_scores"][-10:]
-    state["recent_allocations"] = state["recent_allocations"][-10:]
+    state["recent_regimes"] = state["recent_regimes"][-30:]
+    state["recent_scores"] = state["recent_scores"][-30:]
+    state["recent_allocations"] = state["recent_allocations"][-30:]
     return state
+
+
+def load_config() -> Dict[str, Any]:
+    default_cfg = {
+        "current_alloc": {"G": 40, "C": 30, "I": 20, "S": 5, "F": 5},
+        "allow_second_ift": False,
+        "normal_drift_threshold_pct": 7.5,
+        "score_change_threshold": 3,
+        "confirmation_days": 3,
+        "cooldown_days": 5,
+    }
+    if not CONFIG_FILE.exists():
+        return default_cfg
+    try:
+        with CONFIG_FILE.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return default_cfg
+    default_cfg.update(cfg)
+    default_cfg["current_alloc"] = cfg.get("current_alloc", default_cfg["current_alloc"])
+    return default_cfg
+
+
+def save_config(cfg: Dict[str, Any]) -> None:
+    with CONFIG_FILE.open("w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, sort_keys=True, default=str)
 
 
 # ==============================================================================
@@ -208,7 +255,7 @@ def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, flo
 
 
 # ==============================================================================
-# CACHED SNAPSHOT
+# CACHED MARKET SNAPSHOT
 # ==============================================================================
 
 @st.cache_data(ttl=900)
@@ -224,7 +271,6 @@ def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
 @st.cache_data(ttl=900)
 def get_market_snapshot() -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-
     with ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
@@ -235,7 +281,6 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "DX-Y.NYB", "1mo", "1d"): "dxy_closes",
             executor.submit(cached_yahoo_closes, "^GSPC", "1y", "1d"): "spx_closes",
         }
-
         for future in as_completed(futures):
             key = futures[future]
             try:
@@ -246,7 +291,6 @@ def get_market_snapshot() -> Dict[str, Any]:
     vix_closes = results.get("vix_closes") or []
     dxy_closes = results.get("dxy_closes") or []
     spx_closes = results.get("spx_closes") or []
-
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
 
     return {
@@ -269,7 +313,7 @@ def get_market_snapshot() -> Dict[str, Any]:
 
 
 # ==============================================================================
-# ENGINE
+# ENGINE / IFT DECISION
 # ==============================================================================
 
 def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
@@ -344,7 +388,6 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
         scores["valuation"] = min(scores["valuation"], -5)
 
     composite_score = sum(scores.values())
-
     momentum_breaker = scores["momentum"] <= -3
     asymmetric_vol_trigger = scores["market_stress"] <= -3 or scores["momentum"] <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5
@@ -367,22 +410,16 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
         base_alloc["F"] += 10
 
     alloc = base_alloc.copy()
-
     if asymmetric_vol_trigger:
         s_w = alloc["S"]
         alloc["S"] = 0
-        if composite_score >= 0:
-            alloc["G"] += s_w
-        else:
-            alloc["I"] += s_w
-
+        alloc["G" if composite_score >= 0 else "I"] += s_w
     if dxy_strong and alloc["I"] >= 5:
         alloc["I"] -= 5
         alloc["C"] += 5
 
     total = sum(alloc.values()) or 100
     final_alloc = {k: round((v / total) * 100, 1) for k, v in alloc.items()}
-
     return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
 
@@ -423,36 +460,79 @@ def should_use_tsp_ift(
 
 
 # ==============================================================================
+# DISPLAY HELPERS
+# ==============================================================================
+
+def render_metric_cards(total_score, regime, action, ift_used, reason):
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Composite Score", total_score)
+    c2.metric("Regime", regime)
+    c3.metric("Action", action)
+    c4.metric("IFTs Used", f"{ift_used}/2")
+    st.caption(reason)
+
+
+def make_score_chart(state: Dict[str, Any]):
+    if not state["recent_scores"]:
+        return None
+    df = pd.DataFrame({
+        "Run": list(range(1, len(state["recent_scores"]) + 1)),
+        "Score": state["recent_scores"],
+    }).set_index("Run")
+    return df
+
+
+def make_alloc_chart(target_alloc: Dict[str, float]):
+    df = pd.DataFrame({
+        "Fund": ["G", "C", "I", "S", "F"],
+        "Weight": [target_alloc.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
+    }).set_index("Fund")
+    return df
+
+
+# ==============================================================================
 # STREAMLIT APP
 # ==============================================================================
 
-st.set_page_config(page_title="TSP Rebalance Engine - Stage 4", layout="wide")
-st.title("TSP Rebalance Engine — Stage 4")
-st.caption("Live data + scoring + current allocation + state controls + IFT decision")
+st.set_page_config(page_title="TSP Rebalance Engine", layout="wide")
+st.title("TSP Rebalance Engine")
+st.caption("Final polished dashboard with charts, exports, state controls, and TSP IFT logic")
 
 today = date.today()
 state = reset_monthly_if_needed(load_state(), today)
+cfg = load_config()
 
 with st.sidebar:
     st.header("Current Allocation")
     current_alloc = {
-        "G": st.number_input("G %", value=40.0, step=1.0),
-        "C": st.number_input("C %", value=30.0, step=1.0),
-        "I": st.number_input("I %", value=20.0, step=1.0),
-        "S": st.number_input("S %", value=5.0, step=1.0),
-        "F": st.number_input("F %", value=5.0, step=1.0),
+        "G": st.number_input("G %", value=float(cfg.get("current_alloc", {}).get("G", 40.0)), step=1.0),
+        "C": st.number_input("C %", value=float(cfg.get("current_alloc", {}).get("C", 30.0)), step=1.0),
+        "I": st.number_input("I %", value=float(cfg.get("current_alloc", {}).get("I", 20.0)), step=1.0),
+        "S": st.number_input("S %", value=float(cfg.get("current_alloc", {}).get("S", 5.0)), step=1.0),
+        "F": st.number_input("F %", value=float(cfg.get("current_alloc", {}).get("F", 5.0)), step=1.0),
     }
 
     st.header("IFT Policy")
-    allow_second_ift = st.checkbox("Allow second IFT", value=False)
-    normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=7.5, step=0.5)
-    score_change_threshold = st.number_input("Score change threshold", value=3, step=1)
-    confirmation_days = st.number_input("Confirmation days", value=3, step=1)
-    cooldown_days = st.number_input("Cooldown days", value=5, step=1)
+    allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)))
+    normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5)
+    score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1)
+    confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1)
+    cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1)
 
     st.header("State Controls")
     mark_ift = st.button("Mark IFT Used Today")
-    reset_state = st.button("Reset State File")
+    reset_state_btn = st.button("Reset State File")
+    save_config_btn = st.button("Save Config")
+
+if save_config_btn:
+    cfg["current_alloc"] = current_alloc
+    cfg["allow_second_ift"] = allow_second_ift
+    cfg["normal_drift_threshold_pct"] = float(normal_drift_threshold_pct)
+    cfg["score_change_threshold"] = int(score_change_threshold)
+    cfg["confirmation_days"] = int(confirmation_days)
+    cfg["cooldown_days"] = int(cooldown_days)
+    save_config(cfg)
+    st.sidebar.success("Config saved.")
 
 if mark_ift:
     state["ift_count_this_month"] += 1
@@ -460,19 +540,20 @@ if mark_ift:
     save_state(state)
     st.sidebar.success("IFT marked for today.")
 
-if reset_state:
+if reset_state_btn:
     state = default_state()
     save_state(state)
     st.sidebar.warning("State reset.")
 
-if st.button("Fetch & Run Engine"):
+run = st.button("Fetch & Run Engine")
+
+if run:
     with st.spinner("Loading live data and running engine..."):
         market_data = get_market_snapshot()
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
     emergency_triggered = (total_score == -50)
     state = update_signal_history(state, regime, total_score, allocations)
-
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
 
     use_ift, reason = should_use_tsp_ift(
@@ -492,31 +573,30 @@ if st.button("Fetch & Run Engine"):
     )
 
     action = "SUBMIT IFT" if use_ift else "HOLD"
-
     if use_ift:
         state["ift_count_this_month"] += 1
         state["last_ift_date"] = today.isoformat()
 
     save_state(state)
+    cfg["current_alloc"] = current_alloc
+    cfg["allow_second_ift"] = allow_second_ift
+    cfg["normal_drift_threshold_pct"] = float(normal_drift_threshold_pct)
+    cfg["score_change_threshold"] = int(score_change_threshold)
+    cfg["confirmation_days"] = int(confirmation_days)
+    cfg["cooldown_days"] = int(cooldown_days)
+    save_config(cfg)
 
-    top1, top2, top3, top4 = st.columns(4)
-    top1.metric("Composite Score", total_score)
-    top2.metric("Regime", regime)
-    top3.metric("Action", action)
-    top4.metric("IFTs Used", f"{state['ift_count_this_month']}/2")
+    render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
-    st.write(f"**Reason:** {reason}")
-    st.write(f"**Last IFT Date:** {state['last_ift_date'] or 'None'}")
-
-    s1, s2 = st.columns(2)
-    with s1:
+    col_left, col_right = st.columns(2)
+    with col_left:
         st.subheader("Factor Scores")
         st.json(factor_scores)
-    with s2:
+    with col_right:
         st.subheader("Market Snapshot")
         st.json(market_data)
 
-    st.subheader("Allocation Comparison")
+    st.subheader("Current vs Target")
     alloc_df = pd.DataFrame({
         "Fund": ["G", "C", "I", "S", "F"],
         "Current": [current_alloc[f] for f in ["G", "C", "I", "S", "F"]],
@@ -525,11 +605,20 @@ if st.button("Fetch & Run Engine"):
     alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
     st.dataframe(alloc_df, use_container_width=True)
 
+    st.subheader("Charts")
+    c1, c2 = st.columns(2)
+    with c1:
+        score_df = make_score_chart(state)
+        if score_df is not None:
+            st.line_chart(score_df)
+        else:
+            st.info("No score history yet.")
+    with c2:
+        alloc_chart_df = make_alloc_chart(allocations)
+        st.bar_chart(alloc_chart_df)
+
     st.subheader("Baseline Allocation")
     st.json(baseline)
-
-    st.write(f"**Asymmetric Vol Trigger:** {vol_t}")
-    st.write(f"**Strong DXY Trigger:** {dxy_t}")
 
     st.subheader("State Summary")
     st.json({
@@ -539,6 +628,46 @@ if st.button("Fetch & Run Engine"):
         "recent_regimes": state["recent_regimes"],
         "recent_scores": state["recent_scores"],
     })
+
+    st.subheader("Log Viewer")
+    if LOG_FILE.exists():
+        log_df = pd.read_csv(LOG_FILE)
+        st.dataframe(log_df.tail(25), use_container_width=True)
+
+        export_col1, export_col2, export_col3 = st.columns(3)
+        with export_col1:
+            st.download_button(
+                "Download Log CSV",
+                data=df_to_csv_bytes(log_df),
+                file_name="tsp_daily_log.csv",
+                mime="text/csv",
+            )
+        with export_col2:
+            st.download_button(
+                "Download Log JSON",
+                data=df_to_json_bytes(log_df),
+                file_name="tsp_daily_log.json",
+                mime="application/json",
+            )
+        with export_col3:
+            st.download_button(
+                "Download Latest Snapshot JSON",
+                data=json.dumps({
+                    "market_data": market_data,
+                    "factor_scores": factor_scores,
+                    "regime": regime,
+                    "total_score": total_score,
+                    "action": action,
+                    "reason": reason,
+                    "current_alloc": current_alloc,
+                    "target_alloc": allocations,
+                    "state": state,
+                }, indent=2).encode("utf-8"),
+                file_name="tsp_snapshot.json",
+                mime="application/json",
+            )
+    else:
+        st.info("No log file yet.")
 
     append_log_row({
         "date": today.isoformat(),
