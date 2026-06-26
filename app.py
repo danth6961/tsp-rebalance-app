@@ -290,12 +290,17 @@ def update_signal_history(state: Dict[str, Any], regime: str, total_score: int, 
 
 def load_config() -> Dict[str, Any]:
     default_cfg = {
-        "current_alloc": {"G": 40, "C": 30, "I": 20, "S": 5, "F": 5},
+        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
         "allow_second_ift": False,
         "normal_drift_threshold_pct": 7.5,
         "score_change_threshold": 3,
         "confirmation_days": 3,
         "cooldown_days": 5,
+        "core_pce_yoy": DEFAULTS["core_pce_yoy"],
+        "ism_pmi": DEFAULTS["ism_pmi"],
+        "shiller_cape": DEFAULTS["shiller_cape"],
+        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
+        "market_breadth_pct": DEFAULTS["market_breadth_pct"],
     }
     if not CONFIG_FILE.exists():
         return default_cfg
@@ -425,6 +430,28 @@ def get_market_snapshot() -> Dict[str, Any]:
     spx_closes = results.get("spx_closes") or []
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
 
+    # 3-day Panic Valve Logic Evaluations
+    vix_3d_panic = False
+    vix_last_3 = []
+    if len(vix_closes) >= 3:
+        vix_last_3 = [round(x, 2) for x in vix_closes[-3:]]
+        vix_3d_panic = all(x >= 30.0 for x in vix_closes[-3:])
+
+    spx_3d_panic = False
+    spx_dist_last_3 = []
+    if len(spx_closes) >= 202:
+        sma_0 = sum(spx_closes[-200:]) / 200.0
+        dist_0 = ((spx_closes[-1] - sma_0) / sma_0) * 100.0
+
+        sma_1 = sum(spx_closes[-201:-1]) / 200.0
+        dist_1 = ((spx_closes[-2] - sma_1) / sma_1) * 100.0
+
+        sma_2 = sum(spx_closes[-202:-2]) / 200.0
+        dist_2 = ((spx_closes[-3] - sma_2) / sma_2) * 100.0
+
+        spx_dist_last_3 = [round(dist_2, 2), round(dist_1, 2), round(dist_0, 2)]
+        spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
+
     market_data = {
         "core_pce_yoy": DEFAULTS["core_pce_yoy"],
         "ism_pmi": DEFAULTS["ism_pmi"],
@@ -440,23 +467,27 @@ def get_market_snapshot() -> Dict[str, Any]:
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
         "market_breadth_pct": DEFAULTS["market_breadth_pct"],
         "spx_spot": spx_spot,
+        "vix_3d_panic": vix_3d_panic,
+        "vix_last_3": vix_last_3,
+        "spx_3d_panic": spx_3d_panic,
+        "spx_dist_last_3": spx_dist_last_3,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
 
     market_sources = {
-        "core_pce_yoy": "DEFAULT",
-        "ism_pmi": "DEFAULT",
+        "core_pce_yoy": "CONFIG/DEFAULT",
+        "ism_pmi": "CONFIG/DEFAULT",
         "sloos_net_pct": "LIVE" if results.get("sloos_val") is not None else "DEFAULT",
         "hy_oas": "LIVE" if results.get("hy_val") is not None else "DEFAULT",
-        "shiller_cape": "DEFAULT",
-        "fwd_eps_growth_yoy": "DEFAULT",
+        "shiller_cape": "CONFIG/DEFAULT",
+        "fwd_eps_growth_yoy": "CONFIG/DEFAULT",
         "vix_spot": "LIVE" if vix_closes else "DEFAULT",
         "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
         "drawdown_pct": "LIVE" if spx_closes else "DEFAULT",
         "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "DEFAULT",
         "bond_yield_10y": "LIVE" if results.get("bond_val") is not None else "DEFAULT",
         "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
-        "market_breadth_pct": "DEFAULT",
+        "market_breadth_pct": "CONFIG/DEFAULT",
         "spx_spot": "LIVE" if spx_closes else "DEFAULT",
     }
 
@@ -482,6 +513,7 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     stlfsi = safe_float(data.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
     bond_yield = safe_float(data.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
     dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
+    market_breadth = safe_float(data.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
 
     if pce < 1.8: scores["inflation"] = 3
     elif pce < 2.0: scores["inflation"] = 1
@@ -544,30 +576,44 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     f_fund_unlocked = (bond_yield - pce) >= 1.5
     dxy_strong = dxy_spot >= 103.5
 
-    if composite_score >= 5 and pce < 2.0 and cape < 26.0 and not momentum_breaker:
-        regime_name = "RISK-ON OVERRIDE"
-        base_alloc = {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}
-    elif composite_score >= 0:
-        regime_name = "OPTIMIZED NEUTRAL"
-        base_alloc = {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}
+    # Evaluation of Panic Valve Logic
+    vix_3d_panic = data.get("vix_3d_panic", False)
+    spx_3d_panic = data.get("spx_3d_panic", False)
+    panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth <= 60.0)
+
+    if panic_valve_triggered:
+        regime_name = "EMERGENCY DISPATCH"
+        composite_score = -50
+        if f_fund_unlocked:
+            base_alloc = {"G": 90, "C": 0, "I": 0, "S": 0, "F": 10}
+        else:
+            base_alloc = {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
+        alloc = base_alloc.copy()
     else:
-        regime_name = "DEFENSIVE ALLOCATION"
-        base_alloc = {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}
-        if scores["valuation"] == -5 and vix > 24.0:
-            base_alloc = {"G": 70, "C": 20, "I": 5, "S": 5, "F": 0}
+        if composite_score >= 5 and pce < 2.0 and cape < 26.0 and not momentum_breaker:
+            regime_name = "RISK-ON OVERRIDE"
+            base_alloc = {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}
+        elif composite_score >= 0:
+            regime_name = "OPTIMIZED NEUTRAL"
+            base_alloc = {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}
+        else:
+            regime_name = "DEFENSIVE ALLOCATION"
+            base_alloc = {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}
+            if scores["valuation"] == -5 and vix > 24.0:
+                base_alloc = {"G": 70, "C": 20, "I": 5, "S": 5, "F": 0}
 
-    if f_fund_unlocked and base_alloc["G"] >= 10:
-        base_alloc["G"] -= 10
-        base_alloc["F"] += 10
+        if f_fund_unlocked and base_alloc["G"] >= 10:
+            base_alloc["G"] -= 10
+            base_alloc["F"] += 10
 
-    alloc = base_alloc.copy()
-    if asymmetric_vol_trigger:
-        s_w = alloc["S"]
-        alloc["S"] = 0
-        alloc["G" if composite_score >= 0 else "I"] += s_w
-    if dxy_strong and alloc["I"] >= 5:
-        alloc["I"] -= 5
-        alloc["C"] += 5
+        alloc = base_alloc.copy()
+        if asymmetric_vol_trigger:
+            s_w = alloc["S"]
+            alloc["S"] = 0
+            alloc["G" if composite_score >= 0 else "I"] += s_w
+        if dxy_strong and alloc["I"] >= 5:
+            alloc["I"] -= 5
+            alloc["C"] += 5
 
     total = sum(alloc.values()) or 100
     final_alloc = {k: round((v / total) * 100, 1) for k, v in alloc.items()}
@@ -630,7 +676,7 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
         )
 
     with c2:
-        action_color = "#22c55e" if action == "SUBMIT IFT" else "#64748b"
+        action_color = "#dc2626" if regime == "EMERGENCY DISPATCH" else ("#22c55e" if action == "SUBMIT IFT" else "#64748b")
         st.markdown(
             f"""
             <div class="small-kpi" style="border-left: 5px solid {action_color};">
@@ -667,7 +713,7 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
         )
 
     with c5:
-        reason_color = "#16a34a" if action == "SUBMIT IFT" else "#64748b"
+        reason_color = "#dc2626" if regime == "EMERGENCY DISPATCH" else ("#16a34a" if action == "SUBMIT IFT" else "#64748b")
         st.markdown(
             f"""
             <div class="small-kpi" style="border-left: 5px solid {reason_color};">
@@ -726,7 +772,7 @@ def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
         {
             "Regime": "EMERGENCY DISPATCH",
             "Score Range": "-50",
-            "Base Allocation": "G 90 / C 0 / I 0 / S 0 / F 10",
+            "Base Allocation": "G 90 / C 0 / I 0 / S 0 / F 10 (or G 100 / F 0)",
             "Profile": "Maximum defense",
             "Notes": "3-day panic valve breach."
         },
@@ -782,6 +828,13 @@ with st.sidebar:
     confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1)
     cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1)
 
+    st.header("Macro & Fundamentals (Defaults)")
+    core_pce_yoy = st.number_input("Core PCE YoY %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1)
+    ism_pmi = st.number_input("ISM PMI", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5)
+    shiller_cape = st.number_input("Shiller CAPE", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5)
+    fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth YoY %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5)
+    market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5)
+
     st.header("State Controls")
     mark_ift = st.button("✅ Mark IFT Used Today")
     reset_state_btn = st.button("♻️ Reset State File")
@@ -794,6 +847,11 @@ if save_config_btn:
     cfg["score_change_threshold"] = int(score_change_threshold)
     cfg["confirmation_days"] = int(confirmation_days)
     cfg["cooldown_days"] = int(cooldown_days)
+    cfg["core_pce_yoy"] = float(core_pce_yoy)
+    cfg["ism_pmi"] = float(ism_pmi)
+    cfg["shiller_cape"] = float(shiller_cape)
+    cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
+    cfg["market_breadth_pct"] = float(market_breadth_pct)
     save_config(cfg)
     st.sidebar.success("Config saved.")
 
@@ -820,6 +878,14 @@ if run:
         snapshot = get_market_snapshot()
         market_data = snapshot["market_data"]
         market_sources = snapshot["market_sources"]
+
+        # Override defaults with user defined config settings
+        market_data["core_pce_yoy"] = core_pce_yoy
+        market_data["ism_pmi"] = ism_pmi
+        market_data["shiller_cape"] = shiller_cape
+        market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
+        market_data["market_breadth_pct"] = market_breadth_pct
+
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
     emergency_triggered = (total_score == -50)
@@ -855,6 +921,11 @@ if run:
     cfg["score_change_threshold"] = int(score_change_threshold)
     cfg["confirmation_days"] = int(confirmation_days)
     cfg["cooldown_days"] = int(cooldown_days)
+    cfg["core_pce_yoy"] = float(core_pce_yoy)
+    cfg["ism_pmi"] = float(ism_pmi)
+    cfg["shiller_cape"] = float(shiller_cape)
+    cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
+    cfg["market_breadth_pct"] = float(market_breadth_pct)
     save_config(cfg)
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
@@ -897,6 +968,32 @@ if run:
         st.json(baseline)
 
     with tab2:
+        # Panic Valve Auditing & Verification Displays
+        st.markdown("### 🚨 Panic Valve & Emergency Dispatch Diagnostic")
+        pv_cols = st.columns(3)
+        with pv_cols[0]:
+            vix_status = "🔴 TRIGGERED (VIX >= 30)" if market_data.get("vix_3d_panic") else "🟢 Normal"
+            vix_hist_str = ", ".join(map(str, market_data.get("vix_last_3", []))) if market_data.get("vix_last_3") else "N/A"
+            st.markdown(
+                score_card_html("VIX 3-Day State", vix_status, f"Last 3 closes: [{vix_hist_str}]", "#dc2626" if market_data.get("vix_3d_panic") else "#16a34a", "⚠️"),
+                unsafe_allow_html=True,
+            )
+        with pv_cols[1]:
+            spx_status = "🔴 TRIGGERED (SMA Dist <= -5%)" if market_data.get("spx_3d_panic") else "🟢 Normal"
+            spx_hist_str = ", ".join(map(str, market_data.get("spx_dist_last_3", []))) if market_data.get("spx_dist_last_3") else "N/A"
+            st.markdown(
+                score_card_html("SPX 200SMA 3-Day State", spx_status, f"Last 3 dist %: [{spx_hist_str}]", "#dc2626" if market_data.get("spx_3d_panic") else "#16a34a", "⚠️"),
+                unsafe_allow_html=True,
+            )
+        with pv_cols[2]:
+            breadth_val = market_data.get("market_breadth_pct", 0.0)
+            override_active = breadth_val > 60.0
+            breadth_status = "🟢 ACTIVE (Breadth > 60%)" if override_active else "🔴 INACTIVE"
+            st.markdown(
+                score_card_html("Breadth Override State", breadth_status, f"Current Breadth: {breadth_val}%", "#16a34a" if override_active else "#dc2626", "🛡️"),
+                unsafe_allow_html=True,
+            )
+
         st.markdown("### Factor Scores")
         score_order = [
             ("inflation", "Inflation"),
@@ -961,16 +1058,12 @@ if run:
         # Colored visual indicators for the current engine regime
         if regime == "RISK-ON OVERRIDE":
             st.success(f"🟢 Current Regime: {regime}")
-        
         elif regime == "OPTIMIZED NEUTRAL":
             st.info(f"🟡 Current Regime: {regime}")
-        
         elif regime == "DEFENSIVE ALLOCATION":
             st.warning(f"🟠 Current Regime: {regime}")
-        
         elif regime == "EMERGENCY DISPATCH":
             st.error(f"🔴 Current Regime: {regime}")
-        
         else:
             st.write(f"Current Regime: {regime}")
         
