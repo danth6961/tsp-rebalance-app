@@ -14,13 +14,14 @@ from typing import Optional, List, Tuple, Dict, Any
 import pandas as pd
 import yfinance as yf
 import streamlit as st
+import plotly.graph_objects as go
 
 
 # ==============================================================================
 # PAGE CONFIG
 # ==============================================================================
 
-st.set_page_config(page_title="TSP Rebalance Engine", layout="wide")
+st.set_page_config(page_title="TSP Rebalance Engine", layout="wide", page_icon="📊")
 
 
 # ==============================================================================
@@ -50,7 +51,7 @@ DEFAULTS = {
 
 
 # ==============================================================================
-# UI STYLING
+# THEME / STYLING
 # ==============================================================================
 
 def inject_custom_css():
@@ -58,31 +59,44 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 1.5rem;
+            padding-top: 1.25rem;
             padding-bottom: 2rem;
-            padding-left: 2rem;
-            padding-right: 2rem;
-            max-width: 1400px;
+            padding-left: 1.8rem;
+            padding-right: 1.8rem;
+            max-width: 1500px;
         }
 
-        h1 {
-            font-size: 2.3rem !important;
-            margin-bottom: 0.2rem !important;
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 0.8rem;
         }
 
-        .subtle-caption {
-            color: #6b7280;
+        .app-title {
+            font-size: 2.4rem;
+            font-weight: 800;
+            line-height: 1.1;
+            margin: 0;
+        }
+
+        .app-subtitle {
+            color: #94a3b8;
             font-size: 0.98rem;
-            margin-top: -0.25rem;
-            margin-bottom: 1rem;
+            margin-top: 0.25rem;
+        }
+
+        .muted {
+            color: #94a3b8;
         }
 
         .hero-card {
-            border: 1px solid rgba(128,128,128,0.2);
+            border: 1px solid rgba(148,163,184,0.18);
             border-radius: 18px;
-            padding: 1rem 1.25rem;
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            padding: 1rem 1.15rem;
+            background: rgba(15, 23, 42, 0.72);
+            box-shadow: 0 8px 28px rgba(0,0,0,0.20);
             margin-bottom: 1rem;
         }
 
@@ -90,34 +104,102 @@ def inject_custom_css():
             display: inline-block;
             padding: 0.38rem 0.8rem;
             border-radius: 999px;
-            font-weight: 700;
-            font-size: 0.85rem;
+            font-weight: 800;
+            font-size: 0.82rem;
+            letter-spacing: 0.03em;
             margin-bottom: 0.75rem;
-            letter-spacing: 0.02em;
         }
 
-        .badge-green { background: #dcfce7; color: #166534; }
-        .badge-blue  { background: #dbeafe; color: #1d4ed8; }
-        .badge-amber { background: #fef3c7; color: #92400e; }
-        .badge-red   { background: #fee2e2; color: #991b1b; }
-        .badge-gray  { background: #e5e7eb; color: #374151; }
+        .badge-green { background: rgba(34,197,94,0.18); color: #4ade80; border: 1px solid rgba(34,197,94,0.35); }
+        .badge-blue  { background: rgba(59,130,246,0.18); color: #60a5fa; border: 1px solid rgba(59,130,246,0.35); }
+        .badge-amber { background: rgba(245,158,11,0.18); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
+        .badge-red   { background: rgba(239,68,68,0.18); color: #f87171; border: 1px solid rgba(239,68,68,0.35); }
+        .badge-gray  { background: rgba(148,163,184,0.14); color: #cbd5e1; border: 1px solid rgba(148,163,184,0.25); }
 
         div[data-testid="metric-container"] {
-            background-color: #ffffff;
-            border: 1px solid rgba(128,128,128,0.18);
-            padding: 0.75rem 1rem;
-            border-radius: 14px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+            background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(15,23,42,0.84));
+            border: 1px solid rgba(148,163,184,0.18);
+            padding: 0.85rem 1rem;
+            border-radius: 16px;
+            box-shadow: 0 8px 18px rgba(0,0,0,0.14);
+        }
+
+        div[data-testid="metric-container"] label {
+            color: #94a3b8 !important;
+            font-weight: 600 !important;
+        }
+
+        div[data-testid="metric-container"] div[data-testid="metric-value"] {
+            color: #f8fafc !important;
+            font-weight: 800 !important;
         }
 
         [data-testid="stSidebar"] {
-            background: #f8fafc;
+            background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+            border-right: 1px solid rgba(148,163,184,0.14);
+        }
+
+        [data-testid="stSidebar"] * {
+            color: #e2e8f0;
+        }
+
+        .finance-card {
+            border: 1px solid rgba(148,163,184,0.18);
+            border-radius: 18px;
+            padding: 1rem;
+            background: rgba(15,23,42,0.72);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.16);
         }
 
         .section-title {
-            font-size: 1.1rem;
+            font-size: 1.05rem;
+            font-weight: 800;
+            margin: 0.2rem 0 0.7rem 0;
+            color: #e2e8f0;
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.5rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            background: rgba(15,23,42,0.60);
+            border-radius: 12px 12px 0 0;
+            padding: 0.65rem 1rem;
+            border: 1px solid rgba(148,163,184,0.14);
+        }
+
+        .stTabs [aria-selected="true"] {
+            background: rgba(37,99,235,0.20) !important;
+            border-color: rgba(59,130,246,0.45) !important;
+        }
+
+        .small-kpi {
+            padding: 0.8rem 0.9rem;
+            border-radius: 14px;
+            border: 1px solid rgba(148,163,184,0.16);
+            background: rgba(15,23,42,0.65);
+        }
+
+        .small-kpi-title {
+            font-size: 0.78rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.3rem;
             font-weight: 700;
-            margin: 1.2rem 0 0.5rem 0;
+        }
+
+        .small-kpi-value {
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: #f8fafc;
+        }
+
+        .small-kpi-note {
+            font-size: 0.82rem;
+            color: #94a3b8;
+            margin-top: 0.2rem;
         }
         </style>
         """,
@@ -138,9 +220,16 @@ def regime_badge(regime: str) -> str:
 
 
 inject_custom_css()
-st.markdown("<h1>TSP Rebalance Engine</h1>", unsafe_allow_html=True)
+
 st.markdown(
-    "<div class='subtle-caption'>Decision support dashboard for TSP allocation management and IFT discipline.</div>",
+    """
+    <div class="app-header">
+        <div>
+            <div class="app-title">📊 TSP Rebalance Engine</div>
+            <div class="app-subtitle">Professional allocation dashboard for daily TSP monitoring, regime detection, and IFT discipline.</div>
+        </div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -184,13 +273,6 @@ def append_log_row(row: Dict[str, Any]) -> None:
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
-
-
-def fmt_num(x, digits=2, suffix=""):
-    x = safe_float(x, None)
-    if x is None:
-        return "N/A"
-    return f"{x:.{digits}f}{suffix}"
 
 
 def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -410,7 +492,7 @@ def get_market_snapshot() -> Dict[str, Any]:
 
 
 # ==============================================================================
-# ENGINE / IFT DECISION
+# ENGINE
 # ==============================================================================
 
 def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
@@ -557,19 +639,63 @@ def should_use_tsp_ift(
 
 
 # ==============================================================================
-# DISPLAY HELPERS
+# CHARTS / DISPLAY
 # ==============================================================================
 
 def render_metric_cards(total_score, regime, action, ift_used, reason):
-    st.markdown("<div class='hero-card'>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.markdown(
+            f"""
+            <div class="small-kpi" style="border-left: 5px solid #3b82f6;">
+                <div class="small-kpi-title">Composite Score</div>
+                <div class="small-kpi-value">{total_score}</div>
+                <div class="small-kpi-note">Higher is more risk-on</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c2:
+        st.markdown(
+            f"""
+            <div class="small-kpi" style="border-left: 5px solid #22c55e;">
+                <div class="small-kpi-title">Action</div>
+                <div class="small-kpi-value">{action}</div>
+                <div class="small-kpi-note">Decision recommendation</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c3:
+        st.markdown(
+            f"""
+            <div class="small-kpi" style="border-left: 5px solid #f59e0b;">
+                <div class="small-kpi-title">IFTs Used</div>
+                <div class="small-kpi-value">{ift_used}/2</div>
+                <div class="small-kpi-note">Monthly transfer count</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c4:
+        st.markdown(
+            f"""
+            <div class="small-kpi" style="border-left: 5px solid #a78bfa;">
+                <div class="small-kpi-title">Regime</div>
+                <div class="small-kpi-value" style="font-size:1.0rem;">{regime}</div>
+                <div class="small-kpi-note">Model state</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='margin-top: 0.4rem;'></div>", unsafe_allow_html=True)
     st.markdown(regime_badge(regime), unsafe_allow_html=True)
     st.caption(reason)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Composite Score", total_score)
-    c2.metric("Action", action)
-    c3.metric("IFTs Used", f"{ift_used}/2")
-    c4.metric("Regime", regime)
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def make_score_chart(state: Dict[str, Any]):
@@ -581,11 +707,50 @@ def make_score_chart(state: Dict[str, Any]):
     }).set_index("Run")
 
 
-def make_alloc_chart(target_alloc: Dict[str, float]):
+def make_alloc_chart(target_alloc: Dict[str, float], current_alloc: Dict[str, float]):
+    funds = ["G", "C", "I", "S", "F"]
     return pd.DataFrame({
-        "Fund": ["G", "C", "I", "S", "F"],
-        "Weight": [target_alloc.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
-    }).set_index("Fund")
+        "Fund": funds,
+        "Current": [current_alloc.get(f, 0.0) for f in funds],
+        "Target": [target_alloc.get(f, 0.0) for f in funds],
+    })
+
+
+def plot_allocation_comparison(df: pd.DataFrame):
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=df["Fund"],
+        y=df["Current"],
+        name="Current",
+        marker_color="#64748b",
+        text=[f"{v:.1f}%" for v in df["Current"]],
+        textposition="outside",
+        cliponaxis=False,
+    ))
+
+    fig.add_trace(go.Bar(
+        x=df["Fund"],
+        y=df["Target"],
+        name="Target",
+        marker_color="#22c55e",
+        text=[f"{v:.1f}%" for v in df["Target"]],
+        textposition="outside",
+        cliponaxis=False,
+    ))
+
+    fig.update_layout(
+        barmode="group",
+        height=430,
+        margin=dict(l=20, r=20, t=30, b=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,0.3)",
+        font=dict(color="#e2e8f0"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(title="Allocation %", gridcolor="rgba(148,163,184,0.18)", rangemode="tozero"),
+        xaxis=dict(title="Fund"),
+    )
+    return fig
 
 
 def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
@@ -637,6 +802,8 @@ cfg = load_config()
 # ==============================================================================
 
 with st.sidebar:
+    st.markdown("## ⚙️ Controls")
+
     st.header("Current Allocation")
     current_alloc = {
         "G": st.number_input("G %", value=float(cfg.get("current_alloc", {}).get("G", 40.0)), step=1.0),
@@ -654,9 +821,9 @@ with st.sidebar:
     cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1)
 
     st.header("State Controls")
-    mark_ift = st.button("Mark IFT Used Today")
-    reset_state_btn = st.button("Reset State File")
-    save_config_btn = st.button("Save Config")
+    mark_ift = st.button("✅ Mark IFT Used Today")
+    reset_state_btn = st.button("♻️ Reset State File")
+    save_config_btn = st.button("💾 Save Config")
 
 if save_config_btn:
     cfg["current_alloc"] = current_alloc
@@ -681,10 +848,10 @@ if reset_state_btn:
 
 
 # ==============================================================================
-# MAIN ACTION
+# MAIN
 # ==============================================================================
 
-run = st.button("Fetch & Run Engine")
+run = st.button("🚀 Fetch & Run Engine")
 
 if run:
     with st.spinner("Loading live data and running engine..."):
@@ -728,23 +895,21 @@ if run:
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Allocation", "Factors", "History", "Logs & State"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Allocation", "🧠 Factors", "🕒 History", "📁 Logs & State"])
 
     with tab1:
-        st.markdown("### Allocation View")
-        alloc_df = pd.DataFrame({
-            "Fund": ["G", "C", "I", "S", "F"],
-            "Current": [current_alloc[f] for f in ["G", "C", "I", "S", "F"]],
-            "Target": [allocations.get(f, 0.0) for f in ["G", "C", "I", "S", "F"]],
-        })
+        st.markdown("### Allocation Comparison")
+        alloc_df = make_alloc_chart(allocations, current_alloc)
+        st.plotly_chart(plot_allocation_comparison(alloc_df), use_container_width=True)
+
         alloc_df["Drift"] = (alloc_df["Target"] - alloc_df["Current"]).round(1)
         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
-        st.bar_chart(alloc_df.set_index("Fund")[["Current", "Target"]])
+
         st.markdown("### Baseline Allocation")
         st.json(baseline)
 
     with tab2:
-        left_col, right_col = st.columns(2)
+        left_col, right_col = st.columns([1, 1])
         with left_col:
             st.markdown("### Factor Scores")
             st.json(factor_scores)
@@ -764,7 +929,7 @@ if run:
         else:
             st.info("No score history yet.")
 
-        st.markdown("### State Summary")
+        st.markdown("### Recent State")
         st.json({
             "month": state["month"],
             "ift_count_this_month": state["ift_count_this_month"],
