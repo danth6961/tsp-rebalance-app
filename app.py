@@ -938,8 +938,12 @@ if clear_logs_btn:
 
 
 # ==============================================================================
-# MAIN ENGINE EXECUTION
+# MAIN ENGINE EXECUTION (Robust Session Persistence Enabled)
 # ==============================================================================
+
+if "engine_ran" not in st.session_state:
+    st.session_state["engine_ran"] = False
+    st.session_state["engine_results"] = {}
 
 run = st.button("🚀 Fetch & Run Engine", use_container_width=True)
 
@@ -1010,6 +1014,52 @@ if run:
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
     save_config(cfg)
+
+    append_log_row({
+        "date": today.isoformat(),
+        "action": action,
+        "reason": reason,
+        "regime": regime,
+        "total_score": total_score,
+        "ift_count_this_month": state["ift_count_this_month"],
+        "current_alloc": json.dumps(current_alloc),
+        "target_alloc": json.dumps(allocations),
+        "vix": market_data["vix_spot"],
+        "spx_200sma_dist": market_data["pct_dist_200_sma"],
+        "drawdown_pct": market_data["drawdown_pct"],
+    })
+
+    # Save outputs to memory to protect against resetting during user clicks
+    st.session_state["engine_results"] = {
+        "market_data": market_data,
+        "market_sources": market_sources,
+        "allocations": allocations,
+        "factor_scores": factor_scores,
+        "total_score": total_score,
+        "regime": regime,
+        "baseline": baseline,
+        "action": action,
+        "reason": reason,
+    }
+    st.session_state["engine_ran"] = True
+
+
+# ==============================================================================
+# DASHBOARD LAYOUT & TABS
+# ==============================================================================
+
+if st.session_state["engine_ran"]:
+    # Retrieve active outputs from persistent session memory
+    res = st.session_state["engine_results"]
+    market_data = res["market_data"]
+    market_sources = res["market_sources"]
+    allocations = res["allocations"]
+    factor_scores = res["factor_scores"]
+    total_score = res["total_score"]
+    regime = res["regime"]
+    baseline = res["baseline"]
+    action = res["action"]
+    reason = res["reason"]
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
@@ -1182,7 +1232,7 @@ if run:
             )
             timeframe_selected = st.selectbox(
                 "Select Performance Chart Timeframe",
-                options=["1 Month", "3 Months", "6 Months", "1 Year"],
+                options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"],
                 index=3
             )
 
@@ -1191,7 +1241,9 @@ if run:
             "1 Month": "1mo",
             "3 Months": "3mo",
             "6 Months": "6mo",
-            "1 Year": "1y"
+            "1 Year": "1y",
+            "5 Years": "5y",
+            "10 Years": "10y"
         }
         period = period_map[timeframe_selected]
 
@@ -1327,20 +1379,6 @@ if run:
                 )
         else:
             st.info("No log file yet.")
-
-    append_log_row({
-        "date": today.isoformat(),
-        "action": action,
-        "reason": reason,
-        "regime": regime,
-        "total_score": total_score,
-        "ift_count_this_month": state["ift_count_this_month"],
-        "current_alloc": json.dumps(current_alloc),
-        "target_alloc": json.dumps(allocations),
-        "vix": market_data["vix_spot"],
-        "spx_200sma_dist": market_data["pct_dist_200_sma"],
-        "drawdown_pct": market_data["drawdown_pct"],
-    })
 
 else:
     st.info("Use the sidebar to set allocations and policy, then click **Fetch & Run Engine**.")
