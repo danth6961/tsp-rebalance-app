@@ -471,8 +471,35 @@ def fetch_shiller_cape_live() -> Optional[float]:
         return None
 
 
+def fetch_barchart_s5th_fallback() -> Optional[float]:
+    """Fallback scraper that parses the real-time S&P 500 stocks above 200-day average percentage from Barchart."""
+    url = "https://www.barchart.com/stocks/quotes/$S5TH"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode('utf-8')
+            
+        for pattern in [
+            r'"lastPrice"\s*:\s*"?([0-9\.]+)"?',
+            r'"last"\s*:\s*"?([0-9\.]+)"?',
+            r'class="[^"]*price[^"]*"\s*>\s*([0-9\.]+)\s*<'
+        ]:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                val = float(match.group(1))
+                if 0.0 <= val <= 100.0:
+                    return val
+    except Exception:
+        pass
+    return None
+
+
 def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d") -> List[float]:
     def _load():
+        # First attempt: standard download
         df = yf.download(
             ticker,
             period=period,
@@ -481,23 +508,37 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
             progress=False,
             threads=False,
         )
-        if df is None or df.empty:
-            return []
-
-        if isinstance(df.columns, pd.MultiIndex):
-            if ("Close", ticker) in df.columns:
-                close = df[("Close", ticker)]
+        if df is not None and not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                if ("Close", ticker) in df.columns:
+                    close = df[("Close", ticker)]
+                else:
+                    close_candidates = [c for c in df.columns if c[0] == "Close"]
+                    if close_candidates:
+                        close = df[close_candidates[0]]
+                    else:
+                        close = pd.Series()
             else:
-                close_candidates = [c for c in df.columns if c[0] == "Close"]
-                if not close_candidates:
-                    return []
-                close = df[close_candidates[0]]
-        else:
-            if "Close" not in df.columns:
-                return []
-            close = df["Close"]
-
-        return pd.to_numeric(close, errors="coerce").dropna().astype(float).tolist()
+                close = df.get("Close", pd.Series())
+            
+            closes_list = pd.to_numeric(close, errors="coerce").dropna().astype(float).tolist()
+            if closes_list:
+                return closes_list
+                
+        # Second attempt: Ticker history fallback (highly robust for custom indexes)
+        try:
+            t = yf.Ticker(ticker)
+            history_df = t.history(period=period, interval=interval)
+            if history_df is not None and not history_df.empty:
+                close_series = history_df.get("Close")
+                if close_series is not None and not close_series.empty:
+                    closes_list = pd.to_numeric(close_series, errors="coerce").dropna().astype(float).tolist()
+                    if closes_list:
+                        return closes_list
+        except Exception:
+            pass
+            
+        return []
 
     try:
         return retry_call(_load)
@@ -579,6 +620,11 @@ def cached_shiller_cape_live() -> Optional[float]:
 
 
 @st.cache_data(ttl=900)
+def cached_barchart_s5th() -> Optional[float]:
+    return fetch_barchart_s5th_fallback()
+
+
+@st.cache_data(ttl=900)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
@@ -591,7 +637,7 @@ def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
 @st.cache_data(ttl=900)
 def get_market_snapshot() -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=9) as executor:
+    with ThreadPoolExecutor(max_workers=11) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
@@ -603,6 +649,7 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "DX-Y.NYB", "1mo", "1d"): "dxy_closes",
             executor.submit(cached_yahoo_closes, "^GSPC", "1y", "1d"): "spx_closes",
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
+            executor.submit(cached_barchart_s5th): "barchart_breadth",
         }
         for future in as_completed(futures):
             key = futures[future]
@@ -623,8 +670,9 @@ def get_market_snapshot() -> Dict[str, Any]:
     te_pmi = te_live.get("ism_pmi")
     
     shiller_cape = results.get("shiller_cape_val")
-    live_breadth = breadth_closes[-1] if breadth_closes else None
-
+    live_breadth = None
+    breadth_source = "CONFIG/DEFAULT"
+    
     # Core PCE YoY: Prioritize Trading Economics, Fallback to FRED index YoY, Fallback to defaults
     if te_pce is not None:
         final_pce = te_pce
@@ -645,6 +693,19 @@ def get_market_snapshot() -> Dict[str, Any]:
     else:
         final_pmi = DEFAULTS["ism_pmi"]
         pmi_source = "CONFIG/DEFAULT"
+
+    # Breadth Logic: Prioritize Yahoo Finance closes, fallback to Barchart HTML scrape, fallback to default
+    if breadth_closes:
+        live_breadth = breadth_closes[-1]
+        breadth_source = "LIVE (Yahoo Finance ^S5TH)"
+    else:
+        b_breadth = results.get("barchart_breadth")
+        if b_breadth is not None:
+            live_breadth = b_breadth
+            breadth_source = "LIVE (Barchart $S5TH Scraping)"
+        else:
+            live_breadth = DEFAULTS["market_breadth_pct"]
+            breadth_source = "CONFIG/DEFAULT"
 
     # 3-day Panic Valve Logic Evaluations
     vix_3d_panic = False
@@ -681,7 +742,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else DEFAULTS["stlfsi_index"],
         "bond_yield_10y": results.get("bond_val") if results.get("bond_val") is not None else DEFAULTS["bond_yield_10y"],
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
-        "market_breadth_pct": live_breadth if live_breadth is not None else DEFAULTS["market_breadth_pct"],
+        "market_breadth_pct": live_breadth,
         "spx_spot": spx_spot,
         "vix_3d_panic": vix_3d_panic,
         "vix_last_3": vix_last_3,
@@ -703,7 +764,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "DEFAULT",
         "bond_yield_10y": "LIVE" if results.get("bond_val") is not None else "DEFAULT",
         "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
-        "market_breadth_pct": "LIVE (Yahoo Finance ^S5TH)" if live_breadth is not None else "CONFIG/DEFAULT",
+        "market_breadth_pct": breadth_source,
         "spx_spot": "LIVE" if spx_closes else "DEFAULT",
     }
 
@@ -1047,7 +1108,7 @@ with st.sidebar:
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
 
     with st.expander("📊 Market Overrides (Advanced)", expanded=False):
-        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation from Trading Economics (with FRED YoY as fallback), reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation and ISM Manufacturing PMI from Trading Economics, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
         st.markdown("---")
         st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
@@ -1320,11 +1381,11 @@ if st.session_state["engine_ran"]:
                 unsafe_allow_html=True,
             )
         with pv_cols[2]:
-            breadth_val = market_data.get("market_breadth_pct", 0.0)
-            override_active = breadth_val > 60.0
-            breadth_status = "🟢 ACTIVE (Breadth > 60%)" if override_active else "🔴 INACTIVE"
+            breadth_val = market_data.get("market_breadth_pct")
+            override_active = breadth_val > 60.0 if breadth_val is not None else False
+            breadth_status = f"🟢 ACTIVE (Breadth: {breadth_val:.2f}% > 60%)" if override_active else "🔴 INACTIVE"
             st.markdown(
-                score_card_html("Breadth Override State", breadth_status, f"Current Breadth: {breadth_val}%", "#16a34a" if override_active else "#dc2626", "🛡️"),
+                score_card_html("Breadth Override State", breadth_status, f"Current Breadth: {f'{breadth_val:.2f}%' if breadth_val is not None else 'N/A'}", "#16a34a" if override_active else "#dc2626", "🛡️"),
                 unsafe_allow_html=True,
             )
 
@@ -1370,11 +1431,13 @@ if st.session_state["engine_ran"]:
         market_cols = st.columns(4)
         for i, (label, value, source) in enumerate(market_items):
             with market_cols[i % 4]:
+                # Format floats cleanly
+                val_formatted = f"{value:.2f}%" if label in ["Core PCE YoY", "Breadth %"] and isinstance(value, (int, float)) else (f"{value:.2f}" if isinstance(value, (int, float)) else str(value))
                 st.markdown(
                     f"""
                     <div class="small-kpi" style="margin-bottom:0.6rem;">
                         <div class="small-kpi-title">{label}</div>
-                        <div class="small-kpi-value">{value if value is not None else 'N/A'}</div>
+                        <div class="small-kpi-value">{val_formatted if value is not None else 'N/A'}</div>
                         <div class="small-kpi-note">{source_pill_html(source)}</div>
                     </div>
                     """,
