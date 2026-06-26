@@ -1110,14 +1110,59 @@ if run:
         else:
             st.info("No score history yet.")
 
-        st.markdown("### Recent State")
-        st.json({
-            "month": state["month"],
-            "ift_count_this_month": state["ift_count_this_month"],
-            "last_ift_date": state["last_ift_date"],
-            "recent_regimes": state["recent_regimes"],
-            "recent_scores": state["recent_scores"],
-        })
+        st.markdown("---")
+        st.markdown("### Recent State Overview")
+        
+        # Display meta metrics side-by-side using Streamlit columns
+        state_cols = st.columns(3)
+        with state_cols[0]:
+            st.metric(label="Current Tracking Month", value=state.get("month") or "N/A")
+        with state_cols[1]:
+            st.metric(label="IFTs Used This Month", value=f"{state.get('ift_count_this_month', 0)} / 2")
+        with state_cols[2]:
+            last_date = state.get("last_ift_date")
+            st.metric(label="Last IFT Date", value=str(last_date) if last_date else "None")
+            
+        st.markdown("### Run History Log")
+        
+        # Combine historical tracking lists into a readable chronological table
+        regimes = state.get("recent_regimes", [])
+        scores = state.get("recent_scores", [])
+        allocations_list = state.get("recent_allocations", [])
+        
+        if regimes and scores:
+            # Pad allocations list in case it has fewer entries than regimes
+            while len(allocations_list) < len(regimes):
+                allocations_list.append({})
+                
+            history_data = []
+            for idx in range(len(regimes)):
+                alloc = allocations_list[idx]
+                alloc_str = " / ".join([f"{k} {alloc.get(k, 0.0):.1f}%" for k in ["G", "C", "I", "S", "F"]]) if alloc else "N/A"
+                
+                history_data.append({
+                    "Run #": idx + 1,
+                    "Regime Status": regimes[idx],
+                    "Engine Score": scores[idx],
+                    "Target Portfolio": alloc_str
+                })
+            
+            # Reverse so that the most recent execution appears at the top
+            history_df = pd.DataFrame(history_data).iloc[::-1]
+            
+            st.dataframe(
+                history_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Run #": st.column_config.NumberColumn("Run ID", format="%d"),
+                    "Regime Status": st.column_config.TextColumn("Regime Status"),
+                    "Engine Score": st.column_config.NumberColumn("Engine Score"),
+                    "Target Portfolio": st.column_config.TextColumn("Target Portfolio Allocation Summary")
+                }
+            )
+        else:
+            st.info("No historical runs tracked yet.")
 
     with tab4:
         st.markdown("### Log Viewer")
