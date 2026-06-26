@@ -953,6 +953,44 @@ if run:
         st.markdown("### Regime Summary")
         regime_summary_df = make_regime_summary_df(regime)
         st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
+        st.markdown("---")
+st.markdown("## 🔍 Engine Explanation")
+
+st.write(f"### Composite Score: **{total_score}**")
+st.write(f"### Current Regime: **{regime}**")
+st.write(f"### Recommended Action: **{action}**")
+
+st.markdown("### Factor Breakdown")
+
+for factor, score in factor_scores.items():
+
+    if score > 0:
+        emoji = "🟢"
+        meaning = "Positive"
+    elif score < 0:
+        emoji = "🔴"
+        meaning = "Negative"
+    else:
+        emoji = "🟡"
+        meaning = "Neutral"
+
+    st.write(f"{emoji} **{factor.replace('_',' ').title()}**: {score} ({meaning})")
+
+st.markdown("### Overlays Applied")
+
+if vol_t:
+    st.success("✔ Asymmetric Volatility Overlay Activated")
+else:
+    st.info("No Volatility Overlay")
+
+if dxy_t:
+    st.success("✔ Strong Dollar Overlay Activated")
+else:
+    st.info("No Dollar Overlay")
+
+st.markdown("### IFT Decision")
+
+st.write(reason)
 
     with tab3:
         st.markdown("### Score History")
