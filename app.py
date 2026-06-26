@@ -53,6 +53,15 @@ DEFAULTS = {
     "dxy_spot": 105.80,
 }
 
+# Standard liquid ETFs that approximate the respective TSP funds
+PROXIES = {
+    "C Fund (S&P 500 Stock Index)": "SPY",
+    "S Fund (Mid/Small Cap Stock Index)": "VXF",
+    "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
+    "F Fund (U.S. Aggregate Bond Index)": "AGG",
+    "G Fund (Short-Term U.S. Treasury Bills)": "BIL"
+}
+
 
 # ==============================================================================
 # STYLE (Dark-Mode Compliant & Modern Cards)
@@ -384,6 +393,44 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
         return []
 
 
+def fetch_yfinance_dataframe(ticker: str, period: str = "1y") -> pd.DataFrame:
+    def _load():
+        df = yf.download(
+            ticker,
+            period=period,
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        if isinstance(df.columns, pd.MultiIndex):
+            if ("Close", ticker) in df.columns:
+                close_series = df[("Close", ticker)]
+            else:
+                close_candidates = [c for c in df.columns if c[0] == "Close"]
+                if not close_candidates:
+                    return pd.DataFrame()
+                close_series = df[close_candidates[0]]
+        else:
+            if "Close" not in df.columns:
+                return pd.DataFrame()
+            close_series = df["Close"]
+
+        clean_df = pd.DataFrame({
+            "Date": close_series.index,
+            "Price": pd.to_numeric(close_series.values, errors="coerce")
+        }).dropna()
+        return clean_df
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return pd.DataFrame()
+
+
 def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, float]:
     if len(closes) < 200:
         return 0.0, 0.0, 0.0
@@ -396,7 +443,7 @@ def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, flo
 
 
 # ==============================================================================
-# CACHED MARKET SNAPSHOT
+# CACHED SNAPSHOTS
 # ==============================================================================
 
 @st.cache_data(ttl=900)
@@ -407,6 +454,11 @@ def cached_fred(series_id: str) -> Optional[float]:
 @st.cache_data(ttl=900)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
+
+
+@st.cache_data(ttl=900)
+def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
+    return fetch_yfinance_dataframe(ticker, period)
 
 
 @st.cache_data(ttl=900)
@@ -845,6 +897,7 @@ with st.sidebar:
     st.markdown("---")
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True, help="Resets your transfer counters back to zero.")
+    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True, help="Removes the daily logs CSV file permanently.")
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and safety preferences permanently.")
 
 if save_config_btn:
@@ -872,6 +925,16 @@ if reset_state_btn:
     state = default_state()
     save_state(state)
     st.sidebar.warning("State reset.")
+
+if clear_logs_btn:
+    try:
+        if LOG_FILE.exists():
+            LOG_FILE.unlink()
+            st.sidebar.success("Log file successfully deleted.")
+        else:
+            st.sidebar.info("No log file exists to delete.")
+    except Exception as e:
+        st.sidebar.error(f"Error deleting log file: {e}")
 
 
 # ==============================================================================
@@ -950,7 +1013,7 @@ if run:
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Allocation", "🧠 Factors", "🕒 History", "📁 Logs & State"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
 
     with tab1:
         st.markdown("### Allocation Comparison")
@@ -1101,8 +1164,68 @@ if run:
             st.error(f"🔴 Current Regime: {regime}")
         else:
             st.write(f"Current Regime: {regime}")
-        
+
     with tab3:
+        st.markdown("### Live TSP Fund Proxy Price Tracking")
+        st.write(
+            "The Federal Retirement Thrift Investment Board does not provide direct tickers. "
+            "The charts below plot standard liquid exchange-traded funds (ETFs) that closely proxy "
+            "each TSP asset class. The **I Fund** tracks its transition to its broad global "
+            "MSCI ACWI ex USA ex China ex HK index using **ACWX**."
+        )
+
+        col_chart_1, col_chart_2 = st.columns([1, 3])
+        with col_chart_1:
+            fund_selected = st.selectbox(
+                "Select TSP Fund to Plot",
+                options=list(PROXIES.keys())
+            )
+            timeframe_selected = st.selectbox(
+                "Select Performance Chart Timeframe",
+                options=["1 Month", "3 Months", "6 Months", "1 Year"],
+                index=3
+            )
+
+        ticker = PROXIES[fund_selected]
+        period_map = {
+            "1 Month": "1mo",
+            "3 Months": "3mo",
+            "6 Months": "6mo",
+            "1 Year": "1y"
+        }
+        period = period_map[timeframe_selected]
+
+        with st.spinner(f"Loading live price history for {ticker}..."):
+            proxy_df = get_cached_proxy_df(ticker, period)
+
+        if not proxy_df.empty:
+            dates = proxy_df["Date"].tolist()
+            prices = proxy_df["Price"].tolist()
+
+            start_price = prices[0]
+            end_price = prices[-1]
+            perf_pct = ((end_price - start_price) / start_price) * 100.0
+
+            p_high = max(prices)
+            p_low = min(prices)
+
+            with col_chart_1:
+                st.markdown("---")
+                st.metric(
+                    label=f"Latest Close ({ticker})",
+                    value=f"${end_price:.2f}",
+                    delta=f"{perf_pct:+.2f}% over {timeframe_selected}"
+                )
+                st.markdown(f"**Period High:** `${p_high:.2f}`")
+                st.markdown(f"**Period Low:** `${p_low:.2f}`")
+
+            with col_chart_2:
+                plot_data = proxy_df.set_index("Date")
+                st.line_chart(plot_data, y="Price")
+        else:
+            st.error(f"Failed to fetch market data for proxy ticker: {ticker}. Please try again later.")
+        
+    with tab4:
         st.markdown("### Score History")
         score_df = make_score_chart(state)
         if score_df is not None:
@@ -1131,7 +1254,6 @@ if run:
         allocations_list = state.get("recent_allocations", [])
         
         if regimes and scores:
-            # Pad allocations list in case it has fewer entries than regimes
             while len(allocations_list) < len(regimes):
                 allocations_list.append({})
                 
@@ -1164,7 +1286,7 @@ if run:
         else:
             st.info("No historical runs tracked yet.")
 
-    with tab4:
+    with tab5:
         st.markdown("### Log Viewer")
         if LOG_FILE.exists():
             log_df = pd.read_csv(LOG_FILE)
