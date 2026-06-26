@@ -955,6 +955,8 @@ if run:
         st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
         st.markdown("---")
         st.subheader("🔍 Engine Explanation")
+        
+        st.write(f"**Composite Score:** {total_score}")
         st.write("This section will explain why the engine made its decision.")
 
     with tab3:
