@@ -330,6 +330,7 @@ def load_config() -> Dict[str, Any]:
         "ism_pmi": DEFAULTS["ism_pmi"],
         "shiller_cape": DEFAULTS["shiller_cape"],
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
+        "bond_yield_10y": DEFAULTS["bond_yield_10y"],
         "market_breadth_pct": DEFAULTS["market_breadth_pct"],
         "use_live_macro": True,
     }
@@ -1122,6 +1123,7 @@ with st.sidebar:
         ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
         shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
         fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
+        bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
         market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
 
     st.markdown("---")
@@ -1141,6 +1143,7 @@ if save_config_btn:
     cfg["ism_pmi"] = float(ism_pmi)
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
+    cfg["bond_yield_10y"] = float(bond_yield_10y)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
     cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
@@ -1203,17 +1206,19 @@ if run:
             market_data["ism_pmi"] = ism_pmi
             market_data["shiller_cape"] = shiller_cape
             market_data["market_breadth_pct"] = market_breadth_pct
+            market_data["bond_yield_10y"] = bond_yield_10y
             
             market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
             market_sources["ism_pmi"] = "MANUAL OVERRIDE"
             market_sources["shiller_cape"] = "MANUAL OVERRIDE"
             market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
+            market_sources["bond_yield_10y"] = "MANUAL OVERRIDE"
         else:
             # Revert only if live calculation returned None
-            if market_data.get("core_pce_yoy") is None:
+            if te_pce is None and fetch_fred_core_pce_yoy() is None:
                 market_data["core_pce_yoy"] = core_pce_yoy
                 market_sources["core_pce_yoy"] = "LIVE FETCH FAILED (Manual Fallback)"
-            if market_data.get("ism_pmi") is None:
+            if te_pmi is None:
                 market_data["ism_pmi"] = ism_pmi
                 market_sources["ism_pmi"] = "LIVE FETCH FAILED (Manual Fallback)"
             if market_data.get("shiller_cape") is None:
@@ -1222,6 +1227,9 @@ if run:
             if market_data.get("market_breadth_pct") is None:
                 market_data["market_breadth_pct"] = market_breadth_pct
                 market_sources["market_breadth_pct"] = "LIVE FETCH FAILED (Manual Fallback)"
+            if market_data.get("bond_yield_10y") is None:
+                market_data["bond_yield_10y"] = bond_yield_10y
+                market_sources["bond_yield_10y"] = "LIVE FETCH FAILED (Manual Fallback)"
 
         # Set variables that do not have automated feeds
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
@@ -1265,6 +1273,7 @@ if run:
     cfg["ism_pmi"] = float(ism_pmi)
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
+    cfg["bond_yield_10y"] = float(bond_yield_10y)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
     cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
