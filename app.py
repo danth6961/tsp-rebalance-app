@@ -958,21 +958,22 @@ if run:
         
         st.write(f"**Composite Score:** {total_score}")
         st.write(f"**Current Regime:** {regime}")
-            if regime == "RISK-ON OVERRIDE":
-                st.success(f"🟢 Current Regime: {regime}")
 
-            elif regime == "OPTIMIZED NEUTRAL":
-                st.info(f"🟡 Current Regime: {regime}")
+        if regime == "RISK-ON OVERRIDE":
+    st.success(f"🟢 Current Regime: {regime}")
 
-            elif regime == "DEFENSIVE ALLOCATION":
-                st.warning(f"🟠 Current Regime: {regime}")
+elif regime == "OPTIMIZED NEUTRAL":
+    st.info(f"🟡 Current Regime: {regime}")
 
-            elif regime == "EMERGENCY DISPATCH":
-                st.error(f"🔴 Current Regime: {regime}")
+elif regime == "DEFENSIVE ALLOCATION":
+    st.warning(f"🟠 Current Regime: {regime}")
 
-            else:
-                st.write(f"Current Regime: {regime}")
-        
+elif regime == "EMERGENCY DISPATCH":
+    st.error(f"🔴 Current Regime: {regime}")
+
+else:
+    st.write(f"Current Regime: {regime}")
+                    
         st.write("This section will explain why the engine made its decision.")
 
     with tab3:
