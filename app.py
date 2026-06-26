@@ -90,21 +90,19 @@ def inject_custom_css():
             margin-top: 0.25rem;
         }
 
-        .badge {
+        .pill {
             display: inline-block;
-            padding: 0.38rem 0.8rem;
+            padding: 0.22rem 0.55rem;
             border-radius: 999px;
+            font-size: 0.72rem;
             font-weight: 800;
-            font-size: 0.82rem;
-            letter-spacing: 0.03em;
-            margin-bottom: 0.65rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid rgba(148,163,184,0.18);
         }
 
-        .badge-green { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-        .badge-blue  { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
-        .badge-amber { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
-        .badge-red   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-        .badge-gray  { background: #e5e7eb; color: #374151; border: 1px solid #cbd5e1; }
+        .pill-live { background: #dcfce7; color: #166534; border-color: #86efac; }
+        .pill-default { background: #e5e7eb; color: #374151; border-color: #cbd5e1; }
 
         div[data-testid="metric-container"] {
             background: #ffffff;
@@ -427,7 +425,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     spx_closes = results.get("spx_closes") or []
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
 
-    return {
+    market_data = {
         "core_pce_yoy": DEFAULTS["core_pce_yoy"],
         "ism_pmi": DEFAULTS["ism_pmi"],
         "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else DEFAULTS["sloos_net_pct"],
@@ -444,6 +442,25 @@ def get_market_snapshot() -> Dict[str, Any]:
         "spx_spot": spx_spot,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
+
+    market_sources = {
+        "core_pce_yoy": "DEFAULT",
+        "ism_pmi": "DEFAULT",
+        "sloos_net_pct": "LIVE" if results.get("sloos_val") is not None else "DEFAULT",
+        "hy_oas": "LIVE" if results.get("hy_val") is not None else "DEFAULT",
+        "shiller_cape": "DEFAULT",
+        "fwd_eps_growth_yoy": "DEFAULT",
+        "vix_spot": "LIVE" if vix_closes else "DEFAULT",
+        "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
+        "drawdown_pct": "LIVE" if spx_closes else "DEFAULT",
+        "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "DEFAULT",
+        "bond_yield_10y": "LIVE" if results.get("bond_val") is not None else "DEFAULT",
+        "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
+        "market_breadth_pct": "DEFAULT",
+        "spx_spot": "LIVE" if spx_closes else "DEFAULT",
+    }
+
+    return {"market_data": market_data, "market_sources": market_sources}
 
 
 # ==============================================================================
@@ -728,6 +745,11 @@ def score_card_html(label: str, value: Any, note: str, color: str, icon: str) ->
     """
 
 
+def source_pill_html(source: str) -> str:
+    cls = "pill-live" if source == "LIVE" else "pill-default"
+    return f"<span class='pill {cls}'>{source}</span>"
+
+
 # ==============================================================================
 # APP STATE
 # ==============================================================================
@@ -795,7 +817,9 @@ run = st.button("🚀 Fetch & Run Engine")
 
 if run:
     with st.spinner("Loading live data and running engine..."):
-        market_data = get_market_snapshot()
+        snapshot = get_market_snapshot()
+        market_data = snapshot["market_data"]
+        market_sources = snapshot["market_sources"]
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
     emergency_triggered = (total_score == -50)
@@ -897,30 +921,30 @@ if run:
 
         st.markdown("### Market Snapshot")
         market_items = [
-            ("Core PCE YoY", market_data.get("core_pce_yoy")),
-            ("ISM PMI", market_data.get("ism_pmi")),
-            ("SLOOS Net %", market_data.get("sloos_net_pct")),
-            ("HY OAS", market_data.get("hy_oas")),
-            ("Shiller CAPE", market_data.get("shiller_cape")),
-            ("Fwd EPS Growth YoY", market_data.get("fwd_eps_growth_yoy")),
-            ("VIX Spot", market_data.get("vix_spot")),
-            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma")),
-            ("Drawdown %", market_data.get("drawdown_pct")),
-            ("STLFSI", market_data.get("stlfsi_index")),
-            ("10Y Yield", market_data.get("bond_yield_10y")),
-            ("DXY Spot", market_data.get("dxy_spot")),
-            ("Breadth %", market_data.get("market_breadth_pct")),
-            ("SPX Spot", market_data.get("spx_spot")),
+            ("Core PCE YoY", market_data.get("core_pce_yoy"), market_sources.get("core_pce_yoy")),
+            ("ISM PMI", market_data.get("ism_pmi"), market_sources.get("ism_pmi")),
+            ("SLOOS Net %", market_data.get("sloos_net_pct"), market_sources.get("sloos_net_pct")),
+            ("HY OAS", market_data.get("hy_oas"), market_sources.get("hy_oas")),
+            ("Shiller CAPE", market_data.get("shiller_cape"), market_sources.get("shiller_cape")),
+            ("Fwd EPS Growth YoY", market_data.get("fwd_eps_growth_yoy"), market_sources.get("fwd_eps_growth_yoy")),
+            ("VIX Spot", market_data.get("vix_spot"), market_sources.get("vix_spot")),
+            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma"), market_sources.get("pct_dist_200_sma")),
+            ("Drawdown %", market_data.get("drawdown_pct"), market_sources.get("drawdown_pct")),
+            ("STLFSI", market_data.get("stlfsi_index"), market_sources.get("stlfsi_index")),
+            ("10Y Yield", market_data.get("bond_yield_10y"), market_sources.get("bond_yield_10y")),
+            ("DXY Spot", market_data.get("dxy_spot"), market_sources.get("dxy_spot")),
+            ("Breadth %", market_data.get("market_breadth_pct"), market_sources.get("market_breadth_pct")),
+            ("SPX Spot", market_data.get("spx_spot"), market_sources.get("spx_spot")),
         ]
         market_cols = st.columns(4)
-        for i, (label, value) in enumerate(market_items):
+        for i, (label, value, source) in enumerate(market_items):
             with market_cols[i % 4]:
                 st.markdown(
                     f"""
                     <div class="small-kpi" style="margin-bottom:0.6rem;">
                         <div class="small-kpi-title">{label}</div>
                         <div class="small-kpi-value">{value if value is not None else 'N/A'}</div>
-                        <div class="small-kpi-note">Live or default input</div>
+                        <div class="small-kpi-note">{source_pill_html(source)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -973,6 +997,7 @@ if run:
                     "Download Latest Snapshot JSON",
                     data=json.dumps({
                         "market_data": market_data,
+                        "market_sources": market_sources,
                         "factor_scores": factor_scores,
                         "regime": regime,
                         "total_score": total_score,
