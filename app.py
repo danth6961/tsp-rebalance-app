@@ -1775,13 +1775,22 @@ if st.session_state["engine_ran"]:
                 
             card_key = f"container_{key}"
             
-            # Inject CSS override to color the full border/outline of this specific card container
+            # Inject CSS override to color the full border/outline of this specific card container to match Factor Scores cards
             st.markdown(
                 f"""
                 <style>
                 div[data-testid="stVerticalBlockBorderWrapper"]:has(.st-key-{card_key}) {{
-                    border: 2px solid {border_color} !important;
+                    border: 1px solid rgba(148, 163, 184, 0.15) !important;
+                    border-left: 5px solid {border_color} !important;
                     border-radius: 12px !important;
+                    background-color: rgba(248, 250, 252, 0.5) !important;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04) !important;
+                    transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+                }}
+                
+                div[data-testid="stVerticalBlockBorderWrapper"]:has(.st-key-{card_key}):hover {{
+                    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.07) !important;
+                    transform: translateY(-2px) !important;
                 }}
                 </style>
                 """,
@@ -1795,8 +1804,8 @@ if st.session_state["engine_ran"]:
                     
                     st.markdown(
                         clean_html(f"""
-                        <div style="margin-bottom: 2px;">
-                            <span style="font-size: 0.82rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing:0.04em;">{label}</span>
+                        <div class="small-kpi-title" style="margin-bottom: 2px;">
+                            {label}
                         </div>
                         """),
                         unsafe_allow_html=True
@@ -1813,7 +1822,7 @@ if st.session_state["engine_ran"]:
                     
                     st.markdown(
                         clean_html(f"""
-                        <div style="margin-top: -8px; margin-bottom: 4px;">
+                        <div style="margin-top: 4px;">
                             {source_pill_html(source)}
                         </div>
                         """),
