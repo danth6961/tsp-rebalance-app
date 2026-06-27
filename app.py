@@ -73,30 +73,11 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 2.5rem;
+            padding-top: 1.5rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
             max-width: 1450px;
-        }
-
-        .app-header {
-            padding: 0.2rem 0 1rem 0;
-            margin-bottom: 1.5rem;
-            border-bottom: 1px solid rgba(148,163,184,0.2);
-        }
-
-        .app-title {
-            font-size: 2.2rem;
-            font-weight: 800;
-            line-height: 1.15;
-            margin: 0;
-        }
-
-        .app-subtitle {
-            color: #64748b;
-            font-size: 0.95rem;
-            margin-top: 0.25rem;
         }
 
         .pill {
@@ -178,26 +159,6 @@ def inject_custom_css():
 
 
 inject_custom_css()
-
-# ==============================================================================
-# HEADER & EMBEDDED ACTION BAR
-# ==============================================================================
-
-col_header, col_run = st.columns([3, 1])
-with col_header:
-    st.markdown(
-        """
-        <div style="padding-top: 0.3rem;">
-            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP Rebalance Engine</div>
-            <div style="color: #64748b; font-size: 0.95rem; margin-top: 0.25rem;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with col_run:
-    st.markdown("<div style='padding-top: 0.85rem;'></div>", unsafe_allow_html=True)
-    run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
-
 
 # ==============================================================================
 # UTILITIES
@@ -421,7 +382,7 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout to prevent hanging
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -1169,11 +1130,19 @@ cfg = load_config()
 
 
 # ==============================================================================
-# SIDEBAR (Decluttered with drop-down expanders & Plain-English tooltips)
+# SIDEBAR (Header & Subtitle Relocated here to declutter main page)
 # ==============================================================================
 
 with st.sidebar:
-    st.markdown("## ⚙️ Settings Dashboard")
+    st.markdown(
+        clean_html(f"""
+        <div style="padding-bottom: 1rem; border-bottom: 1px solid rgba(148,163,184,0.18); margin-bottom: 1rem;">
+            <div style="font-size: 1.38rem; font-weight: 800; line-height: 1.2;">🏛️ TSP Rebalance Engine</div>
+            <div style="color: #64748b; font-size: 0.8rem; margin-top: 0.4rem; line-height: 1.35;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
+        </div>
+        """),
+        unsafe_allow_html=True
+    )
 
     with st.expander("💼 Your Current Allocation", expanded=True):
         st.info("Input your current TSP holdings percentage. They must sum to 100%.")
@@ -1263,7 +1232,7 @@ if "engine_ran" not in st.session_state:
     st.session_state["engine_ran"] = False
     st.session_state["engine_results"] = {}
 
-# Standardizing on header layout button action instead of dual buttons
+# Trigger engine run on header bar button click
 if run:
     with st.spinner("Loading live data and running engine..."):
         try:
@@ -1468,8 +1437,8 @@ if st.session_state["engine_ran"]:
 
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
-        # Re-architected and beautified Regime Directory Grid in Tab 1 (Baseline removed)
-        st.markdown("<div style='margin: 2.2rem 0; border-bottom: 1px solid rgba(148,163,184,0.12);'></div>", unsafe_allow_html=True)
+        # Re-architected and beautified Regime Directory Grid in Tab 1 (Baseline and redundancy removed)
+        st.markdown("<div style='margin: 2.6rem 0; border-bottom: 1px solid rgba(148,163,184,0.12);'></div>", unsafe_allow_html=True)
         st.markdown("### 🧭 Strategic Regime Directory")
         st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
         
@@ -1564,7 +1533,8 @@ if st.session_state["engine_ran"]:
                 unsafe_allow_html=True,
             )
 
-        st.markdown("<div style='margin: 1.8rem 0;'></div>", unsafe_allow_html=True)
+        # Added spacious dividers to create breathing room between main snapshot sections
+        st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.markdown("### Factor Scores")
         score_order = [
             ("inflation", "Inflation"),
@@ -1587,7 +1557,7 @@ if st.session_state["engine_ran"]:
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("<div style='margin: 1.8rem 0;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.markdown("### Market Snapshot")
         market_items = [
             ("Core PCE YoY", market_data.get("core_pce_yoy"), market_sources.get("core_pce_yoy")),
@@ -1636,7 +1606,7 @@ if st.session_state["engine_ran"]:
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("<div style='margin: 1.8rem 0;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
