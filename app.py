@@ -351,8 +351,10 @@ def df_to_json_bytes(df: pd.DataFrame) -> bytes:
 # ==============================================================================
 
 def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
-    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID."""
-    url = f"https://api.db.nomics.world/v22/series/FRED/{urllib.parse.quote(series_id)}"
+    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID.
+    Fixed the query URL structure to use /FRED/FRED/ to prevent HTTP 400 Bad Request.
+    """
+    url = f"https://api.db.nomics.world/v22/series/FRED/FRED/{urllib.parse.quote(series_id)}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         req = urllib.request.Request(url, headers=headers)
@@ -768,7 +770,7 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
             executor.submit(cached_barchart_s5th): "barchart_breadth",
             executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
-            # Parallel loads for the upgraded metrics:
+            # upgraded metrics:
             executor.submit(cached_fred, "ICSA"): "initial_claims_val",
             executor.submit(cached_fred, "T10YIE"): "breakeven_inflation_val",
             executor.submit(cached_fred_fed_assets_yoy): "fed_assets_growth_val",
