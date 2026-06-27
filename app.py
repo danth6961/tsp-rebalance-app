@@ -7,6 +7,7 @@ import json
 import os
 import math
 import time
+import shutil
 import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -94,7 +95,54 @@ def load_fred_api_secret() -> str:
 
 
 # ==============================================================================
-# STATE & CONFIG HELPERS
+# AUTOMATED BACKUP AND SAFE I/O UTILITIES
+# ==============================================================================
+
+def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
+    """Writes a JSON file atomically and maintains a backup version."""
+    try:
+        # Create a backup of the previous configuration if it exists and is valid
+        if file_path.exists() and file_path.stat().st_size > 0:
+            shutil.copy(file_path, file_path.with_suffix(".json.bak"))
+            
+        # Atomic Write: write to a temporary file first, then replace the original
+        temp_file = file_path.with_suffix(".tmp")
+        with open(temp_file, "w") as f:
+            json.dump(data, f, indent=4)
+            
+        if temp_file.exists():
+            temp_file.replace(file_path)
+    except Exception as e:
+        print(f"❌ Error safely writing JSON data to {file_path}: {e}")
+
+
+def safe_load_json(file_path: Path, default_factory) -> Dict[str, Any]:
+    """Loads a JSON file. Automatically heals and restores from backup if corrupted."""
+    if file_path.exists():
+        try:
+            with open(file_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Main file '{file_path}' failed to parse: {e}. Attempting backup restore...")
+            
+    # Try reading the backup file if the main file is missing or corrupted
+    bak_path = file_path.with_suffix(".json.bak")
+    if bak_path.exists():
+        try:
+            with open(bak_path, "r") as f:
+                data = json.load(f)
+            # Restore the parsed data to recover the environment
+            shutil.copy(bak_path, file_path)
+            print(f"ℹ️ Successfully recovered configuration for '{file_path}' from local backup.")
+            return data
+        except Exception as e:
+            print(f"❌ Backup file '{bak_path}' also failed to parse: {e}")
+            
+    return default_factory()
+
+
+# ==============================================================================
+# STATE & CONFIG LOAD / SAVE
 # ==============================================================================
 
 def default_state() -> Dict[str, Any]:
@@ -109,22 +157,10 @@ def default_state() -> Dict[str, Any]:
     }
 
 def load_state() -> Dict[str, Any]:
-    if STATE_FILE.exists():
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return default_state()
+    return safe_load_json(STATE_FILE, default_state)
 
 def load_config() -> Dict[str, Any]:
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
+    default_config = {
         "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
         "allow_second_ift": False,
         "normal_drift_threshold_pct": 7.5,
@@ -152,20 +188,13 @@ def load_config() -> Dict[str, Any]:
         "use_live_macro": True,
         "fred_api_key": ""
     }
+    return safe_load_json(CONFIG_FILE, lambda: default_config)
 
 def save_config(config_data: Dict[str, Any]) -> None:
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config_data, f, indent=4)
-    except Exception:
-        pass
+    safe_save_json(CONFIG_FILE, config_data)
 
 def save_state(state_data: Dict[str, Any]) -> None:
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state_data, f, indent=4)
-    except Exception:
-        pass
+    safe_save_json(STATE_FILE, state_data)
 
 def reset_monthly_if_needed(state_data: Dict[str, Any], today_date: date) -> Dict[str, Any]:
     current_month_str = today_date.strftime("%Y-%m")
@@ -292,13 +321,16 @@ def inject_custom_css():
             border-color: #7dd3fc !important;
         }
 
-        /* Target Streamlit vertical block containers containing our live/fallback snapshot card hooks */
+        /* Fully aligns the design elements of the Market Snapshot cards to match the Factor Scores */
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-live) {
             border: 1px solid rgba(148, 163, 184, 0.15) !important;
             border-left: 5px solid #10b981 !important;
             border-radius: 12px !important;
             background-color: rgba(248, 250, 252, 0.5) !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04) !important;
+            padding: 1rem !important;
+            margin-top: 6px !important;
+            margin-bottom: 0.6rem !important;
             transition: transform 0.18s ease, box-shadow 0.18s ease !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-live):hover {
@@ -312,6 +344,9 @@ def inject_custom_css():
             border-radius: 12px !important;
             background-color: rgba(248, 250, 252, 0.5) !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04) !important;
+            padding: 1rem !important;
+            margin-top: 6px !important;
+            margin-bottom: 0.6rem !important;
             transition: transform 0.18s ease, box-shadow 0.18s ease !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-failed):hover {
@@ -822,7 +857,7 @@ def cached_shiller_cape_live() -> Optional[float]:
     return fetch_shiller_cape_live()
 
 
-@st.cache_data(ttl=3600) # Increased to match 1-hour cache logic
+@st.cache_data(ttl=3600)
 def cached_barchart_s5th() -> Optional[float]:
     return fetch_barchart_s5th_fallback()
 
@@ -1505,13 +1540,9 @@ with st.sidebar:
             st.caption("🔒 *Configured securely via encrypted Streamlit Secrets.*")
             
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
-
-    # This draws a clean horizontal line divider:
-    st.divider()
-
-    # This adds 1.5rem (approx. 24px) of empty vertical space to push the button down:
+    
+    # Added vertical spacer to pad the main launch button down visually
     st.markdown("<div style='padding-top: 1.5rem;'></div>", unsafe_allow_html=True)
-       
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
@@ -1688,6 +1719,40 @@ if st.session_state["engine_ran"]:
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
 
     with tab1:
+        # Dynamic, Step-by-Step IFT Order Guide Panel
+        if action == "SUBMIT IFT":
+            st.markdown("### 📋 TSP.gov Interfund Transfer (IFT) Action Plan")
+            st.warning("⚠️ **Action Required**: The engine has confirmed a strategic regime shift. Execute this exact rebalance on your TSP.gov portal.")
+            
+            rebalance_instructions = []
+            for fund in ["G", "C", "I", "S", "F"]:
+                curr_val = current_alloc.get(fund, 0.0)
+                targ_val = allocations.get(fund, 0.0)
+                delta_val = targ_val - curr_val
+                
+                if delta_val != 0.0:
+                    sign_prefix = "+" if delta_val > 0 else ""
+                    rebalance_instructions.append(
+                        f"Set **{fund} Fund** to **{targ_val:.1f}%** (Adjustment: `{sign_prefix}{delta_val:+.1f}%`)"
+                    )
+            
+            if rebalance_instructions:
+                plan_cols = st.columns(len(rebalance_instructions))
+                for step_idx, step_text in enumerate(rebalance_instructions):
+                    with plan_cols[step_idx]:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="small-kpi" style="border-left: 5px solid #22c55e; background-color: rgba(34, 197, 94, 0.05); min-height: 120px;">
+                                <div class="small-kpi-title">STEP {step_idx + 1}</div>
+                                <div class="small-kpi-value" style="font-size: 0.98rem; line-height: 1.35; font-weight: 700; color: #15803d; margin-top: 4px;">
+                                    {step_text}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True
+                        )
+            st.markdown("---")
+
         st.markdown("### Allocation Comparison")
         alloc_df = make_alloc_chart(allocations, current_alloc)
 
@@ -1936,7 +2001,6 @@ if st.session_state["engine_ran"]:
                         unsafe_allow_html=True
                     )
 
-        # Reduced separator margin to 1.0rem to compress vertical height
         st.markdown("<div style='margin: 1.0rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
         
