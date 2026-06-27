@@ -168,7 +168,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 4rem; /* Increased to safely clear Streamlit's top header */
+            padding-top: 5rem; /* Safely clears Streamlit top header */
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -196,7 +196,7 @@ def inject_custom_css():
             border: 1px solid rgba(148, 163, 184, 0.15);
             background-color: rgba(248, 250, 252, 0.5);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-            margin-top: 4px; /* Added margin to prevent clipping on hover translation */
+            margin-top: 6px; /* Prevents clipping on hover translation scale */
             margin-bottom: 0.6rem;
             transition: transform 0.18s ease, box-shadow 0.18s ease;
         }
@@ -669,6 +669,26 @@ def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
 @st.cache_data(ttl=900)
 def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
     return fetch_yfinance_dataframe(ticker, period)
+
+
+@st.cache_data(ttl=900)
+def fetch_ytd_return(ticker: str) -> Optional[float]:
+    """Calculates YTD return using the cached 1-year dataframe."""
+    df = get_cached_proxy_df(ticker, "1y")
+    if df.empty:
+        return None
+    
+    current_year = date.today().year
+    ytd_df = df[df["Date"].dt.year == current_year]
+    
+    if ytd_df.empty:
+        return None
+        
+    start_price = ytd_df["Price"].iloc[0]
+    end_price = ytd_df["Price"].iloc[-1]
+    
+    ytd_return = ((end_price - start_price) / start_price) * 100.0
+    return round(ytd_return, 2)
 
 
 @st.cache_data(ttl=900)
@@ -1504,17 +1524,31 @@ if st.session_state["engine_ran"]:
         st.markdown("### 🚨 Panic Valve & Emergency Dispatch Diagnostic")
         pv_cols = st.columns(3)
         with pv_cols[0]:
-            vix_status = "🔴 TRIGGERED (VIX >= 30)" if market_data.get("vix_3d_panic") else "🟢 Normal"
+            vix_triggered = market_data.get("vix_3d_panic", False)
+            vix_status = "🔴 TRIGGERED (VIX >= 30)" if vix_triggered else "🟢 Normal"
             vix_hist_str = ", ".join(map(str, market_data.get("vix_last_3", []))) if market_data.get("vix_last_3") else "N/A"
             st.markdown(
-                score_card_html("VIX 3-Day State", vix_status, f"Last 3 closes: [{vix_hist_str}]", "#dc2626" if market_data.get("vix_3d_panic") else "#16a34a", "⚠️"),
+                score_card_html(
+                    "VIX 3-Day State", 
+                    vix_status, 
+                    f"Last 3 closes: [{vix_hist_str}]", 
+                    "#dc2626" if vix_triggered else "#16a34a", 
+                    "⚠️" if vix_triggered else "✅"
+                ),
                 unsafe_allow_html=True,
             )
         with pv_cols[1]:
-            spx_status = "🔴 TRIGGERED (SMA Dist <= -5%)" if market_data.get("spx_3d_panic") else "🟢 Normal"
+            spx_triggered = market_data.get("spx_3d_panic", False)
+            spx_status = "🔴 TRIGGERED (SMA Dist <= -5%)" if spx_triggered else "🟢 Normal"
             spx_hist_str = ", ".join(map(str, market_data.get("spx_dist_last_3", []))) if market_data.get("spx_dist_last_3") else "N/A"
             st.markdown(
-                score_card_html("SPX 200SMA 3-Day State", spx_status, f"Last 3 closes: [{spx_hist_str}]", "#dc2626" if market_data.get("spx_3d_panic") else "#16a34a", "⚠️"),
+                score_card_html(
+                    "SPX 200SMA 3-Day State", 
+                    spx_status, 
+                    f"Last 3 closes: [{spx_hist_str}]", 
+                    "#dc2626" if spx_triggered else "#16a34a", 
+                    "⚠️" if spx_triggered else "✅"
+                ),
                 unsafe_allow_html=True,
             )
         with pv_cols[2]:
@@ -1522,7 +1556,13 @@ if st.session_state["engine_ran"]:
             override_active = breadth_val > 60.0 if breadth_val is not None else False
             breadth_status = f"🟢 ACTIVE (Breadth: {breadth_val:.2f}% > 60%)" if override_active else "🔴 INACTIVE"
             st.markdown(
-                score_card_html("Breadth Override State", breadth_status, f"Current Breadth: {f'{breadth_val:.2f}%' if breadth_val is not None else 'N/A'}", "#16a34a" if override_active else "#dc2626", "🛡️"),
+                score_card_html(
+                    "Breadth Override State", 
+                    breadth_status, 
+                    f"Current Breadth: {f'{breadth_val:.2f}%' if breadth_val is not None else 'N/A'}", 
+                    "#16a34a" if override_active else "#dc2626", 
+                    "🛡️" if override_active else "⚠️"
+                ),
                 unsafe_allow_html=True,
             )
 
@@ -1672,10 +1712,37 @@ if st.session_state["engine_ran"]:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
         st.write(
             "The Federal Retirement Thrift Investment Board does not provide direct tickers. "
-            "The charts below plot standard liquid exchange-traded funds (ETFs) that closely proxy "
+            "The cards and charts below plot standard liquid exchange-traded funds (ETFs) that closely proxy "
             "each TSP asset class. The **I Fund** tracks its transition to its broad global "
             "MSCI ACWI ex USA ex China ex HK index using **ACWX**."
         )
+
+        st.markdown("#### YTD Performance Overview")
+        ytd_cols = st.columns(5)
+        
+        fund_short_names = [
+            "C Fund (S&P 500)",
+            "S Fund (Mid/Small)",
+            "I Fund (Intl ACWX)",
+            "F Fund (Bonds)",
+            "G Fund (T-Bills)"
+        ]
+        
+        for idx, (fund_label, ticker) in enumerate(PROXIES.items()):
+            short_label = fund_short_names[idx]
+            with ytd_cols[idx]:
+                with st.spinner(f"Loading {ticker}..."):
+                    ytd_val = fetch_ytd_return(ticker)
+                if ytd_val is not None:
+                    st.metric(
+                        label=f"{short_label} ({ticker})",
+                        value=f"{ytd_val:+.2f}%",
+                        help=f"Year-to-date return calculated from the first trading day of {date.today().year} to the latest close."
+                    )
+                else:
+                    st.metric(label=f"{short_label} ({ticker})", value="N/A")
+
+        st.markdown("---")
 
         col_chart_1, col_chart_2 = st.columns([1, 3])
         with col_chart_1:
