@@ -4,6 +4,7 @@ from datetime import datetime, date
 import re
 import csv
 import json
+import os
 import math
 import time
 import urllib.request
@@ -18,7 +19,7 @@ import streamlit as st
 
 
 # ==============================================================================
-# GLOBAL RUN STATE INITIALIZATION (Failsafe for NameError)
+# GLOBAL RUN STATE INITIALIZATION
 # ==============================================================================
 run = False
 
@@ -67,7 +68,6 @@ DEFAULTS = {
     "spx_spot": 5000.0,
 }
 
-# Standard liquid ETFs that approximate the respective TSP funds
 PROXIES = {
     "C Fund (S&P 500 Stock Index)": "SPY",
     "S Fund (Mid/Small Cap Stock Index)": "VXF",
@@ -86,6 +86,7 @@ def default_state() -> Dict[str, Any]:
         "month": date.today().strftime("%Y-%m"),
         "ift_count_this_month": 0,
         "last_ift_date": None,
+        "last_run_date": None,
         "recent_regimes": [],
         "recent_scores": [],
         "recent_allocations": []
@@ -132,7 +133,8 @@ def load_config() -> Dict[str, Any]:
         "vix_spot": DEFAULTS["vix_spot"],
         "dxy_spot": DEFAULTS["dxy_spot"],
         "spx_spot": DEFAULTS["spx_spot"],
-        "use_live_macro": True
+        "use_live_macro": True,
+        "fred_api_key": ""
     }
 
 def save_config(config_data: Dict[str, Any]) -> None:
@@ -164,11 +166,20 @@ def update_signal_history(state_data: Dict[str, Any], regime: str, score: int, a
     if "recent_allocations" not in state_data:
         state_data["recent_allocations"] = []
         
-    state_data["recent_regimes"].append(regime)
-    state_data["recent_scores"].append(score)
-    state_data["recent_allocations"].append(alloc)
+    today_str = date.today().isoformat()
     
-    # Keep only the last 30 runs to prevent state file bloating
+    # Intraday Run Safeguard: update current index rather than appending on multi-clicks
+    if state_data.get("last_run_date") == today_str and state_data["recent_regimes"]:
+        state_data["recent_regimes"][-1] = regime
+        state_data["recent_scores"][-1] = score
+        state_data["recent_allocations"][-1] = alloc
+    else:
+        state_data["last_run_date"] = today_str
+        state_data["recent_regimes"].append(regime)
+        state_data["recent_scores"].append(score)
+        state_data["recent_allocations"].append(alloc)
+    
+    # Prevent bloat
     state_data["recent_regimes"] = state_data["recent_regimes"][-30:]
     state_data["recent_scores"] = state_data["recent_scores"][-30:]
     state_data["recent_allocations"] = state_data["recent_allocations"][-30:]
@@ -176,7 +187,7 @@ def update_signal_history(state_data: Dict[str, Any], regime: str, score: int, a
 
 
 # ==============================================================================
-# STYLE (Dark-Mode Compliant & Modern Cards)
+# STYLE CSS
 # ==============================================================================
 
 def inject_custom_css():
@@ -184,7 +195,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 5rem; /* Safely clears Streamlit top header */
+            padding-top: 5rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -212,7 +223,7 @@ def inject_custom_css():
             border: 1px solid rgba(148, 163, 184, 0.15);
             background-color: rgba(248, 250, 252, 0.5);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-            margin-top: 6px; /* Prevents clipping on hover translation scale */
+            margin-top: 6px;
             margin-bottom: 0.6rem;
             transition: transform 0.18s ease, box-shadow 0.18s ease;
         }
@@ -278,9 +289,6 @@ inject_custom_css()
 # ==============================================================================
 
 def clean_html(raw_html: str) -> str:
-    """Removes newlines and leading indentation, forcing the Streamlit Markdown
-    parser to render the payload purely as HTML rather than a raw code block.
-    """
     return " ".join([line.strip() for line in raw_html.split("\n") if line.strip()])
 
 
@@ -354,8 +362,31 @@ def df_to_json_bytes(df: pd.DataFrame) -> bytes:
 # DATA HELPERS & ADVANCED SCRAPING LOGIC
 # ==============================================================================
 
+def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tuple[str, float]]:
+    """Direct fetch tool for FRED API endpoints utilizing standard JSON queries.""" [2]
+    if not api_key:
+        return []
+    url = f"https://api.stlouisfed.org/fred/series/observations?series_id={urllib.parse.quote(series_id)}&api_key={urllib.parse.quote(api_key)}&file_type=json&sort_order=desc&limit={limit}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+        
+        observations = data.get("observations", [])
+        result = []
+        for obs in observations:
+            val = clean_and_parse_float(obs.get("value"))
+            if val is not None:
+                result.append((obs.get("date"), val))
+        result.reverse()  # chronological order
+        return result
+    except Exception as e:
+        print(f"❌ FRED API request failed for '{series_id}': {e}")
+        return []
+
+
 def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
-    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID."""
     url = f"https://api.db.nomics.world/v22/series/FRED/FRED/{urllib.parse.quote(series_id)}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -382,8 +413,17 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
         return []
 
 
-def fetch_fred_latest(series_id: str) -> Optional[float]:
-    # 1. Try DBnomics mirror first
+def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
+    # 1. Try Live FRED API first
+    if api_key:
+        try:
+            data_points = fetch_via_fred_api(series_id, api_key, limit=5)
+            if data_points:
+                return data_points[-1][1]
+        except Exception as err:
+            print(f"⚠️ FRED API fetch failed for '{series_id}' ({err}). Falling back...")
+
+    # 2. Try DBnomics mirror
     try:
         data_points = fetch_from_dbnomics(series_id)
         if data_points:
@@ -391,7 +431,7 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
     except Exception as err:
         print(f"⚠️ DBnomics mirror fetch failed for '{series_id}' ({err}). Falling back to standard FRED...")
 
-    # 2. Fallback to standard FRED CSV
+    # 3. Fallback to standard FRED CSV
     def _load_fred():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
@@ -411,14 +451,24 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
     try:
         return retry_call(_load_fred)
     except Exception as e:
-        print(f"❌ Both DBnomics and FRED failed for series '{series_id}': {e}")
+        print(f"❌ Both DBnomics and FRED CSV failed for series '{series_id}': {e}")
         
     return None
 
 
-def fetch_fred_core_pce_yoy() -> Optional[float]:
-    """Downloads monthly core PCE index values from FRED and calculates the 12-month change %."""
-    # 1. Try DBnomics mirror first
+def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
+    # 1. Try Live FRED API
+    if api_key:
+        try:
+            data_points = fetch_via_fred_api("PCEPILFE", api_key, limit=20)
+            if len(data_points) >= 13:
+                latest_val = data_points[-1][1]
+                past_val = data_points[-13][1]
+                return round(((latest_val - past_val) / past_val) * 100.0, 2)
+        except Exception as err:
+            print(f"⚠️ FRED API YoY PCE fetch failed ({err}). Falling back...")
+
+    # 2. Try DBnomics mirror
     try:
         data_points = fetch_from_dbnomics("PCEPILFE")
         if len(data_points) >= 13:
@@ -428,7 +478,7 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
     except Exception as err:
         print(f"⚠️ DBnomics mirror YoY PCE fetch failed ({err}). Falling back to standard FRED...")
 
-    # 2. Fallback to standard FRED CSV
+    # 3. Fallback to standard FRED CSV
     def _load_fred_yoy():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=PCEPILFE"
@@ -456,8 +506,19 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
     return None
 
 
-def fetch_fed_assets_yoy_growth() -> Optional[float]:
-    """Downloads weekly Federal Reserve Assets (WALCL) and calculates the 12-month change %."""
+def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float]:
+    # 1. Try Live FRED API
+    if api_key:
+        try:
+            data_points = fetch_via_fred_api("WALCL", api_key, limit=60)
+            if len(data_points) >= 53:
+                latest_val = data_points[-1][1]
+                past_val = data_points[-53][1]
+                return round(((latest_val - past_val) / past_val) * 100.0, 2)
+        except Exception as err:
+            print(f"⚠️ FRED API WALCL fetch failed ({err}). Falling back...")
+
+    # 2. Try DBnomics mirror
     try:
         data_points = fetch_from_dbnomics("WALCL")
         if len(data_points) >= 53:
@@ -495,7 +556,6 @@ def fetch_fed_assets_yoy_growth() -> Optional[float]:
 
 
 def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
-    """Requests and extracts core indicator table values directly from Trading Economics."""
     url = "https://tradingeconomics.com/united-states/indicators"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
@@ -543,7 +603,6 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
 
 
 def fetch_shiller_cape_live() -> Optional[float]:
-    """Parses multpl.com's HTML payload to read the latest cyclically adjusted P/E."""
     def _load():
         url = "https://www.multpl.com/shiller-pe"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
@@ -568,7 +627,6 @@ def fetch_shiller_cape_live() -> Optional[float]:
 
 
 def fetch_barchart_s5th_fallback() -> Optional[float]:
-    """Fallback scraper that parses the real-time S&P 500 stocks above 200-day average percentage from Barchart."""
     url = "https://www.barchart.com/stocks/quotes/$S5TH"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
@@ -697,18 +755,18 @@ def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, flo
 # ==============================================================================
 
 @st.cache_data(ttl=900)
-def cached_fred(series_id: str) -> Optional[float]:
-    return fetch_fred_latest(series_id)
+def cached_fred(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
+    return fetch_fred_latest(series_id, api_key)
 
 
 @st.cache_data(ttl=900)
-def cached_fred_core_pce_yoy() -> Optional[float]:
-    return fetch_fred_core_pce_yoy()
+def cached_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
+    return fetch_fred_core_pce_yoy(api_key)
 
 
 @st.cache_data(ttl=900)
-def cached_fred_fed_assets_yoy() -> Optional[float]:
-    return fetch_fed_assets_yoy_growth()
+def cached_fred_fed_assets_yoy(api_key: Optional[str] = None) -> Optional[float]:
+    return fetch_fed_assets_yoy_growth(api_key)
 
 
 @st.cache_data(ttl=900)
@@ -738,7 +796,6 @@ def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=900)
 def fetch_ytd_return(ticker: str) -> Optional[float]:
-    """Calculates YTD return using the cached 1-year dataframe."""
     df = get_cached_proxy_df(ticker, "1y")
     if df.empty:
         return None
@@ -757,13 +814,13 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 
 
 @st.cache_data(ttl=900)
-def get_market_snapshot() -> Dict[str, Any]:
+def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=15) as executor:
         futures = {
-            executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
-            executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
-            executor.submit(cached_fred, "STLFSI4"): "stlfsi_val",
+            executor.submit(cached_fred, "DRTSCIS", api_key): "sloos_val",
+            executor.submit(cached_fred, "BAMLH0A0HYM2", api_key): "hy_val",
+            executor.submit(cached_fred, "STLFSI4", api_key): "stlfsi_val",
             executor.submit(get_te_live_data): "te_live",
             executor.submit(cached_shiller_cape_live): "shiller_cape_val",
             executor.submit(cached_yahoo_closes, "^VIX", "1mo", "1d"): "vix_closes",
@@ -772,11 +829,10 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
             executor.submit(cached_barchart_s5th): "barchart_breadth",
             executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
-            # upgraded metrics:
-            executor.submit(cached_fred, "ICSA"): "initial_claims_val",
-            executor.submit(cached_fred, "T10YIE"): "breakeven_inflation_val",
-            executor.submit(cached_fred_fed_assets_yoy): "fed_assets_growth_val",
-            executor.submit(cached_fred, "DFII10"): "real_yield_10y_val",
+            executor.submit(cached_fred, "ICSA", api_key): "initial_claims_val",
+            executor.submit(cached_fred, "T10YIE", api_key): "breakeven_inflation_val",
+            executor.submit(cached_fred_fed_assets_yoy, api_key): "fed_assets_growth_val",
+            executor.submit(cached_fred, "DFII10", api_key): "real_yield_10y_val",
             executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
         }
         for future in as_completed(futures):
@@ -810,10 +866,10 @@ def get_market_snapshot() -> Dict[str, Any]:
         final_pce = te_pce
         pce_source = "LIVE (Trading Economics)"
     else:
-        fred_pce_yoy = fetch_fred_core_pce_yoy()
+        fred_pce_yoy = fetch_fred_core_pce_yoy(api_key)
         if fred_pce_yoy is not None:
             final_pce = fred_pce_yoy
-            pce_source = "LIVE (FRED PCEPILFE YoY calculation)"
+            pce_source = "LIVE (FRED API PCE)" if api_key else "LIVE (FRED PCEPILFE Mirror)"
         else:
             final_pce = DEFAULTS["core_pce_yoy"]
             pce_source = "CONFIG/DEFAULT"
@@ -834,11 +890,11 @@ def get_market_snapshot() -> Dict[str, Any]:
         final_services = DEFAULTS["services_pmi"]
         services_source = "CONFIG/DEFAULT"
 
-    # Initial Jobless Claims (Conversion to thousands)
+    # Initial Jobless Claims
     raw_claims = results.get("initial_claims_val")
     if raw_claims is not None:
         final_claims = round(raw_claims / 1000.0, 2)
-        claims_source = "LIVE (FRED ICSA)"
+        claims_source = "LIVE (FRED API ICSA)" if api_key else "LIVE (FRED ICSA Mirror)"
     else:
         final_claims = DEFAULTS["initial_claims"]
         claims_source = "CONFIG/DEFAULT"
@@ -846,7 +902,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     # 10Y Breakeven Inflation Rate
     if results.get("breakeven_inflation_val") is not None:
         final_breakeven = results.get("breakeven_inflation_val")
-        breakeven_source = "LIVE (FRED T10YIE)"
+        breakeven_source = "LIVE (FRED API T10YIE)" if api_key else "LIVE (FRED T10YIE Mirror)"
     else:
         final_breakeven = DEFAULTS["breakeven_inflation"]
         breakeven_source = "CONFIG/DEFAULT"
@@ -854,7 +910,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     # Fed Net Assets YoY Growth
     if results.get("fed_assets_growth_val") is not None:
         final_assets_growth = results.get("fed_assets_growth_val")
-        assets_source = "LIVE (FRED WALCL YoY)"
+        assets_source = "LIVE (FRED API WALCL YoY)" if api_key else "LIVE (FRED WALCL Mirror)"
     else:
         final_assets_growth = DEFAULTS["fed_assets_growth_yoy"]
         assets_source = "CONFIG/DEFAULT"
@@ -862,7 +918,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     # 10-Year Real Yield
     if results.get("real_yield_10y_val") is not None:
         final_real_yield = results.get("real_yield_10y_val")
-        real_yield_source = "LIVE (FRED DFII10)"
+        real_yield_source = "LIVE (FRED API DFII10)" if api_key else "LIVE (FRED DFII10 Mirror)"
     else:
         final_real_yield = DEFAULTS["real_yield_10y"]
         real_yield_source = "CONFIG/DEFAULT"
@@ -893,10 +949,10 @@ def get_market_snapshot() -> Dict[str, Any]:
         live_bond_yield = round(bond_yield_closes[-1] / 10.0, 3)
         bond_source = "LIVE (Yahoo Finance ^TNX)"
     else:
-        fred_dgs10 = fetch_fred_latest("DGS10")
+        fred_dgs10 = fetch_fred_latest("DGS10", api_key)
         if fred_dgs10 is not None:
             live_bond_yield = fred_dgs10
-            bond_source = "LIVE (FRED DGS10 Fallback)"
+            bond_source = "LIVE (FRED API DGS10)" if api_key else "LIVE (FRED DGS10 Mirror)"
         else:
             live_bond_yield = DEFAULTS["bond_yield_10y"]
             bond_source = "CONFIG/DEFAULT"
@@ -925,10 +981,10 @@ def get_market_snapshot() -> Dict[str, Any]:
 
     def determine_source(series_id, label, default_src):
         if results.get(label) is not None:
-            return default_src
-        val_fetched = fetch_fred_latest(series_id)
+            return f"{default_src} (FRED API)" if api_key else default_src
+        val_fetched = fetch_fred_latest(series_id, api_key)
         if val_fetched is not None:
-            return f"LIVE (DBnomics {series_id} Mirror)"
+            return f"LIVE (FRED API {series_id})" if api_key else f"LIVE (DBnomics {series_id} Mirror)"
         return "CONFIG/DEFAULT"
 
     sloos_source = determine_source("DRTSCIS", "sloos_val", "LIVE (FRED DRTSCIS)")
@@ -944,14 +1000,14 @@ def get_market_snapshot() -> Dict[str, Any]:
         "fed_assets_growth_yoy": final_assets_growth,
         "real_yield_10y": final_real_yield,
         "move_index": final_move,
-        "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else fetch_fred_latest("DRTSCIS"),
-        "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else fetch_fred_latest("BAMLH0A0HYM2"),
+        "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else fetch_fred_latest("DRTSCIS", api_key),
+        "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else fetch_fred_latest("BAMLH0A0HYM2", api_key),
         "shiller_cape": shiller_cape if shiller_cape is not None else DEFAULTS["shiller_cape"],
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
         "pct_dist_200_sma": sma_dist_live,
         "drawdown_pct": drawdown_live,
-        "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else fetch_fred_latest("STLFSI4"),
+        "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else fetch_fred_latest("STLFSI4", api_key),
         "bond_yield_10y": live_bond_yield,
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
         "market_breadth_pct": live_breadth,
@@ -1024,7 +1080,7 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
     market_breadth = safe_float(data.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
 
-    # 1. Inflation Score (Core PCE baseline updated dynamically with market Breakevens)
+    # 1. Inflation Score
     if pce < 1.8: scores["inflation"] = 3
     elif pce < 2.0: scores["inflation"] = 1
     elif pce <= 2.3: scores["inflation"] = 0
@@ -1032,11 +1088,11 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     else: scores["inflation"] = -5
     
     if breakeven_inflation > 2.6:
-        scores["inflation"] = min(scores["inflation"], -3) - 1 # Penalty for spiking rate expectations
+        scores["inflation"] = min(scores["inflation"], -3) - 1
     elif breakeven_inflation < 1.8:
-        scores["inflation"] = max(scores["inflation"], 0) # Deflation support
+        scores["inflation"] = max(scores["inflation"], 0)
 
-    # 2. Growth Score (Composite PMI weighing 80% services, 20% manufacturing, claims drag)
+    # 2. Growth Score
     composite_pmi = (0.20 * pmi) + (0.80 * services_pmi)
     if composite_pmi > 55.0: scores["growth"] = 3
     elif composite_pmi >= 51.5: scores["growth"] = 1
@@ -1045,19 +1101,19 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     else: scores["growth"] = -5
     
     if initial_claims > 250.0:
-        scores["growth"] -= 1 # Labor trend friction penalty
+        scores["growth"] -= 1
     if initial_claims > 280.0:
-        scores["growth"] = min(scores["growth"], -3) - 1 # Heavy claims shock
+        scores["growth"] = min(scores["growth"], -3) - 1
 
-    # 3. Liquidity Score (Credit tightening updated with Fed Asset expansion trends)
+    # 3. Liquidity Score
     if sloos < -15.0: scores["liquidity"] = 3
     elif sloos <= 5.0: scores["liquidity"] = 0
     else: scores["liquidity"] = -5
     
     if fed_assets_growth_yoy > 0.0:
-        scores["liquidity"] += 2 # Balance sheet expansion tailwind
+        scores["liquidity"] += 2
     else:
-        scores["liquidity"] -= 2 # Quantitative Tightening headwind
+        scores["liquidity"] -= 2
 
     # 4. Credit Spreads
     if hy_spread < 3.0: scores["credit_spreads"] = 3
@@ -1066,12 +1122,12 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     elif hy_spread <= 6.0: scores["credit_spreads"] = -3
     else: scores["credit_spreads"] = -5
 
-    # 5. Valuation (CAPE base ceilings compressed by interest-rate Real Yield gravity)
+    # 5. Valuation
     base_cape_ceiling = 35.0 if fwd_eps >= 15.0 else 30.0
     if real_yield_10y > 2.2:
-        active_cape_ceiling = base_cape_ceiling - 5.0 # High risk-free real yield crushes stock caps
+        active_cape_ceiling = base_cape_ceiling - 5.0
     elif real_yield_10y < 0.5:
-        active_cape_ceiling = base_cape_ceiling + 3.0 # Zero-bound returns expand valuation tolerance
+        active_cape_ceiling = base_cape_ceiling + 3.0
     else:
         active_cape_ceiling = base_cape_ceiling
 
@@ -1115,7 +1171,6 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     momentum_breaker = scores["momentum"] <= -3
     asymmetric_vol_trigger = scores["market_stress"] <= -3 or scores["momentum"] <= -3
     
-    # Bond Market Unlock checking Real Spread AND low Implied Bond Volatility (MOVE Index)
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
     dxy_strong = dxy_spot >= 103.5
 
@@ -1192,9 +1247,16 @@ def should_use_tsp_ift(
         return False, "Insufficient confirmation history"
     if len(set(recent_regimes[-confirmation_days:])) != 1:
         return False, "Regime not yet confirmed"
-    score_span = max(recent_scores[-confirmation_days:]) - min(recent_scores[-confirmation_days:])
-    if score_span < score_change_threshold:
-        return False, "Score change not strong enough"
+        
+    # FIX: Measures the transition amplitude across the confirmed regime boundary
+    if len(recent_scores) >= confirmation_days + 1:
+        score_change = abs(recent_scores[-1] - recent_scores[-confirmation_days - 1])
+    else:
+        score_change = score_change_threshold
+        
+    if score_change < score_change_threshold:
+        return False, f"Score change not strong enough ({score_change} vs {score_change_threshold})"
+        
     drift = max_alloc_drift(current_alloc, target_alloc)
     if drift < normal_drift_threshold_pct:
         return False, f"Allocation drift too small ({drift:.1f}%)"
@@ -1305,7 +1367,7 @@ def source_pill_html(source: str) -> str:
     source_upper = str(source).upper()
     if "FAILED" in source_upper or "DEFAULT" in source_upper or "FALLBACK" in source_upper:
         cls = "pill-failed"
-    elif source_upper.startswith("LIVE"):
+    elif "LIVE" in source_upper:
         cls = "pill-live"
     else:
         cls = "pill-default"
@@ -1343,7 +1405,7 @@ for key in DERIVED_KEYS:
 
 
 # ==============================================================================
-# SIDEBAR (Streamlined and simplified to keep dashboard focus)
+# SIDEBAR
 # ==============================================================================
 
 with st.sidebar:
@@ -1367,21 +1429,30 @@ with st.sidebar:
             "F": st.number_input("F Fund %", value=float(cfg.get("current_alloc", {}).get("F", 5.0)), step=1.0, help="Fixed Income Index Fund: Tracks US bond market index."),
         }
 
+    with st.expander("🔑 API Keys & Settings", expanded=False):
+        # FRED API Input Panel
+        fred_api_key = st.text_input(
+            "FRED API Key", 
+            value=cfg.get("fred_api_key", ""), 
+            type="password", 
+            help="Your private 32-character FRED API key is used to query real-time federal indicators." [2]
+        )
+
     with st.expander("🛡️ Transfer Rules & Safeties", expanded=False):
         st.info("Safety limits designed to preserve your monthly transfer quotas.")
-        allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)), help="Normally you are limited to 2 transfers a month. Enabling this allows the system to make a second transfer in normal regimes if conditions are favorable.")
-        normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5, help="How far out of alignment your real portfolio is from target before recommending an adjustment.")
-        score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1, help="Required point difference to qualify as a strong trend adjustment.")
-        confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Number of consecutive days a signal must remain in a new regime before triggering action.")
-        cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
+        allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)), help="Allows making a second transfer in normal regimes if conditions are favorable.")
+        normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5, help="Required drift threshold to trigger rebalances.")
+        score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1, help="Required boundary point variance to qualify as a strong trend adjustment.")
+        confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Consecutive days a signal must hold inside a new regime to trigger.")
+        cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days between consecutive transfers.")
         st.markdown("---")
-        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, clicking 'Fetch & Run' automatically queries online mirrors. Fallbacks use config values typed directly into dashboard tiles.")
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="Fetches live data from public APIs and fallback mirrors.")
 
     st.markdown("---")
-    mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
-    reset_state_btn = st.button("♻️ Reset State File", use_container_width=True, help="Resets your transfer counters back to zero.")
-    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True, help="Removes the daily logs CSV file permanently.")
-    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and manual dashboard overrides permanently.")
+    mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Executes a manual override to increment your monthly counter.")
+    reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
+    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
+    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
     
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
@@ -1393,7 +1464,8 @@ if save_config_btn:
     cfg["confirmation_days"] = int(confirmation_days)
     cfg["cooldown_days"] = int(cooldown_days)
     cfg["use_live_macro"] = bool(use_live_macro)
-    # Save the currently edited dashboard indicator overrides directly to file config
+    cfg["fred_api_key"] = fred_api_key
+    
     for key in INDICATOR_KEYS:
         cfg[key] = float(st.session_state[key])
     save_config(cfg)
@@ -1431,7 +1503,7 @@ if "engine_ran" not in st.session_state:
 if run:
     with st.spinner("Loading live macroeconomic datasets..."):
         try:
-            snapshot = get_market_snapshot()
+            snapshot = get_market_snapshot(fred_api_key)
             fetched_data = snapshot["market_data"]
             fetched_sources = snapshot["market_sources"]
         except Exception as e:
@@ -1447,7 +1519,6 @@ if run:
             fetched_data["spx_spot"] = DEFAULTS["spx_spot"]
             fetched_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
-        # Populate stream session state from retrieved APIs
         for key in INDICATOR_KEYS:
             src = fetched_sources.get(key, "CONFIG/DEFAULT")
             val = fetched_data.get(key, DEFAULTS[key])
@@ -1466,7 +1537,6 @@ if run:
         st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
         st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
 
-        # Run engine to write log entry and save initial action state once!
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(fetched_data)
         
         emergency_triggered = (total_score == -50)
@@ -1519,7 +1589,6 @@ if run:
 # ==============================================================================
 
 if st.session_state["engine_ran"]:
-    # Synthesize macro state directly from session variables (incorporates dynamic edits)
     market_data = {key: st.session_state[key] for key in INDICATOR_KEYS}
     market_data["pct_dist_200_sma"] = st.session_state["pct_dist_200_sma"]
     market_data["drawdown_pct"] = st.session_state["drawdown_pct"]
@@ -1530,7 +1599,6 @@ if st.session_state["engine_ran"]:
 
     allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
-    # DYNAMIC CALCULATION OF THE ACTION AND REASON (Resolves NameError on Rerun)
     emergency_triggered = (total_score == -50)
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
 
@@ -1761,7 +1829,6 @@ if st.session_state["engine_ran"]:
             
             border_color = "#dc2626" if is_failed else "#10b981"
             
-            # Configure appropriate precision increments based on data types
             step_val = 0.1
             format_val = "%.2f"
             if "PMI" in label or "Index" in label or "VIX" in label or "Volatility" in label:
@@ -1775,7 +1842,6 @@ if st.session_state["engine_ran"]:
                 
             card_key = f"container_{key}"
             
-            # Inject CSS override to color the full border/outline of this specific card container to match Factor Scores cards
             st.markdown(
                 f"""
                 <style>
@@ -1799,7 +1865,6 @@ if st.session_state["engine_ran"]:
             
             with market_cols[i % 4]:
                 with st.container(border=True):
-                    # Empty target hook div for the parent card CSS override selector above
                     st.markdown(f'<div class="st-key-{card_key}"></div>', unsafe_allow_html=True)
                     
                     st.markdown(
@@ -1875,29 +1940,28 @@ if st.session_state["engine_ran"]:
             st.markdown("**Step B: Overlay Adjustments & Filter Logic**")
             asymmetric_vol_trigger = factor_scores.get("market_stress", 0) <= -3 or factor_scores.get("momentum", 0) <= -3
             if asymmetric_vol_trigger:
-                st.markdown("* ⚠️ **Asymmetric Volatility Filter Active:** Market stress or price momentum has weakened below critical levels. The engine has automatically removed S Fund holdings and safely redistributed them.")
+                st.markdown("* ⚠️ **Asymmetric Volatility Filter Active:** Market stress or price momentum has weakened below critical levels. The engine has automatically removed S Fund holdings.")
             else:
                 st.markdown("* ✅ **Asymmetric Volatility Filter Inactive:** Markets exhibit stable volatility metrics; standard S Fund allocations remain intact.")
                 
             dxy_strong = market_data.get("dxy_spot", 0) >= 103.5
             if dxy_strong:
-                st.markdown("* 💵 **Strong USD Modifier Active:** Dollar Index is trading above historical resistance ($\ge 103.5$). Shifted 5% from International (I Fund) to domestic US large-caps (C Fund) to hedge currency drag.")
+                st.markdown("* 💵 **Strong USD Modifier Active:** Dollar Index is trading above historical resistance ($\ge 103.5$). Shifted 5% from International (I Fund) to domestic US large-caps (C Fund).")
             else:
-                st.markdown("* 🌐 **USD Modifier Inactive:** Dollar strength is within standard limits. Standard international equity allocations remain unmodified.")
+                st.markdown("* 🌐 **USD Modifier Inactive:** Dollar strength is within standard limits.")
                 
             bond_unlocked = (market_data.get("bond_yield_10y", 0) - market_data.get("core_pce_yoy", 0)) >= 1.5 and market_data.get("move_index", 105.0) < 120.0
             if bond_unlocked:
                 st.markdown("* 📈 **F Fund Yield Unlock Active:** 10-Year Real Yield is highly attractive ($\ge 1.5\%$ above Core PCE inflation) and Sovereign Volatility (MOVE Index) is stable under 120.")
             else:
-                st.markdown("* 🔒 **F Fund Yield Unlock Inactive:** 10-Year Real Yield spread is below 1.5% or interest-rate volatility (MOVE Index) is elevated. F Fund holdings remain locked in favor of G Fund cash capital protections.")
+                st.markdown("* 🔒 **F Fund Yield Unlock Inactive:** F Fund holdings remain locked in favor of G Fund cash capital protections.")
 
     with tab3:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
         st.write(
             "The Federal Retirement Thrift Investment Board does not provide direct tickers. "
             "The cards and charts below plot standard liquid exchange-traded funds (ETFs) that closely proxy "
-            "each TSP asset class. The **I Fund** tracks its transition to its broad global "
-            "MSCI ACWI ex USA ex China ex HK index using **ACWX**."
+            "each TSP asset class."
         )
 
         st.markdown("#### YTD Performance Overview")
@@ -1920,7 +1984,6 @@ if st.session_state["engine_ran"]:
                     st.metric(
                         label=f"{short_label} ({ticker})",
                         value=f"{ytd_val:+.2f}%",
-                        help=f"Year-to-date return calculated from the first trading day of {date.today().year} to the latest close."
                     )
                 else:
                     st.metric(label=f"{short_label} ({ticker})", value="N/A")
