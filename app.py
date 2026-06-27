@@ -18,6 +18,12 @@ import streamlit as st
 
 
 # ==============================================================================
+# GLOBAL RUN STATE INITIALIZATION (Failsafe for NameError)
+# ==============================================================================
+run = False
+
+
+# ==============================================================================
 # PAGE CONFIG
 # ==============================================================================
 
@@ -159,6 +165,27 @@ def inject_custom_css():
 
 
 inject_custom_css()
+
+# ==============================================================================
+# HEADER & EMBEDDED ACTION BAR
+# ==============================================================================
+
+col_header, col_run = st.columns([3, 1])
+with col_header:
+    st.markdown(
+        """
+        <div style="padding-top: 0.3rem;">
+            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP Rebalance Engine</div>
+            <div style="color: #64748b; font-size: 0.95rem; margin-top: 0.25rem;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# Fixed: Directly call the container method to guarantee global variable registration
+col_run.markdown("<div style='padding-top: 0.85rem;'></div>", unsafe_allow_html=True)
+run = col_run.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
+
 
 # ==============================================================================
 # UTILITIES
@@ -382,7 +409,7 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout to prevent hanging
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -928,11 +955,6 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     asymmetric_vol_trigger = scores["market_stress"] <= -3 or scores["momentum"] <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5
     dxy_strong = dxy_spot >= 103.5
-
-    # Evaluation of Panic Valve Logic
-    vix_3d_panic = data.get("vix_3d_panic", False)
-    spx_3d_panic = data.get("spx_3d_panic", False)
-    panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth <= 60.0)
 
     if panic_valve_triggered:
         regime_name = "EMERGENCY DISPATCH"
