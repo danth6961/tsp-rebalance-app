@@ -1469,13 +1469,14 @@ if st.session_state["engine_ran"]:
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
         # Re-architected and beautified Regime Directory Grid in Tab 1 (Baseline removed)
-        st.markdown("---")
-        st.markdown("### 🏛️ Regime Directory")
+        st.markdown("<div style='margin: 2.2rem 0; border-bottom: 1px solid rgba(148,163,184,0.12);'></div>", unsafe_allow_html=True)
+        st.markdown("### 🧭 Strategic Regime Directory")
         st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
         
         regimes_info = [
             {
                 "name": "RISK-ON OVERRIDE",
+                "icon": "🚀",
                 "score": "Score: ≥ +5",
                 "profile": "Aggressive Profile",
                 "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
@@ -1485,6 +1486,7 @@ if st.session_state["engine_ran"]:
             },
             {
                 "name": "OPTIMIZED NEUTRAL",
+                "icon": "⚖️",
                 "score": "Score: 0 to +4",
                 "profile": "Balanced Profile",
                 "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
@@ -1494,6 +1496,7 @@ if st.session_state["engine_ran"]:
             },
             {
                 "name": "DEFENSIVE ALLOCATION",
+                "icon": "🛡️",
                 "score": "Score: < 0",
                 "profile": "Defensive Profile",
                 "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
@@ -1503,6 +1506,7 @@ if st.session_state["engine_ran"]:
             },
             {
                 "name": "EMERGENCY DISPATCH",
+                "icon": "🚨",
                 "score": "Score: -50",
                 "profile": "Maximum Defense",
                 "alloc": "Base: G 90% / F 10% (or G 100% / F 0%)",
@@ -1524,7 +1528,7 @@ if st.session_state["engine_ran"]:
                     clean_html(f"""
                     <div class="small-kpi" style="{border_css} height: 100%; min-height: 250px;">
                         {active_badge}
-                        <div style="font-weight: 800; font-size: 0.95rem; color: {color_val};">{info['name']}</div>
+                        <div style="font-weight: 800; font-size: 0.95rem; color: {color_val};">{info['icon']} {info['name']}</div>
                         <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
                         <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {color_val};">{info['alloc']}</div>
                         <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
@@ -1560,6 +1564,7 @@ if st.session_state["engine_ran"]:
                 unsafe_allow_html=True,
             )
 
+        st.markdown("<div style='margin: 1.8rem 0;'></div>", unsafe_allow_html=True)
         st.markdown("### Factor Scores")
         score_order = [
             ("inflation", "Inflation"),
@@ -1582,6 +1587,7 @@ if st.session_state["engine_ran"]:
                     unsafe_allow_html=True,
                 )
 
+        st.markdown("<div style='margin: 1.8rem 0;'></div>", unsafe_allow_html=True)
         st.markdown("### Market Snapshot")
         market_items = [
             ("Core PCE YoY", market_data.get("core_pce_yoy"), market_sources.get("core_pce_yoy")),
@@ -1630,7 +1636,7 @@ if st.session_state["engine_ran"]:
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("---")
+        st.markdown("<div style='margin: 1.8rem 0;'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
