@@ -1505,6 +1505,9 @@ with st.sidebar:
             st.caption("🔒 *Configured securely via encrypted Streamlit Secrets.*")
             
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
+
+        st.divider()
+
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
