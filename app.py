@@ -50,6 +50,8 @@ DEFAULTS = {
     "stlfsi_index": -0.9568,
     "bond_yield_10y": 4.50,
     "market_breadth_pct": 73.20,
+    "vix_spot": 19.0,      # Fixed: Restored fallback default
+    "dxy_spot": 105.80,    # Fixed: Restored fallback default
 }
 
 # Standard liquid ETFs that approximate the respective TSP funds
@@ -365,7 +367,7 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read().decode('utf-8'))
             
         docs = data.get("series", {}).get("docs", [])
@@ -388,12 +390,20 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
 
 
 def fetch_fred_latest(series_id: str) -> Optional[float]:
-    # 1. Try standard FRED CSV first
+    # 1. Try DBnomics mirror first (unblocked, extremely fast on Streamlit Cloud)
+    try:
+        data_points = fetch_from_dbnomics(series_id)
+        if data_points:
+            return data_points[-1][1]
+    except Exception as err:
+        print(f"⚠️ DBnomics mirror fetch failed for '{series_id}' ({err}). Falling back to standard FRED...")
+
+    # 2. Fallback to standard FRED CSV
     def _load_fred():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout to prevent hanging
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -408,27 +418,29 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
     try:
         return retry_call(_load_fred)
     except Exception as e:
-        print(f"⚠️ FRED server blocked standard fetch for '{series_id}' ({e}). Re-routing to DBnomics mirror...")
-        
-    # 2. Redirect to DBnomics mirror fallback (unblocked)
-    try:
-        data_points = fetch_from_dbnomics(series_id)
-        if data_points:
-            return data_points[-1][1]
-    except Exception as err:
-        print(f"❌ DBnomics mirror fetch failed for '{series_id}': {err}")
+        print(f"❌ Both DBnomics and FRED failed for series '{series_id}': {e}")
         
     return None
 
 
 def fetch_fred_core_pce_yoy() -> Optional[float]:
     """Downloads monthly core PCE index values from FRED and calculates the 12-month change %."""
-    # 1. Try standard FRED first
+    # 1. Try DBnomics mirror first (unblocked, extremely fast)
+    try:
+        data_points = fetch_from_dbnomics("PCEPILFE")
+        if len(data_points) >= 13:
+            latest_val = data_points[-1][1]
+            past_val = data_points[-13][1]
+            return round(((latest_val - past_val) / past_val) * 100.0, 2)
+    except Exception as err:
+        print(f"⚠️ DBnomics mirror YoY PCE fetch failed ({err}). Falling back to standard FRED...")
+
+    # 2. Fallback to standard FRED CSV
     def _load_fred_yoy():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=PCEPILFE"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -446,17 +458,7 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
     try:
         return retry_call(_load_fred_yoy)
     except Exception as e:
-        print(f"⚠️ FRED server blocked standard YoY PCE fetch ({e}). Re-routing to DBnomics mirror...")
-
-    # 2. Redirect to DBnomics mirror fallback (unblocked)
-    try:
-        data_points = fetch_from_dbnomics("PCEPILFE")
-        if len(data_points) >= 13:
-            latest_val = data_points[-1][1]
-            past_val = data_points[-13][1]
-            return round(((latest_val - past_val) / past_val) * 100.0, 2)
-    except Exception as err:
-        print(f"❌ DBnomics mirror YoY PCE fetch failed: {err}")
+        print(f"❌ Both DBnomics and FRED failed for Core PCE YoY: {e}")
 
     return None
 
@@ -475,7 +477,7 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
     
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:  # Added reasonable timeout
             html = response.read().decode('utf-8')
             
         dfs = pd.read_html(html)
@@ -508,7 +510,7 @@ def fetch_shiller_cape_live() -> Optional[float]:
     def _load():
         url = "https://www.multpl.com/shiller-pe"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:  # Added timeout
             html = response.read().decode('utf-8')
         
         match = re.search(r'class=["\']num["\']>\s*([0-9\.]+)\s*<', html)
@@ -536,7 +538,7 @@ def fetch_barchart_s5th_fallback() -> Optional[float]:
     }
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:  # Added timeout
             html = response.read().decode('utf-8')
             
         for pattern in [
@@ -806,10 +808,8 @@ def get_market_snapshot() -> Dict[str, Any]:
 
     # Re-calculate sources to reflect redirect routes (e.g. if FRED failed but DBnomics succeeded)
     def determine_source(series_id, label, default_src):
-        # If the fetched result was successfully retrieved (not defaulted)
         if results.get(label) is not None:
             return default_src
-        # If we had to run the fallback which returned a non-None value
         val_fetched = fetch_fred_latest(series_id)
         if val_fetched is not None:
             return f"LIVE (DBnomics {series_id} Mirror)"
@@ -841,7 +841,6 @@ def get_market_snapshot() -> Dict[str, Any]:
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
 
-    # Ensure defaults are fully populated if fallback completely failed
     if market_data["sloos_net_pct"] is None:
         market_data["sloos_net_pct"] = DEFAULTS["sloos_net_pct"]
     if market_data["hy_oas"] is None:
