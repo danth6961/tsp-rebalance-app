@@ -49,6 +49,12 @@ LOG_FILE = Path("tsp_daily_log.csv")
 DEFAULTS = {
     "core_pce_yoy": 3.4,
     "ism_pmi": 54.0,
+    "services_pmi": 53.5,
+    "initial_claims": 215.0,
+    "breakeven_inflation": 2.25,
+    "fed_assets_growth_yoy": -4.5,
+    "real_yield_10y": 2.00,
+    "move_index": 105.0,
     "sloos_net_pct": 6.6,
     "hy_oas": 2.76,
     "shiller_cape": 39.66,
@@ -116,6 +122,12 @@ def load_config() -> Dict[str, Any]:
         "cooldown_days": 5,
         "core_pce_yoy": DEFAULTS["core_pce_yoy"],
         "ism_pmi": DEFAULTS["ism_pmi"],
+        "services_pmi": DEFAULTS["services_pmi"],
+        "initial_claims": DEFAULTS["initial_claims"],
+        "breakeven_inflation": DEFAULTS["breakeven_inflation"],
+        "fed_assets_growth_yoy": DEFAULTS["fed_assets_growth_yoy"],
+        "real_yield_10y": DEFAULTS["real_yield_10y"],
+        "move_index": DEFAULTS["move_index"],
         "shiller_cape": DEFAULTS["shiller_cape"],
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "bond_yield_10y": DEFAULTS["bond_yield_10y"],
@@ -168,7 +180,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 4rem; /* Safely clears Streamlit top header */
+            padding-top: 5rem; /* Safely clears Streamlit top header */
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -196,7 +208,7 @@ def inject_custom_css():
             border: 1px solid rgba(148, 163, 184, 0.15);
             background-color: rgba(248, 250, 252, 0.5);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-            margin-top: 4px; /* Prevents clipping on hover translation scale */
+            margin-top: 6px; /* Prevents clipping on hover translation scale */
             margin-bottom: 0.6rem;
             transition: transform 0.18s ease, box-shadow 0.18s ease;
         }
@@ -440,6 +452,44 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
     return None
 
 
+def fetch_fed_assets_yoy_growth() -> Optional[float]:
+    """Downloads weekly Federal Reserve Assets (WALCL) and calculates the 12-month change %."""
+    try:
+        data_points = fetch_from_dbnomics("WALCL")
+        if len(data_points) >= 53:
+            latest_val = data_points[-1][1]
+            past_val = data_points[-53][1]
+            return round(((latest_val - past_val) / past_val) * 100.0, 2)
+    except Exception as err:
+        print(f"⚠️ DBnomics mirror WALCL fetch failed ({err}). Falling back to standard FRED...")
+
+    def _load_fred():
+        base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        url = f"{base_url}?id=WALCL"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            df = pd.read_csv(response)
+
+        if df.empty or len(df.columns) < 2:
+            return None
+
+        value_col = df.columns[1]
+        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if len(series) < 53:
+            return None
+        
+        latest_val = float(series.iloc[-1])
+        past_val = float(series.iloc[-53])
+        return round(((latest_val - past_val) / past_val) * 100.0, 2)
+
+    try:
+        return retry_call(_load_fred)
+    except Exception as e:
+        print(f"❌ Both DBnomics and FRED failed for Fed Assets YoY growth: {e}")
+
+    return None
+
+
 def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
     """Requests and extracts core indicator table values directly from Trading Economics."""
     url = "https://tradingeconomics.com/united-states/indicators"
@@ -449,7 +499,8 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
     
     results = {
         "core_pce_yoy": None,
-        "ism_pmi": None
+        "ism_pmi": None,
+        "services_pmi": None
     }
     
     try:
@@ -475,6 +526,11 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["ism_pmi"] = val
+                        
+                if "ISM Services PMI" in indicator_text or "Services PMI" in indicator_text or "Non Manufacturing PMI" in indicator_text:
+                    val = clean_and_parse_float(row.iloc[1])
+                    if val is not None:
+                        results["services_pmi"] = val
     except Exception as e:
         print(f"Error scraping indicators from Trading Economics: {e}")
         pass
@@ -647,6 +703,11 @@ def cached_fred_core_pce_yoy() -> Optional[float]:
 
 
 @st.cache_data(ttl=900)
+def cached_fred_fed_assets_yoy() -> Optional[float]:
+    return fetch_fed_assets_yoy_growth()
+
+
+@st.cache_data(ttl=900)
 def get_te_live_data() -> Dict[str, Optional[float]]:
     return fetch_indicators_from_te_indicators_page()
 
@@ -694,7 +755,7 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 @st.cache_data(ttl=900)
 def get_market_snapshot() -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=11) as executor:
+    with ThreadPoolExecutor(max_workers=15) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
@@ -707,6 +768,12 @@ def get_market_snapshot() -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
             executor.submit(cached_barchart_s5th): "barchart_breadth",
             executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
+            # Parallel loads for the upgraded metrics:
+            executor.submit(cached_fred, "ICSA"): "initial_claims_val",
+            executor.submit(cached_fred, "T10YIE"): "breakeven_inflation_val",
+            executor.submit(cached_fred_fed_assets_yoy): "fed_assets_growth_val",
+            executor.submit(cached_fred, "DFII10"): "real_yield_10y_val",
+            executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
         }
         for future in as_completed(futures):
             key = futures[future]
@@ -721,12 +788,14 @@ def get_market_snapshot() -> Dict[str, Any]:
     spx_closes = results.get("spx_closes") or []
     breadth_closes = results.get("breadth_closes") or []
     bond_yield_closes = results.get("bond_yield_closes") or []
+    move_closes = results.get("move_closes") or []
     
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
     
-    te_live = results.get("te_live") or {"core_pce_yoy": None, "ism_pmi": None}
+    te_live = results.get("te_live") or {"core_pce_yoy": None, "ism_pmi": None, "services_pmi": None}
     te_pce = te_live.get("core_pce_yoy")
     te_pmi = te_live.get("ism_pmi")
+    te_services = te_live.get("services_pmi")
     
     shiller_cape = results.get("shiller_cape_val")
     live_breadth = None
@@ -752,6 +821,55 @@ def get_market_snapshot() -> Dict[str, Any]:
     else:
         final_pmi = DEFAULTS["ism_pmi"]
         pmi_source = "CONFIG/DEFAULT"
+
+    # Services PMI
+    if te_services is not None:
+        final_services = te_services
+        services_source = "LIVE (Trading Economics Services)"
+    else:
+        final_services = DEFAULTS["services_pmi"]
+        services_source = "CONFIG/DEFAULT"
+
+    # Initial Jobless Claims (Conversion to thousands)
+    raw_claims = results.get("initial_claims_val")
+    if raw_claims is not None:
+        final_claims = round(raw_claims / 1000.0, 2)
+        claims_source = "LIVE (FRED ICSA)"
+    else:
+        final_claims = DEFAULTS["initial_claims"]
+        claims_source = "CONFIG/DEFAULT"
+
+    # 10Y Breakeven Inflation Rate
+    if results.get("breakeven_inflation_val") is not None:
+        final_breakeven = results.get("breakeven_inflation_val")
+        breakeven_source = "LIVE (FRED T10YIE)"
+    else:
+        final_breakeven = DEFAULTS["breakeven_inflation"]
+        breakeven_source = "CONFIG/DEFAULT"
+
+    # Fed Net Assets YoY Growth
+    if results.get("fed_assets_growth_val") is not None:
+        final_assets_growth = results.get("fed_assets_growth_val")
+        assets_source = "LIVE (FRED WALCL YoY)"
+    else:
+        final_assets_growth = DEFAULTS["fed_assets_growth_yoy"]
+        assets_source = "CONFIG/DEFAULT"
+
+    # 10-Year Real Yield
+    if results.get("real_yield_10y_val") is not None:
+        final_real_yield = results.get("real_yield_10y_val")
+        real_yield_source = "LIVE (FRED DFII10)"
+    else:
+        final_real_yield = DEFAULTS["real_yield_10y"]
+        real_yield_source = "CONFIG/DEFAULT"
+
+    # Implied Volatility (MOVE Index)
+    if move_closes:
+        final_move = move_closes[-1]
+        move_source = "LIVE (Yahoo Finance ^MOVE)"
+    else:
+        final_move = DEFAULTS["move_index"]
+        move_source = "CONFIG/DEFAULT"
 
     # Breadth Logic
     if breadth_closes:
@@ -816,6 +934,12 @@ def get_market_snapshot() -> Dict[str, Any]:
     market_data = {
         "core_pce_yoy": final_pce,
         "ism_pmi": final_pmi,
+        "services_pmi": final_services,
+        "initial_claims": final_claims,
+        "breakeven_inflation": final_breakeven,
+        "fed_assets_growth_yoy": final_assets_growth,
+        "real_yield_10y": final_real_yield,
+        "move_index": final_move,
         "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else fetch_fred_latest("DRTSCIS"),
         "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else fetch_fred_latest("BAMLH0A0HYM2"),
         "shiller_cape": shiller_cape if shiller_cape is not None else DEFAULTS["shiller_cape"],
@@ -845,6 +969,12 @@ def get_market_snapshot() -> Dict[str, Any]:
     market_sources = {
         "core_pce_yoy": pce_source,
         "ism_pmi": pmi_source,
+        "services_pmi": services_source,
+        "initial_claims": claims_source,
+        "breakeven_inflation": breakeven_source,
+        "fed_assets_growth_yoy": assets_source,
+        "real_yield_10y": real_yield_source,
+        "move_index": move_source,
         "sloos_net_pct": sloos_source,
         "hy_oas": hy_source,
         "shiller_cape": "LIVE (Multpl.com CAPE)" if shiller_cape is not None else "CONFIG/DEFAULT",
@@ -871,6 +1001,13 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
 
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
     pmi = safe_float(data.get("ism_pmi"), DEFAULTS["ism_pmi"])
+    services_pmi = safe_float(data.get("services_pmi"), DEFAULTS["services_pmi"])
+    initial_claims = safe_float(data.get("initial_claims"), DEFAULTS["initial_claims"])
+    breakeven_inflation = safe_float(data.get("breakeven_inflation"), DEFAULTS["breakeven_inflation"])
+    fed_assets_growth_yoy = safe_float(data.get("fed_assets_growth_yoy"), DEFAULTS["fed_assets_growth_yoy"])
+    real_yield_10y = safe_float(data.get("real_yield_10y"), DEFAULTS["real_yield_10y"])
+    move_index = safe_float(data.get("move_index"), DEFAULTS["move_index"])
+    
     sloos = safe_float(data.get("sloos_net_pct"), DEFAULTS["sloos_net_pct"])
     hy_spread = safe_float(data.get("hy_oas"), DEFAULTS["hy_oas"])
     cape = safe_float(data.get("shiller_cape"), DEFAULTS["shiller_cape"])
@@ -883,44 +1020,76 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
     market_breadth = safe_float(data.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
 
+    # 1. Inflation Score (Core PCE baseline updated dynamically with market Breakevens)
     if pce < 1.8: scores["inflation"] = 3
     elif pce < 2.0: scores["inflation"] = 1
     elif pce <= 2.3: scores["inflation"] = 0
     elif pce <= 3.0: scores["inflation"] = -3
     else: scores["inflation"] = -5
+    
+    if breakeven_inflation > 2.6:
+        scores["inflation"] = min(scores["inflation"], -3) - 1 # Penalty for spiking rate expectations
+    elif breakeven_inflation < 1.8:
+        scores["inflation"] = max(scores["inflation"], 0) # Deflation support
 
-    if pmi > 55.0: scores["growth"] = 3
-    elif pmi >= 52.0: scores["growth"] = 0
-    elif pmi >= 50.0: scores["growth"] = -3
+    # 2. Growth Score (Composite PMI weighing 80% services, 20% manufacturing, claims drag)
+    composite_pmi = (0.20 * pmi) + (0.80 * services_pmi)
+    if composite_pmi > 55.0: scores["growth"] = 3
+    elif composite_pmi >= 51.5: scores["growth"] = 1
+    elif composite_pmi >= 50.0: scores["growth"] = 0
+    elif composite_pmi >= 48.0: scores["growth"] = -3
     else: scores["growth"] = -5
+    
+    if initial_claims > 250.0:
+        scores["growth"] -= 1 # Labor trend friction penalty
+    if initial_claims > 280.0:
+        scores["growth"] = min(scores["growth"], -3) - 1 # Heavy claims shock
 
+    # 3. Liquidity Score (Credit tightening updated with Fed Asset expansion trends)
     if sloos < -15.0: scores["liquidity"] = 3
     elif sloos <= 5.0: scores["liquidity"] = 0
     else: scores["liquidity"] = -5
+    
+    if fed_assets_growth_yoy > 0.0:
+        scores["liquidity"] += 2 # Balance sheet expansion tailwind
+    else:
+        scores["liquidity"] -= 2 # Quantitative Tightening headwind
 
+    # 4. Credit Spreads
     if hy_spread < 3.0: scores["credit_spreads"] = 3
     elif hy_spread < 4.0: scores["credit_spreads"] = 1
     elif hy_spread <= 5.0: scores["credit_spreads"] = 0
     elif hy_spread <= 6.0: scores["credit_spreads"] = -3
     else: scores["credit_spreads"] = -5
 
-    active_cape_ceiling = 42.0 if fwd_eps >= 15.0 else 35.0
+    # 5. Valuation (CAPE base ceilings compressed by interest-rate Real Yield gravity)
+    base_cape_ceiling = 35.0 if fwd_eps >= 15.0 else 30.0
+    if real_yield_10y > 2.2:
+        active_cape_ceiling = base_cape_ceiling - 5.0 # High risk-free real yield crushes stock caps
+    elif real_yield_10y < 0.5:
+        active_cape_ceiling = base_cape_ceiling + 3.0 # Zero-bound returns expand valuation tolerance
+    else:
+        active_cape_ceiling = base_cape_ceiling
+
     if cape < 20.0: scores["valuation"] = 3
-    elif cape <= 26.0: scores["valuation"] = 0
+    elif cape <= 25.0: scores["valuation"] = 0
     elif cape <= active_cape_ceiling: scores["valuation"] = -3
     else: scores["valuation"] = -5
 
+    # 6. Market Stress
     if vix < 12.0: scores["market_stress"] = 3
     elif vix < 15.0: scores["market_stress"] = 1
     elif vix <= 22.0: scores["market_stress"] = 0
     elif vix <= 30.0: scores["market_stress"] = -3
     else: scores["market_stress"] = -5
 
+    # 7. Momentum
     if sma_dist > 5.0: scores["momentum"] = 3
     elif sma_dist >= 0.0: scores["momentum"] = 1
     elif sma_dist >= -5.0: scores["momentum"] = -3
     else: scores["momentum"] = -5
 
+    # 8. Drawdown
     if drawdown < 5.0: scores["drawdown"] = 3
     elif drawdown < 10.0: scores["drawdown"] = 1
     elif drawdown <= 15.0: scores["drawdown"] = 0
@@ -941,7 +1110,9 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     composite_score = sum(scores.values())
     momentum_breaker = scores["momentum"] <= -3
     asymmetric_vol_trigger = scores["market_stress"] <= -3 or scores["momentum"] <= -3
-    f_fund_unlocked = (bond_yield - pce) >= 1.5
+    
+    # Bond Market Unlock checking Real Spread AND low Implied Bond Volatility (MOVE Index)
+    f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
     dxy_strong = dxy_spot >= 103.5
 
     panic_valve_triggered = False
@@ -1180,11 +1351,19 @@ with st.sidebar:
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
 
     with st.expander("📊 Market Overrides (Advanced)", expanded=False):
-        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation and ISM Manufacturing PMI from Trading Economics, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation, Services PMI, and Manufacturing PMI from Trading Economics, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
         st.markdown("---")
         st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
-        ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
+        ism_pmi = st.number_input("ISM Manufacturing PMI", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures manufacturing economic growth.")
+        services_pmi = st.number_input("ISM Services PMI", value=float(cfg.get("services_pmi", DEFAULTS["services_pmi"])), step=0.5, help="Non-Manufacturing Purchasing Managers Index. Measures services economic growth.")
+        initial_claims = st.number_input("Initial Claims (K)", value=float(cfg.get("initial_claims", DEFAULTS["initial_claims"])), step=1.0, help="Weekly initial jobless claims in thousands.")
+        breakeven_inflation = st.number_input("10Y Breakeven Inflation %", value=float(cfg.get("breakeven_inflation", DEFAULTS["breakeven_inflation"])), step=0.05, help="10-Year Breakeven Inflation Rate percentage representing forward market inflation views.")
+        fed_assets_growth_yoy = st.number_input("Fed Asset Growth YoY %", value=float(cfg.get("fed_assets_growth_yoy", DEFAULTS["fed_assets_growth_yoy"])), step=0.5, help="YoY percentage growth of the Fed's Total Balance Sheet Assets.")
+        real_yield_10y = st.number_input("10Y Real Treasury Yield %", value=float(cfg.get("real_yield_10y", DEFAULTS["real_yield_10y"])), step=0.05, help="10-Year inflation-adjusted risk-free real yield.")
+        move_index = st.number_input("MOVE Volatility Index", value=float(cfg.get("move_index", DEFAULTS["move_index"])), step=1.0, help="Implied bond market yield volatility index.")
+        
+        st.markdown("---")
         sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
         hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
         shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
@@ -1210,6 +1389,12 @@ if save_config_btn:
     cfg["cooldown_days"] = int(cooldown_days)
     cfg["core_pce_yoy"] = float(core_pce_yoy)
     cfg["ism_pmi"] = float(ism_pmi)
+    cfg["services_pmi"] = float(services_pmi)
+    cfg["initial_claims"] = float(initial_claims)
+    cfg["breakeven_inflation"] = float(breakeven_inflation)
+    cfg["fed_assets_growth_yoy"] = float(fed_assets_growth_yoy)
+    cfg["real_yield_10y"] = float(real_yield_10y)
+    cfg["move_index"] = float(move_index)
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["bond_yield_10y"] = float(bond_yield_10y)
@@ -1273,6 +1458,13 @@ if run:
         if not use_live_macro:
             market_data["core_pce_yoy"] = core_pce_yoy
             market_data["ism_pmi"] = ism_pmi
+            market_data["services_pmi"] = services_pmi
+            market_data["initial_claims"] = initial_claims
+            market_data["breakeven_inflation"] = breakeven_inflation
+            market_data["fed_assets_growth_yoy"] = fed_assets_growth_yoy
+            market_data["real_yield_10y"] = real_yield_10y
+            market_data["move_index"] = move_index
+            
             market_data["shiller_cape"] = shiller_cape
             market_data["market_breadth_pct"] = market_breadth_pct
             market_data["bond_yield_10y"] = bond_yield_10y
@@ -1282,6 +1474,12 @@ if run:
             
             market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
             market_sources["ism_pmi"] = "MANUAL OVERRIDE"
+            market_sources["services_pmi"] = "MANUAL OVERRIDE"
+            market_sources["initial_claims"] = "MANUAL OVERRIDE"
+            market_sources["breakeven_inflation"] = "MANUAL OVERRIDE"
+            market_sources["fed_assets_growth_yoy"] = "MANUAL OVERRIDE"
+            market_sources["real_yield_10y"] = "MANUAL OVERRIDE"
+            market_sources["move_index"] = "MANUAL OVERRIDE"
             market_sources["shiller_cape"] = "MANUAL OVERRIDE"
             market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
             market_sources["bond_yield_10y"] = "MANUAL OVERRIDE"
@@ -1296,6 +1494,30 @@ if run:
             if "DEFAULT" in str(market_sources.get("ism_pmi")).upper():
                 market_data["ism_pmi"] = ism_pmi
                 market_sources["ism_pmi"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("services_pmi")).upper():
+                market_data["services_pmi"] = services_pmi
+                market_sources["services_pmi"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("initial_claims")).upper():
+                market_data["initial_claims"] = initial_claims
+                market_sources["initial_claims"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("breakeven_inflation")).upper():
+                market_data["breakeven_inflation"] = breakeven_inflation
+                market_sources["breakeven_inflation"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("fed_assets_growth_yoy")).upper():
+                market_data["fed_assets_growth_yoy"] = fed_assets_growth_yoy
+                market_sources["fed_assets_growth_yoy"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("real_yield_10y")).upper():
+                market_data["real_yield_10y"] = real_yield_10y
+                market_sources["real_yield_10y"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("move_index")).upper():
+                market_data["move_index"] = move_index
+                market_sources["move_index"] = "CONFIG/DEFAULT"
                 
             if "DEFAULT" in str(market_sources.get("shiller_cape")).upper():
                 market_data["shiller_cape"] = shiller_cape
@@ -1321,6 +1543,7 @@ if run:
                 market_data["stlfsi_index"] = stlfsi_index
                 market_sources["stlfsi_index"] = "CONFIG/DEFAULT"
 
+        # Set manual non-automated indicators
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
 
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
@@ -1360,6 +1583,12 @@ if run:
     cfg["cooldown_days"] = int(cooldown_days)
     cfg["core_pce_yoy"] = float(core_pce_yoy)
     cfg["ism_pmi"] = float(ism_pmi)
+    cfg["services_pmi"] = float(services_pmi)
+    cfg["initial_claims"] = float(initial_claims)
+    cfg["breakeven_inflation"] = float(breakeven_inflation)
+    cfg["fed_assets_growth_yoy"] = float(fed_assets_growth_yoy)
+    cfg["real_yield_10y"] = float(real_yield_10y)
+    cfg["move_index"] = float(move_index)
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
     cfg["bond_yield_10y"] = float(bond_yield_10y)
@@ -1593,7 +1822,13 @@ if st.session_state["engine_ran"]:
         st.markdown("### Market Snapshot")
         market_items = [
             ("Core PCE YoY", market_data.get("core_pce_yoy"), market_sources.get("core_pce_yoy")),
-            ("ISM PMI", market_data.get("ism_pmi"), market_sources.get("ism_pmi")),
+            ("ISM Manufacturing PMI", market_data.get("ism_pmi"), market_sources.get("ism_pmi")),
+            ("ISM Services PMI", market_data.get("services_pmi"), market_sources.get("services_pmi")),
+            ("Initial Claims (K)", market_data.get("initial_claims"), market_sources.get("initial_claims")),
+            ("10Y Breakeven Inflation", market_data.get("breakeven_inflation"), market_sources.get("breakeven_inflation")),
+            ("Fed Assets Growth YoY", market_data.get("fed_assets_growth_yoy"), market_sources.get("fed_assets_growth_yoy")),
+            ("10Y Real Yield", market_data.get("real_yield_10y"), market_sources.get("real_yield_10y")),
+            ("MOVE Volatility", market_data.get("move_index"), market_sources.get("move_index")),
             ("SLOOS Net %", market_data.get("sloos_net_pct"), market_sources.get("sloos_net_pct")),
             ("HY OAS", market_data.get("hy_oas"), market_sources.get("hy_oas")),
             ("Shiller CAPE", market_data.get("shiller_cape"), market_sources.get("shiller_cape")),
@@ -1610,7 +1845,7 @@ if st.session_state["engine_ran"]:
         market_cols = st.columns(4)
         for i, (label, value, source) in enumerate(market_items):
             with market_cols[i % 4]:
-                val_formatted = f"{value:.2f}%" if label in ["Core PCE YoY", "Breadth %"] and isinstance(value, (int, float)) else (f"{value:.2f}" if isinstance(value, (int, float)) else str(value))
+                val_formatted = f"{value:.2f}%" if label in ["Core PCE YoY", "Breadth %", "Fed Assets Growth YoY"] and isinstance(value, (int, float)) else (f"{value:.2f}" if isinstance(value, (int, float)) else str(value))
                 
                 is_failed = False
                 source_str = str(source).upper()
@@ -1702,11 +1937,11 @@ if st.session_state["engine_ran"]:
             else:
                 st.markdown("* 🌐 **USD Modifier Inactive:** Dollar strength is within standard limits. Standard international equity allocations remain unmodified.")
                 
-            bond_unlocked = (market_data.get("bond_yield_10y", 0) - market_data.get("core_pce_yoy", 0)) >= 1.5
+            bond_unlocked = (market_data.get("bond_yield_10y", 0) - market_data.get("core_pce_yoy", 0)) >= 1.5 and market_data.get("move_index", 105.0) < 120.0
             if bond_unlocked:
-                st.markdown("* 📈 **F Fund Yield Unlock Active:** 10-Year Real Yield is highly attractive ($\ge 1.5\%$ above Core PCE inflation). Decreased conservative cash G Fund holdings by 10% to capture bond-market F Fund yield.")
+                st.markdown("* 📈 **F Fund Yield Unlock Active:** 10-Year Real Yield is highly attractive ($\ge 1.5\%$ above Core PCE inflation) and Sovereign Volatility (MOVE Index) is stable under 120.")
             else:
-                st.markdown("* 🔒 **F Fund Yield Unlock Inactive:** 10-Year Real Yield spread is below 1.5%. F Fund holdings remain locked in favor of G Fund cash capital protections.")
+                st.markdown("* 🔒 **F Fund Yield Unlock Inactive:** 10-Year Real Yield spread is below 1.5% or interest-rate volatility (MOVE Index) is elevated. F Fund holdings remain locked in favor of G Fund cash capital protections.")
 
     with tab3:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
