@@ -1141,7 +1141,7 @@ def score_card_html(label: str, value: Any, note: str, color: str, icon: str) ->
 
 
 def source_pill_html(source: str) -> str:
-    source_upper = source.upper()
+    source_upper = str(source).upper()
     if "FAILED" in source_upper or "DEFAULT" in source_upper or "FALLBACK" in source_upper:
         cls = "pill-failed"
     elif source_upper.startswith("LIVE"):
@@ -1191,12 +1191,12 @@ with st.sidebar:
         st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
         ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
+        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
+        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
         shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
         fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
         bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
         market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
-        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
-        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
         stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
 
     st.markdown("---")
@@ -1295,7 +1295,7 @@ if run:
             market_sources["hy_oas"] = "MANUAL OVERRIDE"
             market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
         else:
-            # Revert only if the live snapshot calculation resulted in a DEFAULT
+            # Overwrite only if the live snapshot calculation resulted in a DEFAULT
             if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
                 market_data["core_pce_yoy"] = core_pce_yoy
                 market_sources["core_pce_yoy"] = "CONFIG/DEFAULT"
@@ -1460,7 +1460,7 @@ if st.session_state["engine_ran"]:
 
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
-        # Re-architected and beautified Regime Directory Grid in Tab 1
+        # Re-architected and beautified Regime Directory Grid in Tab 1 (Baseline removed)
         st.markdown("---")
         st.markdown("### 🏛️ Regime Directory")
         st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
@@ -1473,7 +1473,7 @@ if st.session_state["engine_ran"]:
                 "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
                 "desc": "Strong macroeconomic backdrop and solid upward price momentum.",
                 "color": "#10b981",
-                "bg": "rgba(16, 185, 129, 0.06)"
+                "bg": "rgba(16, 185, 129, 0.08)"
             },
             {
                 "name": "OPTIMIZED NEUTRAL",
@@ -1482,25 +1482,25 @@ if st.session_state["engine_ran"]:
                 "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
                 "desc": "Default balanced state when market signals are constructive but mixed.",
                 "color": "#3b82f6",
-                "bg": "rgba(59, 130, 246, 0.06)"
+                "bg": "rgba(59, 130, 246, 0.08)"
             },
             {
                 "name": "DEFENSIVE ALLOCATION",
                 "score": "Score: < 0",
                 "profile": "Defensive Profile",
                 "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
-                "desc": "Risk metrics are elevated. Core focus shifts to capital preservation.",
+                "desc": "Used when risk rises or the composite turns negative.",
                 "color": "#f59e0b",
-                "bg": "rgba(245, 158, 11, 0.06)"
+                "bg": "rgba(245, 158, 11, 0.08)"
             },
             {
                 "name": "EMERGENCY DISPATCH",
-                "score": "Score: -50 (Panic)",
+                "score": "Score: -50",
                 "profile": "Maximum Defense",
-                "alloc": "Base: G 90% / F 10% (or G 100%)",
-                "desc": "Triggered instantly by multi-day market panic or technical breach.",
+                "alloc": "Base: G 90% / F 10% (or G 100% / F 0%)",
+                "desc": "3-day panic valve breach.",
                 "color": "#ef4444",
-                "bg": "rgba(239, 68, 68, 0.06)"
+                "bg": "rgba(239, 68, 68, 0.08)"
             }
         ]
 
@@ -1583,8 +1583,8 @@ if st.session_state["engine_ran"]:
             ("Shiller CAPE", market_data.get("shiller_cape"), market_sources.get("shiller_cape")),
             ("Fwd EPS Growth YoY", market_data.get("fwd_eps_growth_yoy"), market_sources.get("fwd_eps_growth_yoy")),
             ("VIX Spot", market_data.get("vix_spot"), market_sources.get("vix_spot")),
-            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma"), market_data.get("pct_dist_200_sma")),
-            ("Drawdown %", market_data.get("drawdown_pct"), market_data.get("drawdown_pct")),
+            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma"), market_sources.get("pct_dist_200_sma")),
+            ("Drawdown %", market_data.get("drawdown_pct"), market_sources.get("drawdown_pct")),
             ("STLFSI", market_data.get("stlfsi_index"), market_sources.get("stlfsi_index")),
             ("10Y Yield", market_data.get("bond_yield_10y"), market_sources.get("bond_yield_10y")),
             ("DXY Spot", market_data.get("dxy_spot"), market_sources.get("dxy_spot")),
