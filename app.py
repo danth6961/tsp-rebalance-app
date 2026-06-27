@@ -64,6 +64,7 @@ DEFAULTS = {
     "market_breadth_pct": 73.20,
     "vix_spot": 19.0,
     "dxy_spot": 105.80,
+    "spx_spot": 5000.0,
 }
 
 # Standard liquid ETFs that approximate the respective TSP funds
@@ -99,13 +100,6 @@ def load_state() -> Dict[str, Any]:
             pass
     return default_state()
 
-def save_state(state_data: Dict[str, Any]) -> None:
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state_data, f, indent=4)
-    except Exception:
-        pass
-
 def load_config() -> Dict[str, Any]:
     if CONFIG_FILE.exists():
         try:
@@ -135,6 +129,9 @@ def load_config() -> Dict[str, Any]:
         "sloos_net_pct": DEFAULTS["sloos_net_pct"],
         "hy_oas": DEFAULTS["hy_oas"],
         "stlfsi_index": DEFAULTS["stlfsi_index"],
+        "vix_spot": DEFAULTS["vix_spot"],
+        "dxy_spot": DEFAULTS["dxy_spot"],
+        "spx_spot": DEFAULTS["spx_spot"],
         "use_live_macro": True
     }
 
@@ -142,6 +139,13 @@ def save_config(config_data: Dict[str, Any]) -> None:
     try:
         with open(CONFIG_FILE, "w") as f:
             json.dump(config_data, f, indent=4)
+    except Exception:
+        pass
+
+def save_state(state_data: Dict[str, Any]) -> None:
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state_data, f, indent=4)
     except Exception:
         pass
 
@@ -351,9 +355,7 @@ def df_to_json_bytes(df: pd.DataFrame) -> bytes:
 # ==============================================================================
 
 def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
-    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID.
-    Fixed the query URL structure to use /FRED/FRED/ to prevent HTTP 400 Bad Request.
-    """
+    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID."""
     url = f"https://api.db.nomics.world/v22/series/FRED/FRED/{urllib.parse.quote(series_id)}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -1315,12 +1317,33 @@ def source_pill_html(source: str) -> str:
 # ==============================================================================
 
 today = date.today()
-state = reset_monthly_if_needed(load_state(), today)
+state = load_state()
 cfg = load_config()
+state = reset_monthly_if_needed(state, today)
+
+INDICATOR_KEYS = [
+    "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
+    "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y", "move_index",
+    "sloos_net_pct", "hy_oas", "shiller_cape", "fwd_eps_growth_yoy",
+    "stlfsi_index", "bond_yield_10y", "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"
+]
+
+DERIVED_KEYS = ["pct_dist_200_sma", "drawdown_pct", "vix_3d_panic", "spx_3d_panic"]
+
+# Synchronize local Streamlit session state from file system config
+for key in INDICATOR_KEYS:
+    if key not in st.session_state:
+        st.session_state[key] = float(cfg.get(key, DEFAULTS.get(key, 0.0)))
+    if f"{key}_source" not in st.session_state:
+        st.session_state[f"{key}_source"] = "CONFIG/DEFAULT"
+
+for key in DERIVED_KEYS:
+    if key not in st.session_state:
+        st.session_state[key] = 0.0 if "pct" in key or "dist" in key else False
 
 
 # ==============================================================================
-# SIDEBAR
+# SIDEBAR (Streamlined and simplified to keep dashboard focus)
 # ==============================================================================
 
 with st.sidebar:
@@ -1351,34 +1374,14 @@ with st.sidebar:
         score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1, help="Required point difference to qualify as a strong trend adjustment.")
         confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Number of consecutive days a signal must remain in a new regime before triggering action.")
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
-
-    with st.expander("📊 Market Overrides (Advanced)", expanded=False):
-        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation, Services PMI, and Manufacturing PMI from Trading Economics, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
         st.markdown("---")
-        st.warning("These manual values serve as overrides or fallback configurations.")
-        core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
-        ism_pmi = st.number_input("ISM Manufacturing PMI", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures manufacturing economic growth.")
-        services_pmi = st.number_input("ISM Services PMI", value=float(cfg.get("services_pmi", DEFAULTS["services_pmi"])), step=0.5, help="Non-Manufacturing Purchasing Managers Index. Measures services economic growth.")
-        initial_claims = st.number_input("Initial Claims (K)", value=float(cfg.get("initial_claims", DEFAULTS["initial_claims"])), step=1.0, help="Weekly initial jobless claims in thousands.")
-        breakeven_inflation = st.number_input("10Y Breakeven Inflation %", value=float(cfg.get("breakeven_inflation", DEFAULTS["breakeven_inflation"])), step=0.05, help="10-Year Breakeven Inflation Rate percentage representing forward market inflation views.")
-        fed_assets_growth_yoy = st.number_input("Fed Asset Growth YoY %", value=float(cfg.get("fed_assets_growth_yoy", DEFAULTS["fed_assets_growth_yoy"])), step=0.5, help="YoY percentage growth of the Fed's Total Balance Sheet Assets.")
-        real_yield_10y = st.number_input("10Y Real Treasury Yield %", value=float(cfg.get("real_yield_10y", DEFAULTS["real_yield_10y"])), step=0.05, help="10-Year inflation-adjusted risk-free real yield.")
-        move_index = st.number_input("MOVE Volatility Index", value=float(cfg.get("move_index", DEFAULTS["move_index"])), step=1.0, help="Implied bond market yield volatility index.")
-        
-        st.markdown("---")
-        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
-        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
-        shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
-        fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
-        bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
-        market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
-        stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, clicking 'Fetch & Run' automatically queries online mirrors. Fallbacks use config values typed directly into dashboard tiles.")
 
     st.markdown("---")
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True, help="Resets your transfer counters back to zero.")
     clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True, help="Removes the daily logs CSV file permanently.")
-    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and safety preferences permanently.")
+    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and manual dashboard overrides permanently.")
     
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
@@ -1389,24 +1392,12 @@ if save_config_btn:
     cfg["score_change_threshold"] = int(score_change_threshold)
     cfg["confirmation_days"] = int(confirmation_days)
     cfg["cooldown_days"] = int(cooldown_days)
-    cfg["core_pce_yoy"] = float(core_pce_yoy)
-    cfg["ism_pmi"] = float(ism_pmi)
-    cfg["services_pmi"] = float(services_pmi)
-    cfg["initial_claims"] = float(initial_claims)
-    cfg["breakeven_inflation"] = float(breakeven_inflation)
-    cfg["fed_assets_growth_yoy"] = float(fed_assets_growth_yoy)
-    cfg["real_yield_10y"] = float(real_yield_10y)
-    cfg["move_index"] = float(move_index)
-    cfg["shiller_cape"] = float(shiller_cape)
-    cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
-    cfg["bond_yield_10y"] = float(bond_yield_10y)
-    cfg["market_breadth_pct"] = float(market_breadth_pct)
-    cfg["sloos_net_pct"] = float(sloos_net_pct)
-    cfg["hy_oas"] = float(hy_oas)
-    cfg["stlfsi_index"] = float(stlfsi_index)
     cfg["use_live_macro"] = bool(use_live_macro)
+    # Save the currently edited dashboard indicator overrides directly to file config
+    for key in INDICATOR_KEYS:
+        cfg[key] = float(st.session_state[key])
     save_config(cfg)
-    st.sidebar.success("Config saved.")
+    st.sidebar.success("Config and overrides saved.")
 
 if mark_ift:
     state["ift_count_this_month"] += 1
@@ -1436,197 +1427,47 @@ if clear_logs_btn:
 
 if "engine_ran" not in st.session_state:
     st.session_state["engine_ran"] = False
-    st.session_state["engine_results"] = {}
 
 if run:
-    with st.spinner("Loading live data and running engine..."):
+    with st.spinner("Loading live macroeconomic datasets..."):
         try:
             snapshot = get_market_snapshot()
-            market_data = snapshot["market_data"]
-            market_sources = snapshot["market_sources"]
+            fetched_data = snapshot["market_data"]
+            fetched_sources = snapshot["market_sources"]
         except Exception as e:
             st.error(f"Could not connect to live feeds. Using system offline baselines. (Info: {e})")
-            market_data = DEFAULTS.copy()
-            market_data["vix_spot"] = DEFAULTS["vix_spot"]
-            market_data["pct_dist_200_sma"] = 1.2
-            market_data["drawdown_pct"] = 2.5
-            market_data["vix_3d_panic"] = False
-            market_data["vix_last_3"] = [19.0, 19.1, 19.0]
-            market_data["spx_3d_panic"] = False
-            market_data["spx_dist_last_3"] = [1.1, 1.2, 1.2]
-            market_data["spx_spot"] = 5000.0
-            market_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
+            fetched_data = DEFAULTS.copy()
+            fetched_data["vix_spot"] = DEFAULTS["vix_spot"]
+            fetched_data["pct_dist_200_sma"] = 1.2
+            fetched_data["drawdown_pct"] = 2.5
+            fetched_data["vix_3d_panic"] = False
+            fetched_data["vix_last_3"] = [19.0, 19.1, 19.0]
+            fetched_data["spx_3d_panic"] = False
+            fetched_data["spx_dist_last_3"] = [1.1, 1.2, 1.2]
+            fetched_data["spx_spot"] = DEFAULTS["spx_spot"]
+            fetched_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
-        if not use_live_macro:
-            market_data["core_pce_yoy"] = core_pce_yoy
-            market_data["ism_pmi"] = ism_pmi
-            market_data["services_pmi"] = services_pmi
-            market_data["initial_claims"] = initial_claims
-            market_data["breakeven_inflation"] = breakeven_inflation
-            market_data["fed_assets_growth_yoy"] = fed_assets_growth_yoy
-            market_data["real_yield_10y"] = real_yield_10y
-            market_data["move_index"] = move_index
+        # Populate stream session state from retrieved APIs
+        for key in INDICATOR_KEYS:
+            src = fetched_sources.get(key, "CONFIG/DEFAULT")
+            val = fetched_data.get(key, DEFAULTS[key])
             
-            market_data["shiller_cape"] = shiller_cape
-            market_data["market_breadth_pct"] = market_breadth_pct
-            market_data["bond_yield_10y"] = bond_yield_10y
-            market_data["sloos_net_pct"] = sloos_net_pct
-            market_data["hy_oas"] = hy_oas
-            market_data["stlfsi_index"] = stlfsi_index
-            
-            market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
-            market_sources["ism_pmi"] = "MANUAL OVERRIDE"
-            market_sources["services_pmi"] = "MANUAL OVERRIDE"
-            market_sources["initial_claims"] = "MANUAL OVERRIDE"
-            market_sources["breakeven_inflation"] = "MANUAL OVERRIDE"
-            market_sources["fed_assets_growth_yoy"] = "MANUAL OVERRIDE"
-            market_sources["real_yield_10y"] = "MANUAL OVERRIDE"
-            market_sources["move_index"] = "MANUAL OVERRIDE"
-            market_sources["shiller_cape"] = "MANUAL OVERRIDE"
-            market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
-            market_sources["bond_yield_10y"] = "MANUAL OVERRIDE"
-            market_sources["sloos_net_pct"] = "MANUAL OVERRIDE"
-            market_sources["hy_oas"] = "MANUAL OVERRIDE"
-            market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
-        else:
-            if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
-                market_data["core_pce_yoy"] = core_pce_yoy
-                market_sources["core_pce_yoy"] = "CONFIG/DEFAULT"
-                
-            if "DEFAULT" in str(market_sources.get("ism_pmi")).upper():
-                market_data["ism_pmi"] = ism_pmi
-                market_sources["ism_pmi"] = "CONFIG/DEFAULT"
+            if use_live_macro and "DEFAULT" not in str(src).upper() and "FAILED" not in str(src).upper():
+                st.session_state[key] = float(val)
+                st.session_state[f"{key}_source"] = src
+            else:
+                st.session_state[key] = float(cfg.get(key, DEFAULTS.get(key, 0.0)))
+                st.session_state[f"{key}_source"] = "CONFIG/DEFAULT" if not use_live_macro else "FETCH FAILED (FALLBACK)"
 
-            if "DEFAULT" in str(market_sources.get("services_pmi")).upper():
-                market_data["services_pmi"] = services_pmi
-                market_sources["services_pmi"] = "CONFIG/DEFAULT"
+        st.session_state["pct_dist_200_sma"] = fetched_data.get("pct_dist_200_sma", 0.0)
+        st.session_state["drawdown_pct"] = fetched_data.get("drawdown_pct", 0.0)
+        st.session_state["vix_3d_panic"] = fetched_data.get("vix_3d_panic", False)
+        st.session_state["spx_3d_panic"] = fetched_data.get("spx_3d_panic", False)
+        st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
+        st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
 
-            if "DEFAULT" in str(market_sources.get("initial_claims")).upper():
-                market_data["initial_claims"] = initial_claims
-                market_sources["initial_claims"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("breakeven_inflation")).upper():
-                market_data["breakeven_inflation"] = breakeven_inflation
-                market_sources["breakeven_inflation"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("fed_assets_growth_yoy")).upper():
-                market_data["fed_assets_growth_yoy"] = fed_assets_growth_yoy
-                market_sources["fed_assets_growth_yoy"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("real_yield_10y")).upper():
-                market_data["real_yield_10y"] = real_yield_10y
-                market_sources["real_yield_10y"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("move_index")).upper():
-                market_data["move_index"] = move_index
-                market_sources["move_index"] = "CONFIG/DEFAULT"
-                
-            if "DEFAULT" in str(market_sources.get("shiller_cape")).upper():
-                market_data["shiller_cape"] = shiller_cape
-                market_sources["shiller_cape"] = "CONFIG/DEFAULT"
-                
-            if "DEFAULT" in str(market_sources.get("market_breadth_pct")).upper():
-                market_data["market_breadth_pct"] = market_breadth_pct
-                market_sources["market_breadth_pct"] = "CONFIG/DEFAULT"
-                
-            if "DEFAULT" in str(market_sources.get("bond_yield_10y")).upper():
-                market_data["bond_yield_10y"] = bond_yield_10y
-                market_sources["bond_yield_10y"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("sloos_net_pct")).upper():
-                market_data["sloos_net_pct"] = sloos_net_pct
-                market_sources["sloos_net_pct"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("hy_oas")).upper():
-                market_data["hy_oas"] = hy_oas
-                market_sources["hy_oas"] = "CONFIG/DEFAULT"
-
-            if "DEFAULT" in str(market_sources.get("stlfsi_index")).upper():
-                market_data["stlfsi_index"] = stlfsi_index
-                market_sources["stlfsi_index"] = "CONFIG/DEFAULT"
-
-        # Set manual non-automated indicators
-        market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
-
-        allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
-
-    emergency_triggered = (total_score == -50)
-    state = update_signal_history(state, regime, total_score, allocations)
-    last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
-
-    use_ift, reason = should_use_tsp_ift(
-        today=today,
-        current_alloc=current_alloc,
-        target_alloc=allocations,
-        recent_regimes=state["recent_regimes"],
-        recent_scores=state["recent_scores"],
-        emergency_triggered=emergency_triggered,
-        ift_count_this_month=state["ift_count_this_month"],
-        last_ift_date=last_ift_date,
-        allow_second_ift=allow_second_ift,
-        normal_drift_threshold_pct=float(normal_drift_threshold_pct),
-        score_change_threshold=int(score_change_threshold),
-        confirmation_days=int(confirmation_days),
-        cooldown_days=int(cooldown_days),
-    )
-
-    action = "SUBMIT IFT" if use_ift else "HOLD"
-    if use_ift:
-        state["ift_count_this_month"] += 1
-        state["last_ift_date"] = today.isoformat()
-
-    save_state(state)
-
-    cfg["current_alloc"] = current_alloc
-    cfg["allow_second_ift"] = allow_second_ift
-    cfg["normal_drift_threshold_pct"] = float(normal_drift_threshold_pct)
-    cfg["score_change_threshold"] = int(score_change_threshold)
-    cfg["confirmation_days"] = int(confirmation_days)
-    cfg["cooldown_days"] = int(cooldown_days)
-    cfg["core_pce_yoy"] = float(core_pce_yoy)
-    cfg["ism_pmi"] = float(ism_pmi)
-    cfg["services_pmi"] = float(services_pmi)
-    cfg["initial_claims"] = float(initial_claims)
-    cfg["breakeven_inflation"] = float(breakeven_inflation)
-    cfg["fed_assets_growth_yoy"] = float(fed_assets_growth_yoy)
-    cfg["real_yield_10y"] = float(real_yield_10y)
-    cfg["move_index"] = float(move_index)
-    cfg["shiller_cape"] = float(shiller_cape)
-    cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
-    cfg["bond_yield_10y"] = float(bond_yield_10y)
-    cfg["market_breadth_pct"] = float(market_breadth_pct)
-    cfg["sloos_net_pct"] = float(sloos_net_pct)
-    cfg["hy_oas"] = float(hy_oas)
-    cfg["stlfsi_index"] = float(stlfsi_index)
-    cfg["use_live_macro"] = bool(use_live_macro)
-    save_config(cfg)
-
-    append_log_row({
-        "date": today.isoformat(),
-        "action": action,
-        "reason": reason,
-        "regime": regime,
-        "total_score": total_score,
-        "ift_count_this_month": state["ift_count_this_month"],
-        "current_alloc": json.dumps(current_alloc),
-        "target_alloc": json.dumps(allocations),
-        "vix": market_data["vix_spot"],
-        "spx_200sma_dist": market_data["pct_dist_200_sma"],
-        "drawdown_pct": market_data["drawdown_pct"],
-    })
-
-    st.session_state["engine_results"] = {
-        "market_data": market_data,
-        "market_sources": market_sources,
-        "allocations": allocations,
-        "factor_scores": factor_scores,
-        "total_score": total_score,
-        "regime": regime,
-        "baseline": baseline,
-        "action": action,
-        "reason": reason,
-    }
-    st.session_state["engine_ran"] = True
+        st.session_state["engine_ran"] = True
+        st.rerun()
 
 
 # ==============================================================================
@@ -1634,16 +1475,16 @@ if run:
 # ==============================================================================
 
 if st.session_state["engine_ran"]:
-    res = st.session_state["engine_results"]
-    market_data = res["market_data"]
-    market_sources = res["market_sources"]
-    allocations = res["allocations"]
-    factor_scores = res["factor_scores"]
-    total_score = res["total_score"]
-    regime = res["regime"]
-    baseline = res["baseline"]
-    action = res["action"]
-    reason = res["reason"]
+    # Synthesize macro state directly from session variables (incorporates dynamic edits)
+    market_data = {key: st.session_state[key] for key in INDICATOR_KEYS}
+    market_data["pct_dist_200_sma"] = st.session_state["pct_dist_200_sma"]
+    market_data["drawdown_pct"] = st.session_state["drawdown_pct"]
+    market_data["vix_3d_panic"] = st.session_state["vix_3d_panic"]
+    market_data["spx_3d_panic"] = st.session_state["spx_3d_panic"]
+    market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
+    market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
+
+    allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
@@ -1821,72 +1662,83 @@ if st.session_state["engine_ran"]:
                 )
 
         st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
-        st.markdown("### Market Snapshot")
+        st.markdown("### Market Snapshot (Fully Editable)")
+        st.caption("Review current indicators below. Feel free to override any value directly inside its card; changes will instantly recompute the rules engine allocations and factor scores.")
+        
         market_items = [
-            ("Core PCE YoY", market_data.get("core_pce_yoy"), market_sources.get("core_pce_yoy")),
-            ("ISM Manufacturing PMI", market_data.get("ism_pmi"), market_sources.get("ism_pmi")),
-            ("ISM Services PMI", market_data.get("services_pmi"), market_sources.get("services_pmi")),
-            ("Initial Claims (K)", market_data.get("initial_claims"), market_sources.get("initial_claims")),
-            ("10Y Breakeven Inflation", market_data.get("breakeven_inflation"), market_sources.get("breakeven_inflation")),
-            ("Fed Assets Growth YoY", market_data.get("fed_assets_growth_yoy"), market_sources.get("fed_assets_growth_yoy")),
-            ("10Y Real Yield", market_data.get("real_yield_10y"), market_sources.get("real_yield_10y")),
-            ("MOVE Volatility", market_data.get("move_index"), market_sources.get("move_index")),
-            ("SLOOS Net %", market_data.get("sloos_net_pct"), market_sources.get("sloos_net_pct")),
-            ("HY OAS", market_data.get("hy_oas"), market_sources.get("hy_oas")),
-            ("Shiller CAPE", market_data.get("shiller_cape"), market_sources.get("shiller_cape")),
-            ("Fwd EPS Growth YoY", market_data.get("fwd_eps_growth_yoy"), market_sources.get("fwd_eps_growth_yoy")),
-            ("VIX Spot", market_data.get("vix_spot"), market_sources.get("vix_spot")),
-            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma"), market_sources.get("pct_dist_200_sma")),
-            ("Drawdown %", market_data.get("drawdown_pct"), market_sources.get("drawdown_pct")),
-            ("STLFSI", market_data.get("stlfsi_index"), market_sources.get("stlfsi_index")),
-            ("10Y Yield", market_data.get("bond_yield_10y"), market_sources.get("bond_yield_10y")),
-            ("DXY Spot", market_data.get("dxy_spot"), market_sources.get("dxy_spot")),
-            ("Breadth %", market_data.get("market_breadth_pct"), market_sources.get("market_breadth_pct")),
-            ("SPX Spot", market_data.get("spx_spot"), market_sources.get("spx_spot")),
+            ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
+            ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
+            ("ISM Services PMI", "services_pmi", st.session_state.get("services_pmi_source")),
+            ("Initial Claims (K)", "initial_claims", st.session_state.get("initial_claims_source")),
+            ("10Y Breakeven Inflation", "breakeven_inflation", st.session_state.get("breakeven_inflation_source")),
+            ("Fed Assets Growth YoY", "fed_assets_growth_yoy", st.session_state.get("fed_assets_growth_yoy_source")),
+            ("10Y Real Yield", "real_yield_10y", st.session_state.get("real_yield_10y_source")),
+            ("MOVE Volatility", "move_index", st.session_state.get("move_index_source")),
+            ("SLOOS Net %", "sloos_net_pct", st.session_state.get("sloos_net_pct_source")),
+            ("HY OAS", "hy_oas", st.session_state.get("hy_oas_source")),
+            ("Shiller CAPE", "shiller_cape", st.session_state.get("shiller_cape_source")),
+            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy", st.session_state.get("fwd_eps_growth_yoy_source")),
+            ("VIX Spot", "vix_spot", st.session_state.get("vix_spot_source")),
+            ("SPX vs 200SMA %", "pct_dist_200_sma", "DERIVED"),
+            ("Drawdown %", "drawdown_pct", "DERIVED"),
+            ("STLFSI", "stlfsi_index", st.session_state.get("stlfsi_index_source")),
+            ("10Y Yield", "bond_yield_10y", st.session_state.get("bond_yield_10y_source")),
+            ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
+            ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
+            ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
         ]
+        
         market_cols = st.columns(4)
-        for i, (label, value, source) in enumerate(market_items):
+        for i, (label, key, source) in enumerate(market_items):
+            source_str = str(source).upper()
+            is_failed = "FAILED" in source_str or "DEFAULT" in source_str or "FALLBACK" in source_str or "OFFLINE" in source_str
+            
+            border_color = "#dc2626" if is_failed else "#10b981"
+            
+            # Configure appropriate precision increments based on data types
+            step_val = 0.1
+            format_val = "%.2f"
+            if "PMI" in label or "Index" in label or "VIX" in label or "Volatility" in label:
+                step_val = 0.5
+            elif "Claims" in label or "Spot" in label or "Yield" in label:
+                step_val = 1.0
+                format_val = "%.2f"
+            elif "Assets" in label or "SLOOS" in label:
+                step_val = 1.0
+                format_val = "%.2f"
+                
             with market_cols[i % 4]:
-                val_formatted = f"{value:.2f}%" if label in ["Core PCE YoY", "Breadth %", "Fed Assets Growth YoY"] and isinstance(value, (int, float)) else (f"{value:.2f}" if isinstance(value, (int, float)) else str(value))
+                st.markdown(
+                    clean_html(f"""
+                    <div style="border-left: 5px solid {border_color}; padding-left: 10px; margin-top: 10px; margin-bottom: 2px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing:0.04em;">{label}</span>
+                    </div>
+                    """),
+                    unsafe_allow_html=True
+                )
                 
-                is_failed = False
-                source_str = str(source).upper()
-                if "FAILED" in source_str or "DEFAULT" in source_str or "FALLBACK" in source_str:
-                    is_failed = True
-                
-                border_style = "border-left: 5px solid #dc2626;" if is_failed else "border-left: 5px solid #10b981;"
-                status_icon = "⚠️" if is_failed else "✅"
-                status_tooltip = "Failed to fetch live data (reverted to default/config fallback)" if is_failed else "Downloaded live data successfully"
+                st.number_input(
+                    label=label,
+                    value=float(st.session_state[key]),
+                    step=step_val,
+                    format=format_val,
+                    key=key,
+                    label_visibility="collapsed"
+                )
                 
                 st.markdown(
                     clean_html(f"""
-                    <div class="small-kpi" style="margin-bottom:0.6rem; {border_style}" title="{status_tooltip}">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                            <span class="small-kpi-title" style="margin-bottom: 0;">{label}</span>
-                            <span style="font-size: 0.85rem;" title="{status_tooltip}">{status_icon}</span>
-                        </div>
-                        <div class="small-kpi-value">{val_formatted if value is not None else 'N/A'}</div>
-                        <div class="small-kpi-note" style="margin-top: 0.35rem;">{source_pill_html(source)}</div>
+                    <div style="margin-top: -8px; margin-bottom: 12px; padding-left: 10px;">
+                        {source_pill_html(source)}
                     </div>
                     """),
-                    unsafe_allow_html=True,
+                    unsafe_allow_html=True
                 )
 
         st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
-        if regime == "RISK-ON OVERRIDE":
-            st.success(f"🟢 Current Regime: {regime}")
-        elif regime == "OPTIMIZED NEUTRAL":
-            st.info(f"🟡 Current Regime: {regime}")
-        elif regime == "DEFENSIVE ALLOCATION":
-            st.warning(f"🟠 Current Regime: {regime}")
-        elif regime == "EMERGENCY DISPATCH":
-            st.error(f"🔴 Current Regime: {regime}")
-        else:
-            st.write(f"Current Regime: {regime}")
-            
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
             st.markdown("#### 1. Macro & Stress Factor Scoring")
             
@@ -2118,7 +1970,7 @@ if st.session_state["engine_ran"]:
                     "Download Latest Snapshot JSON",
                     data=json.dumps({
                         "market_data": market_data,
-                        "market_sources": market_sources,
+                        "market_sources": {k: st.session_state.get(f"{k}_source") for k in INDICATOR_KEYS},
                         "factor_scores": factor_scores,
                         "regime": regime,
                         "total_score": total_score,
@@ -2135,4 +1987,4 @@ if st.session_state["engine_ran"]:
             st.info("No log file yet.")
 
 else:
-    st.info("Use the sidebar to set allocations and policy, then click **Fetch & Run Engine**.")
+    st.info("Use the sidebar to set allocations and policy, then click **Fetch & Run Engine** to initialize the data panels.")
