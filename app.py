@@ -167,27 +167,6 @@ def inject_custom_css():
 inject_custom_css()
 
 # ==============================================================================
-# HEADER & EMBEDDED ACTION BAR
-# ==============================================================================
-
-col_header, col_run = st.columns([3, 1])
-with col_header:
-    st.markdown(
-        """
-        <div style="padding-top: 0.3rem;">
-            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP Rebalance Engine</div>
-            <div style="color: #64748b; font-size: 0.95rem; margin-top: 0.25rem;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Fixed: Directly call the container method to guarantee global variable registration
-col_run.markdown("<div style='padding-top: 0.85rem;'></div>", unsafe_allow_html=True)
-run = col_run.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
-
-
-# ==============================================================================
 # UTILITIES
 # ==============================================================================
 
@@ -1203,6 +1182,9 @@ with st.sidebar:
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True, help="Resets your transfer counters back to zero.")
     clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True, help="Removes the daily logs CSV file permanently.")
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and safety preferences permanently.")
+    
+    # Standardized root action rendering (Nesting Bypassed to fix NameError completely)
+    run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
     cfg["current_alloc"] = current_alloc
@@ -1247,14 +1229,13 @@ if clear_logs_btn:
 
 
 # ==============================================================================
-# MAIN ENGINE EXECUTION (Robust Session Persistence Enabled)
+# MAIN ENGINE EXECUTION
 # ==============================================================================
 
 if "engine_ran" not in st.session_state:
     st.session_state["engine_ran"] = False
     st.session_state["engine_results"] = {}
 
-# Trigger engine run on header bar button click
 if run:
     with st.spinner("Loading live data and running engine..."):
         try:
@@ -1424,6 +1405,9 @@ if st.session_state["engine_ran"]:
     reason = res["reason"]
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
+
+    # Added spacing margin between the high-level KPI cards and the tab navigation layout
+    st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
 
