@@ -168,7 +168,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 5rem; /* Increased to safely clear Streamlit's top header */
+            padding-top: 4rem; /* Increased to safely clear Streamlit's top header */
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -196,7 +196,7 @@ def inject_custom_css():
             border: 1px solid rgba(148, 163, 184, 0.15);
             background-color: rgba(248, 250, 252, 0.5);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-            margin-top: 6px; /* Added margin to prevent clipping on hover translation */
+            margin-top: 4px; /* Added margin to prevent clipping on hover translation */
             margin-bottom: 0.6rem;
             transition: transform 0.18s ease, box-shadow 0.18s ease;
         }
