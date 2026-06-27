@@ -36,41 +36,6 @@ st.set_page_config(
 
 
 # ==============================================================================
-# FILES / CONFIG & ROBUST FALLBACKS
-# ==============================================================================
-
-MAX_RETRIES = 3
-RETRY_SLEEP_SEC = 1.5
-
-STATE_FILE = Path("tsp_state.json")
-CONFIG_FILE = Path("tsp_config.json")
-LOG_FILE = Path("tsp_daily_log.csv")
-
-DEFAULTS = {
-    "core_pce_yoy": 3.4,
-    "ism_pmi": 54.0,
-    "sloos_net_pct": 6.6,
-    "hy_oas": 2.76,
-    "shiller_cape": 39.66,
-    "fwd_eps_growth_yoy": 11.8,
-    "stlfsi_index": -0.9568,
-    "bond_yield_10y": 4.50,
-    "market_breadth_pct": 73.20,
-    "vix_spot": 19.0,
-    "dxy_spot": 105.80,
-}
-
-# Standard liquid ETFs that approximate the respective TSP funds
-PROXIES = {
-    "C Fund (S&P 500 Stock Index)": "SPY",
-    "S Fund (Mid/Small Cap Stock Index)": "VXF",
-    "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
-    "F Fund (U.S. Aggregate Bond Index)": "AGG",
-    "G Fund (Short-Term U.S. Treasury Bills)": "BIL"
-}
-
-
-# ==============================================================================
 # STYLE (Dark-Mode Compliant & Modern Cards)
 # ==============================================================================
 
@@ -166,106 +131,9 @@ def inject_custom_css():
 
 inject_custom_css()
 
-# ==============================================================================
-# SIDEBAR (Header & Subtitle Relocated here to declutter main page)
-# ==============================================================================
-
-with st.sidebar:
-    st.markdown(
-        clean_html(f"""
-        <div style="padding-bottom: 1rem; border-bottom: 1px solid rgba(148,163,184,0.18); margin-bottom: 1rem;">
-            <div style="font-size: 1.38rem; font-weight: 800; line-height: 1.2;">🏛️ TSP Rebalance Engine</div>
-            <div style="color: #64748b; font-size: 0.8rem; margin-top: 0.4rem; line-height: 1.35;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
-        </div>
-        """),
-        unsafe_allow_html=True
-    )
-
-    with st.expander("💼 Your Current Allocation", expanded=True):
-        st.info("Input your current TSP holdings percentage. They must sum to 100%.")
-        current_alloc = {
-            "G": st.number_input("G Fund %", value=float(cfg.get("current_alloc", {}).get("G", 40.0)), step=1.0, help="Government Securities Fund: Extremely low-risk; safe interest-earning fund."),
-            "C": st.number_input("C Fund %", value=float(cfg.get("current_alloc", {}).get("C", 30.0)), step=1.0, help="Common Stock Index Fund: Mimics the S&P 500 Index (large US companies)."),
-            "I": st.number_input("I Fund %", value=float(cfg.get("current_alloc", {}).get("I", 20.0)), step=1.0, help="International Stock Index Fund: Tracks international company stocks."),
-            "S": st.number_input("S Fund %", value=float(cfg.get("current_alloc", {}).get("S", 5.0)), step=1.0, help="Small Cap Stock Index Fund: Tracks smaller-sized US company stocks."),
-            "F": st.number_input("F Fund %", value=float(cfg.get("current_alloc", {}).get("F", 5.0)), step=1.0, help="Fixed Income Index Fund: Tracks US bond market index."),
-        }
-
-    with st.expander("🛡️ Transfer Rules & Safeties", expanded=False):
-        st.info("Safety limits designed to preserve your monthly transfer quotas.")
-        allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)), help="Normally you are limited to 2 transfers a month. Enabling this allows the system to make a second transfer in normal regimes if conditions are favorable.")
-        normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5, help="How far out of alignment your real portfolio is from target before recommending an adjustment.")
-        score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1, help="Required point difference to qualify as a strong trend adjustment.")
-        confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Number of consecutive days a signal must remain in a new regime before triggering action.")
-        cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
-
-    with st.expander("📊 Market Overrides (Advanced)", expanded=False):
-        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation and ISM Manufacturing PMI from Trading Economics, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
-        st.markdown("---")
-        st.warning("These manual values serve as overrides or fallback configurations.")
-        core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
-        ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
-        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
-        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
-        shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
-        fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
-        bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
-        market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
-        stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
-
-    st.markdown("---")
-    mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
-    reset_state_btn = st.button("♻️ Reset State File", use_container_width=True, help="Resets your transfer counters back to zero.")
-    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True, help="Removes the daily logs CSV file permanently.")
-    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and safety preferences permanently.")
-    
-    # Standardized root action rendering (Nesting Bypassed to fix NameError completely)
-    run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
-
-if save_config_btn:
-    cfg["current_alloc"] = current_alloc
-    cfg["allow_second_ift"] = allow_second_ift
-    cfg["normal_drift_threshold_pct"] = float(normal_drift_threshold_pct)
-    cfg["score_change_threshold"] = int(score_change_threshold)
-    cfg["confirmation_days"] = int(confirmation_days)
-    cfg["cooldown_days"] = int(cooldown_days)
-    cfg["core_pce_yoy"] = float(core_pce_yoy)
-    cfg["ism_pmi"] = float(ism_pmi)
-    cfg["shiller_cape"] = float(shiller_cape)
-    cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
-    cfg["bond_yield_10y"] = float(bond_yield_10y)
-    cfg["market_breadth_pct"] = float(market_breadth_pct)
-    cfg["sloos_net_pct"] = float(sloos_net_pct)
-    cfg["hy_oas"] = float(hy_oas)
-    cfg["stlfsi_index"] = float(stlfsi_index)
-    cfg["use_live_macro"] = bool(use_live_macro)
-    save_config(cfg)
-    st.sidebar.success("Config saved.")
-
-if mark_ift:
-    state["ift_count_this_month"] += 1
-    state["last_ift_date"] = today.isoformat()
-    save_state(state)
-    st.sidebar.success("IFT marked for today.")
-
-if reset_state_btn:
-    state = default_state()
-    save_state(state)
-    st.sidebar.warning("State reset.")
-
-if clear_logs_btn:
-    try:
-        if LOG_FILE.exists():
-            LOG_FILE.unlink()
-            st.sidebar.success("Log file successfully deleted.")
-        else:
-            st.sidebar.info("No log file exists to delete.")
-    except Exception as e:
-        st.sidebar.error(f"Error deleting log file: {e}")
-
 
 # ==============================================================================
-# UTILITIES
+# UTILITIES & HTML CLEANERS (Moved to the top to guarantee global scope)
 # ==============================================================================
 
 def clean_html(raw_html: str) -> str:
@@ -340,6 +208,139 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 def df_to_json_bytes(df: pd.DataFrame) -> bytes:
     return df.to_json(orient="records", indent=2).encode("utf-8")
+
+
+# ==============================================================================
+# FILES / CONFIG & ROBUST FALLBACKS
+# ==============================================================================
+
+MAX_RETRIES = 3
+RETRY_SLEEP_SEC = 1.5
+
+STATE_FILE = Path("tsp_state.json")
+CONFIG_FILE = Path("tsp_config.json")
+LOG_FILE = Path("tsp_daily_log.csv")
+
+DEFAULTS = {
+    "core_pce_yoy": 3.4,
+    "ism_pmi": 54.0,
+    "sloos_net_pct": 6.6,
+    "hy_oas": 2.76,
+    "shiller_cape": 39.66,
+    "fwd_eps_growth_yoy": 11.8,
+    "stlfsi_index": -0.9568,
+    "bond_yield_10y": 4.50,
+    "market_breadth_pct": 73.20,
+    "vix_spot": 19.0,
+    "dxy_spot": 105.80,
+}
+
+# Standard liquid ETFs that approximate the respective TSP funds
+PROXIES = {
+    "C Fund (S&P 500 Stock Index)": "SPY",
+    "S Fund (Mid/Small Cap Stock Index)": "VXF",
+    "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
+    "F Fund (U.S. Aggregate Bond Index)": "AGG",
+    "G Fund (Short-Term U.S. Treasury Bills)": "BIL"
+}
+
+
+# ==============================================================================
+# STATE / CONFIGURATION LOADER
+# ==============================================================================
+
+def default_state() -> Dict[str, Any]:
+    return {
+        "month": None,
+        "ift_count_this_month": 0,
+        "last_ift_date": None,
+        "recent_regimes": [],
+        "recent_scores": [],
+        "recent_allocations": [],
+    }
+
+
+def load_state() -> Dict[str, Any]:
+    if "session_state_fallback" not in st.session_state:
+        st.session_state["session_state_fallback"] = default_state()
+        
+    if not STATE_FILE.exists():
+        return st.session_state["session_state_fallback"]
+    try:
+        with STATE_FILE.open("r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        return st.session_state["session_state_fallback"]
+    base = default_state()
+    base.update(state)
+    return base
+
+
+def save_state(state: Dict[str, Any]) -> None:
+    st.session_state["session_state_fallback"] = state
+    try:
+        with STATE_FILE.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True, default=str)
+    except Exception:
+        pass
+
+
+def reset_monthly_if_needed(state: Dict[str, Any], today: date) -> Dict[str, Any]:
+    current_month = today.strftime("%Y-%m")
+    if state.get("month") != current_month:
+        state["month"] = current_month
+        state["ift_count_this_month"] = 0
+        state["last_ift_date"] = None
+    return state
+
+
+def update_signal_history(state: Dict[str, Any], regime: str, total_score: int, alloc: Dict[str, float]) -> Dict[str, Any]:
+    state["recent_regimes"].append(regime)
+    state["recent_scores"].append(int(total_score))
+    state["recent_allocations"].append(alloc)
+    state["recent_regimes"] = state["recent_regimes"][-30:]
+    state["recent_scores"] = state["recent_scores"][-30:]
+    state["recent_allocations"] = state["recent_allocations"][-30:]
+    return state
+
+
+def load_config() -> Dict[str, Any]:
+    default_cfg = {
+        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
+        "allow_second_ift": False,
+        "normal_drift_threshold_pct": 7.5,
+        "score_change_threshold": 3,
+        "confirmation_days": 3,
+        "cooldown_days": 5,
+        "core_pce_yoy": DEFAULTS["core_pce_yoy"],
+        "ism_pmi": DEFAULTS["ism_pmi"],
+        "shiller_cape": DEFAULTS["shiller_cape"],
+        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
+        "bond_yield_10y": DEFAULTS["bond_yield_10y"],
+        "market_breadth_pct": DEFAULTS["market_breadth_pct"],
+        "sloos_net_pct": DEFAULTS["sloos_net_pct"],
+        "hy_oas": DEFAULTS["hy_oas"],
+        "stlfsi_index": DEFAULTS["stlfsi_index"],
+        "use_live_macro": True,
+    }
+    if not CONFIG_FILE.exists():
+        return default_cfg
+    try:
+        with CONFIG_FILE.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return default_cfg
+    default_cfg.update(cfg)
+    default_cfg["current_alloc"] = cfg.get("current_alloc", default_cfg["current_alloc"])
+    return default_cfg
+
+
+def save_config(cfg: Dict[str, Any]) -> None:
+    try:
+        with CONFIG_FILE.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, sort_keys=True, default=str)
+    except Exception:
+        pass
 
 
 # ==============================================================================
@@ -1244,6 +1245,7 @@ if "engine_ran" not in st.session_state:
     st.session_state["engine_ran"] = False
     st.session_state["engine_results"] = {}
 
+# Fixed: This if block now correctly sees 'run' in the global scope with no nesting errors
 if run:
     with st.spinner("Loading live data and running engine..."):
         try:
