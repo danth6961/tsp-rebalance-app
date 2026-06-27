@@ -73,7 +73,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 2.2rem;
+            padding-top: 2.5rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -84,6 +84,19 @@ def inject_custom_css():
             padding: 0.2rem 0 1rem 0;
             margin-bottom: 1.5rem;
             border-bottom: 1px solid rgba(148,163,184,0.2);
+        }
+
+        .app-title {
+            font-size: 2.2rem;
+            font-weight: 800;
+            line-height: 1.15;
+            margin: 0;
+        }
+
+        .app-subtitle {
+            color: #64748b;
+            font-size: 0.95rem;
+            margin-top: 0.25rem;
         }
 
         .pill {
@@ -105,7 +118,7 @@ def inject_custom_css():
             padding: 1rem;
             border-radius: 12px;
             border: 1px solid rgba(148, 163, 184, 0.15);
-            background-color: rgba(248, 250, 252, 0.4);
+            background-color: rgba(248, 250, 252, 0.5);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
             margin-bottom: 0.6rem;
             transition: transform 0.18s ease, box-shadow 0.18s ease;
@@ -126,7 +139,7 @@ def inject_custom_css():
         }
 
         .small-kpi-value {
-            font-size: 1.22rem;
+            font-size: 1.2rem;
             font-weight: 800;
             line-height: 1.15;
             word-break: break-word;
@@ -175,7 +188,7 @@ with col_header:
     st.markdown(
         """
         <div style="padding-top: 0.3rem;">
-            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP REBLANCE ENGINE</div>
+            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP Rebalance Engine</div>
             <div style="color: #64748b; font-size: 0.95rem; margin-top: 0.25rem;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
         </div>
         """,
@@ -1117,41 +1130,6 @@ def make_alloc_chart(target_alloc: Dict[str, float], current_alloc: Dict[str, fl
     })
 
 
-def make_regime_summary_df(current_regime: str) -> pd.DataFrame:
-    df = pd.DataFrame([
-        {
-            "Regime": "RISK-ON OVERRIDE",
-            "Score Range": ">= 5",
-            "Base Allocation": "G 35 / C 45 / I 15 / S 5 / F 0",
-            "Profile": "Aggressive",
-            "Notes": "Strong macro backdrop and supportive momentum."
-        },
-        {
-            "Regime": "OPTIMIZED NEUTRAL",
-            "Score Range": ">= 0",
-            "Base Allocation": "G 45 / C 35 / I 10 / S 10 / F 0",
-            "Profile": "Balanced",
-            "Notes": "Default regime when the signal is constructive but mixed."
-        },
-        {
-            "Regime": "DEFENSIVE ALLOCATION",
-            "Score Range": "< 0",
-            "Base Allocation": "G 65 / C 20 / I 10 / S 5 / F 0",
-            "Profile": "Defensive",
-            "Notes": "Used when risk rises or the composite turns negative."
-        },
-        {
-            "Regime": "EMERGENCY DISPATCH",
-            "Score Range": "-50",
-            "Base Allocation": "G 90 / C 0 / I 0 / S 0 / F 10 (or G 100 / F 0)",
-            "Profile": "Maximum defense",
-            "Notes": "3-day panic valve breach."
-        },
-    ])
-    df["Current"] = df["Regime"].eq(current_regime).map({True: "★", False: ""})
-    return df
-
-
 def score_card_html(label: str, value: Any, note: str, color: str, icon: str) -> str:
     return f"""
     <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom:0.6rem;">
@@ -1213,12 +1191,12 @@ with st.sidebar:
         st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
         ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
-        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
-        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
         shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
         fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
         bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
         market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
+        sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
+        hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
         stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
 
     st.markdown("---")
@@ -1317,7 +1295,7 @@ if run:
             market_sources["hy_oas"] = "MANUAL OVERRIDE"
             market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
         else:
-            # Overwrite only if the live snapshot calculation resulted in a DEFAULT
+            # Revert only if the live snapshot calculation resulted in a DEFAULT
             if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
                 market_data["core_pce_yoy"] = core_pce_yoy
                 market_sources["core_pce_yoy"] = "CONFIG/DEFAULT"
@@ -1482,23 +1460,70 @@ if st.session_state["engine_ran"]:
 
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
+        # Re-architected and beautified Regime Directory Grid in Tab 1
         st.markdown("---")
-        st.markdown("### Baseline Allocation")
+        st.markdown("### 🏛️ Regime Directory")
+        st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
         
-        # Display baseline metrics side-by-side using Streamlit columns
-        base_cols = st.columns(5)
-        for idx, fund in enumerate(["G", "C", "I", "S", "F"]):
-            val = float(baseline.get(fund, 0.0))
-            with base_cols[idx]:
-                st.metric(label=f"Baseline {fund}", value=f"{val:.1f}%")
-        
-        # Display a bar chart for the baseline allocation
-        baseline_df = pd.DataFrame({
-            "Fund": ["G", "C", "I", "S", "F"],
-            "Baseline Allocation (%)": [float(baseline.get(f, 0.0)) for f in ["G", "C", "I", "S", "F"]]
-        }).set_index("Fund")
-        
-        st.bar_chart(baseline_df, y="Baseline Allocation (%)")
+        regimes_info = [
+            {
+                "name": "RISK-ON OVERRIDE",
+                "score": "Score: ≥ +5",
+                "profile": "Aggressive Profile",
+                "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
+                "desc": "Strong macroeconomic backdrop and solid upward price momentum.",
+                "color": "#10b981",
+                "bg": "rgba(16, 185, 129, 0.06)"
+            },
+            {
+                "name": "OPTIMIZED NEUTRAL",
+                "score": "Score: 0 to +4",
+                "profile": "Balanced Profile",
+                "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
+                "desc": "Default balanced state when market signals are constructive but mixed.",
+                "color": "#3b82f6",
+                "bg": "rgba(59, 130, 246, 0.06)"
+            },
+            {
+                "name": "DEFENSIVE ALLOCATION",
+                "score": "Score: < 0",
+                "profile": "Defensive Profile",
+                "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
+                "desc": "Risk metrics are elevated. Core focus shifts to capital preservation.",
+                "color": "#f59e0b",
+                "bg": "rgba(245, 158, 11, 0.06)"
+            },
+            {
+                "name": "EMERGENCY DISPATCH",
+                "score": "Score: -50 (Panic)",
+                "profile": "Maximum Defense",
+                "alloc": "Base: G 90% / F 10% (or G 100%)",
+                "desc": "Triggered instantly by multi-day market panic or technical breach.",
+                "color": "#ef4444",
+                "bg": "rgba(239, 68, 68, 0.06)"
+            }
+        ]
+
+        regime_cols = st.columns(4)
+        for idx, info in enumerate(regimes_info):
+            is_active = (regime == info["name"])
+            border_css = f"border: 2px solid {info['color']}; background-color: {info['bg']}; box-shadow: 0 8px 16px rgba(0,0,0,0.06);" if is_active else "border: 1px solid rgba(148, 163, 184, 0.15);"
+            active_badge = f"<div style='color: {info['color']}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;'>★ ACTIVE ENVIRONMENT</div>" if is_active else ""
+            color_val = info['color'] if is_active else '#0f172a'
+            
+            with regime_cols[idx]:
+                st.markdown(
+                    f"""
+                    <div class="small-kpi" style="{border_css} height: 100%; min-height: 250px;">
+                        {active_badge}
+                        <div style="font-weight: 800; font-size: 0.95rem; color: {color_val};">{info['name']}</div>
+                        <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
+                        <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {color_val};">{info['alloc']}</div>
+                        <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
     with tab2:
         # Panic Valve Auditing & Verification Displays
@@ -1558,8 +1583,8 @@ if st.session_state["engine_ran"]:
             ("Shiller CAPE", market_data.get("shiller_cape"), market_sources.get("shiller_cape")),
             ("Fwd EPS Growth YoY", market_data.get("fwd_eps_growth_yoy"), market_sources.get("fwd_eps_growth_yoy")),
             ("VIX Spot", market_data.get("vix_spot"), market_sources.get("vix_spot")),
-            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma"), market_sources.get("pct_dist_200_sma")),
-            ("Drawdown %", market_data.get("drawdown_pct"), market_sources.get("drawdown_pct")),
+            ("SPX vs 200SMA %", market_data.get("pct_dist_200_sma"), market_data.get("pct_dist_200_sma")),
+            ("Drawdown %", market_data.get("drawdown_pct"), market_data.get("drawdown_pct")),
             ("STLFSI", market_data.get("stlfsi_index"), market_sources.get("stlfsi_index")),
             ("10Y Yield", market_data.get("bond_yield_10y"), market_sources.get("bond_yield_10y")),
             ("DXY Spot", market_data.get("dxy_spot"), market_sources.get("dxy_spot")),
@@ -1597,11 +1622,7 @@ if st.session_state["engine_ran"]:
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("### Regime Summary")
-        regime_summary_df = make_regime_summary_df(regime)
-        st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
         st.markdown("---")
-        
         st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
@@ -1635,7 +1656,7 @@ if st.session_state["engine_ran"]:
                     neu_factors.append(label)
             
             attr_c1, attr_c2, attr_c3 = st.columns(3)
-            with attr_cols1 if 'attr_cols' in locals() else attr_cols[0] if 'attr_cols' in locals() else attr_cols[0] if 'attr_cols' in locals() else attr_cols[0] if False else attr_c1:
+            with attr_c1:
                 st.markdown("**🟢 Positive Drivers**")
                 if pos_factors:
                     for f in pos_factors: st.markdown(f"- {f}")
