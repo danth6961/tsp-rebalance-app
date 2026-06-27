@@ -1466,6 +1466,50 @@ if run:
         st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
         st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
 
+        # Run engine to write log entry and save initial action state once!
+        allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(fetched_data)
+        
+        emergency_triggered = (total_score == -50)
+        state = update_signal_history(state, regime, total_score, allocations)
+        last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
+
+        use_ift, reason = should_use_tsp_ift(
+            today=today,
+            current_alloc=current_alloc,
+            target_alloc=allocations,
+            recent_regimes=state["recent_regimes"],
+            recent_scores=state["recent_scores"],
+            emergency_triggered=emergency_triggered,
+            ift_count_this_month=state["ift_count_this_month"],
+            last_ift_date=last_ift_date,
+            allow_second_ift=allow_second_ift,
+            normal_drift_threshold_pct=float(normal_drift_threshold_pct),
+            score_change_threshold=int(score_change_threshold),
+            confirmation_days=int(confirmation_days),
+            cooldown_days=int(cooldown_days),
+        )
+
+        action = "SUBMIT IFT" if use_ift else "HOLD"
+        if use_ift:
+            state["ift_count_this_month"] += 1
+            state["last_ift_date"] = today.isoformat()
+
+        save_state(state)
+
+        append_log_row({
+            "date": today.isoformat(),
+            "action": action,
+            "reason": reason,
+            "regime": regime,
+            "total_score": total_score,
+            "ift_count_this_month": state["ift_count_this_month"],
+            "current_alloc": json.dumps(current_alloc),
+            "target_alloc": json.dumps(allocations),
+            "vix": fetched_data.get("vix_spot", DEFAULTS["vix_spot"]),
+            "spx_200sma_dist": fetched_data.get("pct_dist_200_sma", 0.0),
+            "drawdown_pct": fetched_data.get("drawdown_pct", 0.0),
+        })
+
         st.session_state["engine_ran"] = True
         st.rerun()
 
@@ -1485,6 +1529,28 @@ if st.session_state["engine_ran"]:
     market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
     allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
+
+    # DYNAMIC CALCULATION OF THE ACTION AND REASON (Resolves NameError on Rerun)
+    emergency_triggered = (total_score == -50)
+    last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
+
+    use_ift, reason = should_use_tsp_ift(
+        today=today,
+        current_alloc=current_alloc,
+        target_alloc=allocations,
+        recent_regimes=state["recent_regimes"],
+        recent_scores=state["recent_scores"],
+        emergency_triggered=emergency_triggered,
+        ift_count_this_month=state["ift_count_this_month"],
+        last_ift_date=last_ift_date,
+        allow_second_ift=allow_second_ift,
+        normal_drift_threshold_pct=float(normal_drift_threshold_pct),
+        score_change_threshold=int(score_change_threshold),
+        confirmation_days=int(confirmation_days),
+        cooldown_days=int(cooldown_days),
+    )
+
+    action = "SUBMIT IFT" if use_ift else "HOLD"
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
