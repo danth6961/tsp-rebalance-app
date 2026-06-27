@@ -1506,12 +1506,12 @@ with st.sidebar:
             
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
 
-    # This adds 1.5rem (approx. 24px) of empty vertical space to push the button down:
-    st.markdown("<div style='padding-top: 1.5rem;'></div>", unsafe_allow_html=True)
-
     # This draws a clean horizontal line divider:
     st.divider()
-    
+
+    # This adds 1.5rem (approx. 24px) of empty vertical space to push the button down:
+    st.markdown("<div style='padding-top: 1.5rem;'></div>", unsafe_allow_html=True)
+       
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
