@@ -203,6 +203,14 @@ with col_run:
 # UTILITIES
 # ==============================================================================
 
+def clean_html(raw_html: str) -> str:
+    """Removes newlines and leading indentation, forcing the Streamlit Markdown
+
+    parser to render the payload purely as HTML rather than a raw code block.
+    """
+    return " ".join([line.strip() for line in raw_html.split("\n") if line.strip()])
+
+
 def is_finite_number(x) -> bool:
     try:
         return x is not None and math.isfinite(float(x))
@@ -413,7 +421,7 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout to prevent hanging
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -1049,57 +1057,57 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
 
     with c1:
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="small-kpi" style="border-left: 5px solid #3b82f6;">
                 <div class="small-kpi-title">Composite Score</div>
                 <div class="small-kpi-value">{total_score}</div>
                 <div class="small-kpi-note">Higher is more risk-on</div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
     with c2:
         action_color = "#dc2626" if regime == "EMERGENCY DISPATCH" else ("#22c55e" if action == "SUBMIT IFT" else "#64748b")
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="small-kpi" style="border-left: 5px solid {action_color};">
                 <div class="small-kpi-title">Action</div>
                 <div class="small-kpi-value" style="color:{action_color};">{action}</div>
                 <div class="small-kpi-note">Decision recommendation</div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
     with c3:
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="small-kpi" style="border-left: 5px solid #f59e0b;">
                 <div class="small-kpi-title">IFTs Used</div>
                 <div class="small-kpi-value">{ift_used}/2</div>
                 <div class="small-kpi-note">Monthly transfer count</div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
     with c4:
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="small-kpi" style="border-left: 5px solid #a78bfa;">
                 <div class="small-kpi-title">Regime</div>
                 <div class="small-kpi-value" style="font-size:1.0rem;">{regime}</div>
                 <div class="small-kpi-note">Model state</div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
     with c5:
         reason_color = "#dc2626" if regime == "EMERGENCY DISPATCH" else ("#16a34a" if action == "SUBMIT IFT" else "#64748b")
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="small-kpi" style="border-left: 5px solid {reason_color};">
                 <div class="small-kpi-title">IFT Reason</div>
                 <div class="small-kpi-value" style="font-size:0.95rem; color:{reason_color}; line-height:1.2;">
@@ -1107,7 +1115,7 @@ def render_metric_cards(total_score, regime, action, ift_used, reason):
                 </div>
                 <div class="small-kpi-note">Why this action was chosen</div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
@@ -1131,13 +1139,13 @@ def make_alloc_chart(target_alloc: Dict[str, float], current_alloc: Dict[str, fl
 
 
 def score_card_html(label: str, value: Any, note: str, color: str, icon: str) -> str:
-    return f"""
+    return clean_html(f"""
     <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom:0.6rem;">
         <div class="small-kpi-title">{label}</div>
         <div class="small-kpi-value" style="color:{color};">{icon} {value}</div>
         <div class="small-kpi-note">{note}</div>
     </div>
-    """
+    """)
 
 
 def source_pill_html(source: str) -> str:
@@ -1513,7 +1521,7 @@ if st.session_state["engine_ran"]:
             
             with regime_cols[idx]:
                 st.markdown(
-                    f"""
+                    clean_html(f"""
                     <div class="small-kpi" style="{border_css} height: 100%; min-height: 250px;">
                         {active_badge}
                         <div style="font-weight: 800; font-size: 0.95rem; color: {color_val};">{info['name']}</div>
@@ -1521,7 +1529,7 @@ if st.session_state["engine_ran"]:
                         <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {color_val};">{info['alloc']}</div>
                         <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
                     </div>
-                    """,
+                    """),
                     unsafe_allow_html=True
                 )
 
@@ -1609,7 +1617,7 @@ if st.session_state["engine_ran"]:
                 status_tooltip = "Failed to fetch live data (reverted to default/config fallback)" if is_failed else "Downloaded live data successfully"
                 
                 st.markdown(
-                    f"""
+                    clean_html(f"""
                     <div class="small-kpi" style="margin-bottom:0.6rem; {border_style}" title="{status_tooltip}">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
                             <span class="small-kpi-title" style="margin-bottom: 0;">{label}</span>
@@ -1618,7 +1626,7 @@ if st.session_state["engine_ran"]:
                         <div class="small-kpi-value">{val_formatted if value is not None else 'N/A'}</div>
                         <div class="small-kpi-note" style="margin-top: 0.35rem;">{source_pill_html(source)}</div>
                     </div>
-                    """,
+                    """),
                     unsafe_allow_html=True,
                 )
 
