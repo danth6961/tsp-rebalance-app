@@ -78,6 +78,22 @@ PROXIES = {
 
 
 # ==============================================================================
+# SECRETS DECRYPTION UTILITY
+# ==============================================================================
+
+def load_fred_api_secret() -> str:
+    """Attempts to pull the FRED API Key from Streamlit Secrets securely."""
+    try:
+        if "fred_api_key" in st.secrets:
+            return str(st.secrets["fred_api_key"])
+        elif "FRED_API_KEY" in st.secrets:
+            return str(st.secrets["FRED_API_KEY"])
+    except Exception:
+        pass
+    return ""
+
+
+# ==============================================================================
 # STATE & CONFIG HELPERS
 # ==============================================================================
 
@@ -275,6 +291,33 @@ def inject_custom_css():
             background: #e0f2fe !important;
             border-color: #7dd3fc !important;
         }
+
+        /* Target Streamlit vertical block containers containing our live/fallback snapshot card hooks */
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-live) {
+            border: 1px solid rgba(148, 163, 184, 0.15) !important;
+            border-left: 5px solid #10b981 !important;
+            border-radius: 12px !important;
+            background-color: rgba(248, 250, 252, 0.5) !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04) !important;
+            transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-live):hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.07) !important;
+            transform: translateY(-2px) !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-failed) {
+            border: 1px solid rgba(148, 163, 184, 0.15) !important;
+            border-left: 5px solid #dc2626 !important;
+            border-radius: 12px !important;
+            background-color: rgba(248, 250, 252, 0.5) !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04) !important;
+            transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-failed):hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.07) !important;
+            transform: translateY(-2px) !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -363,7 +406,7 @@ def df_to_json_bytes(df: pd.DataFrame) -> bytes:
 # ==============================================================================
 
 def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tuple[str, float]]:
-    """Direct fetch tool for FRED API endpoints utilizing standard JSON queries.""" [2]
+    """Direct fetch tool for FRED API endpoints utilizing standard JSON queries."""
     if not api_key:
         return []
     url = f"https://api.stlouisfed.org/fred/series/observations?series_id={urllib.parse.quote(series_id)}&api_key={urllib.parse.quote(api_key)}&file_type=json&sort_order=desc&limit={limit}"
@@ -1248,7 +1291,7 @@ def should_use_tsp_ift(
     if len(set(recent_regimes[-confirmation_days:])) != 1:
         return False, "Regime not yet confirmed"
         
-    # FIX: Measures the transition amplitude across the confirmed regime boundary
+    # Measures the transition amplitude across the confirmed regime boundary
     if len(recent_scores) >= confirmation_days + 1:
         score_change = abs(recent_scores[-1] - recent_scores[-confirmation_days - 1])
     else:
@@ -1383,6 +1426,9 @@ state = load_state()
 cfg = load_config()
 state = reset_monthly_if_needed(state, today)
 
+# Read from secure Streamlit Secrets first
+secrets_api_key = load_fred_api_secret()
+
 INDICATOR_KEYS = [
     "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
     "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y", "move_index",
@@ -1429,15 +1475,6 @@ with st.sidebar:
             "F": st.number_input("F Fund %", value=float(cfg.get("current_alloc", {}).get("F", 5.0)), step=1.0, help="Fixed Income Index Fund: Tracks US bond market index."),
         }
 
-    with st.expander("🔑 API Keys & Settings", expanded=False):
-        # FRED API Input Panel
-        fred_api_key = st.text_input(
-            "FRED API Key", 
-            value=cfg.get("fred_api_key", ""), 
-            type="password", 
-            help="Your private 32-character FRED API key is used to query real-time federal indicators." [2]
-        )
-
     with st.expander("🛡️ Transfer Rules & Safeties", expanded=False):
         st.info("Safety limits designed to preserve your monthly transfer quotas.")
         allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)), help="Allows making a second transfer in normal regimes if conditions are favorable.")
@@ -1448,12 +1485,26 @@ with st.sidebar:
         st.markdown("---")
         use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="Fetches live data from public APIs and fallback mirrors.")
 
+    # Moved Mark IFT button directly under the Transfer Rules expander
+    mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True)
+
     st.markdown("---")
-    mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Executes a manual override to increment your monthly counter.")
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
     clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
-    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
     
+    # Moved API Keys expander to sit exactly between Clear Daily Log and Save Config buttons
+    with st.expander("🔑 API Keys & Settings", expanded=False):
+        active_api_key_default = secrets_api_key if secrets_api_key else cfg.get("fred_api_key", "")
+        fred_api_key = st.text_input(
+            "FRED API Key", 
+            value=active_api_key_default, 
+            type="password", 
+            help="Your private 32-character FRED API key is used to query real-time federal indicators."
+        )
+        if secrets_api_key:
+            st.caption("🔒 *Configured securely via encrypted Streamlit Secrets.*")
+            
+    save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
@@ -1464,8 +1515,11 @@ if save_config_btn:
     cfg["confirmation_days"] = int(confirmation_days)
     cfg["cooldown_days"] = int(cooldown_days)
     cfg["use_live_macro"] = bool(use_live_macro)
-    cfg["fred_api_key"] = fred_api_key
     
+    # Save manually edited key only if not overridden by secure system secrets
+    if not secrets_api_key:
+        cfg["fred_api_key"] = fred_api_key
+        
     for key in INDICATOR_KEYS:
         cfg[key] = float(st.session_state[key])
     save_config(cfg)
@@ -1827,7 +1881,8 @@ if st.session_state["engine_ran"]:
             source_str = str(source).upper()
             is_failed = "FAILED" in source_str or "DEFAULT" in source_str or "FALLBACK" in source_str or "OFFLINE" in source_str
             
-            border_color = "#dc2626" if is_failed else "#10b981"
+            # Selector hook class based on data source state
+            cls_name = "card-failed" if is_failed else "card-live"
             
             step_val = 0.1
             format_val = "%.2f"
@@ -1842,30 +1897,10 @@ if st.session_state["engine_ran"]:
                 
             card_key = f"container_{key}"
             
-            st.markdown(
-                f"""
-                <style>
-                div[data-testid="stVerticalBlockBorderWrapper"]:has(.st-key-{card_key}) {{
-                    border: 1px solid rgba(148, 163, 184, 0.15) !important;
-                    border-left: 5px solid {border_color} !important;
-                    border-radius: 12px !important;
-                    background-color: rgba(248, 250, 252, 0.5) !important;
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04) !important;
-                    transition: transform 0.18s ease, box-shadow 0.18s ease !important;
-                }}
-                
-                div[data-testid="stVerticalBlockBorderWrapper"]:has(.st-key-{card_key}):hover {{
-                    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.07) !important;
-                    transform: translateY(-2px) !important;
-                }}
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
-            
             with market_cols[i % 4]:
                 with st.container(border=True):
-                    st.markdown(f'<div class="st-key-{card_key}"></div>', unsafe_allow_html=True)
+                    # Zero-height target hook div for the global stylesheet selector
+                    st.markdown(f'<div class="{cls_name}" style="display:none;"></div>', unsafe_allow_html=True)
                     
                     st.markdown(
                         clean_html(f"""
@@ -1894,7 +1929,8 @@ if st.session_state["engine_ran"]:
                         unsafe_allow_html=True
                     )
 
-        st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
+        # Reduced separator margin slightly to further compact layout
+        st.markdown("<div style='margin: 1.0rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
