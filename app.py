@@ -335,6 +335,7 @@ def load_config() -> Dict[str, Any]:
         "sloos_net_pct": DEFAULTS["sloos_net_pct"],
         "hy_oas": DEFAULTS["hy_oas"],
         "stlfsi_index": DEFAULTS["stlfsi_index"],
+        "use_live_macro": True,
     }
     if not CONFIG_FILE.exists():
         return default_cfg
@@ -357,11 +358,208 @@ def save_config(cfg: Dict[str, Any]) -> None:
 
 
 # ==============================================================================
-# DATA HELPERS (Only highly stable, fast Yahoo Finance API is used)
+# DATA HELPERS & ADVANCED SCRAPING LOGIC
 # ==============================================================================
+
+def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
+    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID."""
+    url = f"https://api.db.nomics.world/v22/series/FRED/{urllib.parse.quote(series_id)}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+        docs = data.get("series", {}).get("docs", [])
+        if not docs:
+            return []
+        
+        doc = docs[0]
+        periods = doc.get("period", [])
+        values = doc.get("value", [])
+        
+        result = []
+        for p, v in zip(periods, values):
+            val = clean_and_parse_float(v)
+            if val is not None:
+                result.append((p, val))
+        return result
+    except Exception as e:
+        print(f"❌ DBnomics API request failed for '{series_id}': {e}")
+        return []
+
+
+def fetch_fred_latest(series_id: str) -> Optional[float]:
+    # 1. Try DBnomics mirror first (unblocked, extremely fast on Streamlit Cloud)
+    try:
+        data_points = fetch_from_dbnomics(series_id)
+        if data_points:
+            return data_points[-1][1]
+    except Exception as err:
+        print(f"⚠️ DBnomics mirror fetch failed for '{series_id}' ({err}). Falling back to standard FRED...")
+
+    # 2. Fallback to standard FRED CSV
+    def _load_fred():
+        base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        url = f"{base_url}?id={urllib.parse.quote(series_id)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout to prevent hanging
+            df = pd.read_csv(response)
+
+        if df.empty or len(df.columns) < 2:
+            return None
+
+        value_col = df.columns[1]
+        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if series.empty:
+            return None
+        return float(series.iloc[-1])
+
+    try:
+        return retry_call(_load_fred)
+    except Exception as e:
+        print(f"❌ Both DBnomics and FRED failed for series '{series_id}': {e}")
+        
+    return None
+
+
+def fetch_fred_core_pce_yoy() -> Optional[float]:
+    """Downloads monthly core PCE index values from FRED and calculates the 12-month change %."""
+    # 1. Try DBnomics mirror first (unblocked, extremely fast)
+    try:
+        data_points = fetch_from_dbnomics("PCEPILFE")
+        if len(data_points) >= 13:
+            latest_val = data_points[-1][1]
+            past_val = data_points[-13][1]
+            return round(((latest_val - past_val) / past_val) * 100.0, 2)
+    except Exception as err:
+        print(f"⚠️ DBnomics mirror YoY PCE fetch failed ({err}). Falling back to standard FRED...")
+
+    # 2. Fallback to standard FRED CSV
+    def _load_fred_yoy():
+        base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        url = f"{base_url}?id=PCEPILFE"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout
+            df = pd.read_csv(response)
+
+        if df.empty or len(df.columns) < 2:
+            return None
+
+        value_col = df.columns[1]
+        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if len(series) < 13:
+            return None
+        
+        latest_val = float(series.iloc[-1])
+        past_val = float(series.iloc[-13])
+        return round(((latest_val - past_val) / past_val) * 100.0, 2)
+
+    try:
+        return retry_call(_load_fred_yoy)
+    except Exception as e:
+        print(f"❌ Both DBnomics and FRED failed for Core PCE YoY: {e}")
+
+    return None
+
+
+def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
+    """Requests and extracts core indicator table values directly from Trading Economics."""
+    url = "https://tradingeconomics.com/united-states/indicators"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    
+    results = {
+        "core_pce_yoy": None,
+        "ism_pmi": None
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:  # Added reasonable timeout
+            html = response.read().decode('utf-8')
+            
+        dfs = pd.read_html(html)
+        for df in dfs:
+            if df.empty or len(df.columns) < 2:
+                continue
+            
+            col_name = df.columns[0]
+            for _, row in df.iterrows():
+                indicator_text = str(row[col_name]).strip()
+                
+                if "Core PCE Price Index YoY" in indicator_text or "Core PCE Price Index Annual Change" in indicator_text:
+                    val = clean_and_parse_float(row.iloc[1])
+                    if val is not None:
+                        results["core_pce_yoy"] = val
+                        
+                if "ISM Manufacturing PMI" in indicator_text or "Manufacturing PMI" in indicator_text:
+                    val = clean_and_parse_float(row.iloc[1])
+                    if val is not None:
+                        results["ism_pmi"] = val
+    except Exception as e:
+        print(f"Error scraping indicators from Trading Economics: {e}")
+        pass
+    
+    return results
+
+
+def fetch_shiller_cape_live() -> Optional[float]:
+    """Parses multpl.com's HTML payload to read the latest cyclically adjusted P/E."""
+    def _load():
+        url = "https://www.multpl.com/shiller-pe"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=5) as response:  # Added timeout
+            html = response.read().decode('utf-8')
+        
+        match = re.search(r'class=["\']num["\']>\s*([0-9\.]+)\s*<', html)
+        if match:
+            return float(match.group(1))
+        
+        match_alt = re.search(r'Current Shiller PE Ratio is\s+([0-9\.]+)', html, re.IGNORECASE)
+        if match_alt:
+            return float(match_alt.group(1))
+            
+        return None
+
+    try:
+        return retry_call(_load)
+    except Exception as e:
+        print(f"Error fetching Shiller CAPE: {e}")
+        return None
+
+
+def fetch_barchart_s5th_fallback() -> Optional[float]:
+    """Fallback scraper that parses the real-time S&P 500 stocks above 200-day average percentage from Barchart."""
+    url = "https://www.barchart.com/stocks/quotes/$S5TH"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:  # Added timeout
+            html = response.read().decode('utf-8')
+            
+        for pattern in [
+            r'"lastPrice"\s*:\s*"?([0-9\.]+)"?',
+            r'"last"\s*:\s*"?([0-9\.]+)"?',
+            r'class="[^"]*price[^"]*"\s*>\s*([0-9\.]+)\s*<'
+        ]:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                val = float(match.group(1))
+                if 0.0 <= val <= 100.0:
+                    return val
+    except Exception as e:
+        print(f"Error scraping Barchart $S5TH: {e}")
+        pass
+    return None
+
 
 def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d") -> List[float]:
     def _load():
+        # First attempt: standard download
         df = yf.download(
             ticker,
             period=period,
@@ -387,7 +585,7 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
             if closes_list:
                 return closes_list
                 
-        # Ticker history fallback for index symbols
+        # Second attempt: Ticker history fallback (highly robust for custom indexes)
         try:
             t = yf.Ticker(ticker)
             history_df = t.history(period=period, interval=interval)
@@ -464,6 +662,31 @@ def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, flo
 # ==============================================================================
 
 @st.cache_data(ttl=900)
+def cached_fred(series_id: str) -> Optional[float]:
+    return fetch_fred_latest(series_id)
+
+
+@st.cache_data(ttl=900)
+def cached_fred_core_pce_yoy() -> Optional[float]:
+    return fetch_fred_core_pce_yoy()
+
+
+@st.cache_data(ttl=900)
+def get_te_live_data() -> Dict[str, Optional[float]]:
+    return fetch_indicators_from_te_indicators_page()
+
+
+@st.cache_data(ttl=900)
+def cached_shiller_cape_live() -> Optional[float]:
+    return fetch_shiller_cape_live()
+
+
+@st.cache_data(ttl=900)
+def cached_barchart_s5th() -> Optional[float]:
+    return fetch_barchart_s5th_fallback()
+
+
+@st.cache_data(ttl=900)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
@@ -476,11 +699,18 @@ def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
 @st.cache_data(ttl=900)
 def get_market_snapshot() -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=11) as executor:
         futures = {
+            executor.submit(cached_fred, "DRTSCIS"): "sloos_val",
+            executor.submit(cached_fred, "BAMLH0A0HYM2"): "hy_val",
+            executor.submit(cached_fred, "STLFSI4"): "stlfsi_val",
+            executor.submit(get_te_live_data): "te_live",
+            executor.submit(cached_shiller_cape_live): "shiller_cape_val",
             executor.submit(cached_yahoo_closes, "^VIX", "1mo", "1d"): "vix_closes",
             executor.submit(cached_yahoo_closes, "DX-Y.NYB", "1mo", "1d"): "dxy_closes",
             executor.submit(cached_yahoo_closes, "^GSPC", "1y", "1d"): "spx_closes",
+            executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
+            executor.submit(cached_barchart_s5th): "barchart_breadth",
             executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
         }
         for future in as_completed(futures):
@@ -494,17 +724,65 @@ def get_market_snapshot() -> Dict[str, Any]:
     vix_closes = results.get("vix_closes") or []
     dxy_closes = results.get("dxy_closes") or []
     spx_closes = results.get("spx_closes") or []
+    breadth_closes = results.get("breadth_closes") or []
     bond_yield_closes = results.get("bond_yield_closes") or []
     
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
+    
+    te_live = results.get("te_live") or {"core_pce_yoy": None, "ism_pmi": None}
+    te_pce = te_live.get("core_pce_yoy")
+    te_pmi = te_live.get("ism_pmi")
+    
+    shiller_cape = results.get("shiller_cape_val")
+    live_breadth = None
+    breadth_source = "CONFIG/DEFAULT"
+    
+    # Core PCE YoY: Prioritize Trading Economics, Fallback to FRED index YoY, Fallback to defaults
+    if te_pce is not None:
+        final_pce = te_pce
+        pce_source = "LIVE (Trading Economics)"
+    else:
+        fred_pce_yoy = fetch_fred_core_pce_yoy()
+        if fred_pce_yoy is not None:
+            final_pce = fred_pce_yoy
+            pce_source = "LIVE (FRED PCEPILFE YoY calculation)"
+        else:
+            final_pce = DEFAULTS["core_pce_yoy"]
+            pce_source = "CONFIG/DEFAULT"
 
-    # 10Y Yield: Prioritize Yahoo Finance ^TNX (Divided by 10)
+    # ISM PMI: Prioritize Trading Economics, Fallback to defaults
+    if te_pmi is not None:
+        final_pmi = te_pmi
+        pmi_source = "LIVE (Trading Economics)"
+    else:
+        final_pmi = DEFAULTS["ism_pmi"]
+        pmi_source = "CONFIG/DEFAULT"
+
+    # Breadth Logic: Prioritize Yahoo Finance closes, fallback to Barchart HTML scrape, fallback to default
+    if breadth_closes:
+        live_breadth = breadth_closes[-1]
+        breadth_source = "LIVE (Yahoo Finance ^S5TH)"
+    else:
+        b_breadth = results.get("barchart_breadth")
+        if b_breadth is not None:
+            live_breadth = b_breadth
+            breadth_source = "LIVE (Barchart $S5TH Scraping)"
+        else:
+            live_breadth = DEFAULTS["market_breadth_pct"]
+            breadth_source = "CONFIG/DEFAULT"
+
+    # 10Y Yield: Prioritize Yahoo Finance ^TNX (Divided by 10), Fallback to FRED DGS10, Fallback to defaults
     if bond_yield_closes:
         live_bond_yield = round(bond_yield_closes[-1] / 10.0, 3)
         bond_source = "LIVE (Yahoo Finance ^TNX)"
     else:
-        live_bond_yield = DEFAULTS["bond_yield_10y"]
-        bond_source = "CONFIG/DEFAULT"
+        fred_dgs10 = fetch_fred_latest("DGS10")
+        if fred_dgs10 is not None:
+            live_bond_yield = fred_dgs10
+            bond_source = "LIVE (FRED DGS10 Fallback)"
+        else:
+            live_bond_yield = DEFAULTS["bond_yield_10y"]
+            bond_source = "CONFIG/DEFAULT"
 
     # 3-day Panic Valve Logic Evaluations
     vix_3d_panic = False
@@ -528,12 +806,33 @@ def get_market_snapshot() -> Dict[str, Any]:
         spx_dist_last_3 = [round(dist_2, 2), round(dist_1, 2), round(dist_0, 2)]
         spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
 
+    # Re-calculate sources to reflect redirect routes (e.g. if FRED failed but DBnomics succeeded)
+    def determine_source(series_id, label, default_src):
+        if results.get(label) is not None:
+            return default_src
+        val_fetched = fetch_fred_latest(series_id)
+        if val_fetched is not None:
+            return f"LIVE (DBnomics {series_id} Mirror)"
+        return "CONFIG/DEFAULT"
+
+    sloos_source = determine_source("DRTSCIS", "sloos_val", "LIVE (FRED DRTSCIS)")
+    hy_source = determine_source("BAMLH0A0HYM2", "hy_val", "LIVE (FRED BAMLH0A0HYM2)")
+    stlfsi_source = determine_source("STLFSI4", "stlfsi_val", "LIVE (FRED STLFSI4)")
+
     market_data = {
+        "core_pce_yoy": final_pce,
+        "ism_pmi": final_pmi,
+        "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else fetch_fred_latest("DRTSCIS"),
+        "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else fetch_fred_latest("BAMLH0A0HYM2"),
+        "shiller_cape": shiller_cape if shiller_cape is not None else DEFAULTS["shiller_cape"],
+        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
         "pct_dist_200_sma": sma_dist_live,
         "drawdown_pct": drawdown_live,
+        "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else fetch_fred_latest("STLFSI4"),
         "bond_yield_10y": live_bond_yield,
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
+        "market_breadth_pct": live_breadth,
         "spx_spot": spx_spot,
         "vix_3d_panic": vix_3d_panic,
         "vix_last_3": vix_last_3,
@@ -542,13 +841,28 @@ def get_market_snapshot() -> Dict[str, Any]:
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
 
+    if market_data["sloos_net_pct"] is None:
+        market_data["sloos_net_pct"] = DEFAULTS["sloos_net_pct"]
+    if market_data["hy_oas"] is None:
+        market_data["hy_oas"] = DEFAULTS["hy_oas"]
+    if market_data["stlfsi_index"] is None:
+        market_data["stlfsi_index"] = DEFAULTS["stlfsi_index"]
+
     market_sources = {
-        "vix_spot": "LIVE (Yahoo Finance ^VIX)" if vix_closes else "DEFAULT",
-        "pct_dist_200_sma": "LIVE (Yahoo Finance ^GSPC)" if spx_closes else "DEFAULT",
-        "drawdown_pct": "LIVE (Yahoo Finance ^GSPC)" if spx_closes else "DEFAULT",
+        "core_pce_yoy": pce_source,
+        "ism_pmi": pmi_source,
+        "sloos_net_pct": sloos_source,
+        "hy_oas": hy_source,
+        "shiller_cape": "LIVE (Multpl.com CAPE)" if shiller_cape is not None else "CONFIG/DEFAULT",
+        "fwd_eps_growth_yoy": "CONFIG/DEFAULT",
+        "vix_spot": "LIVE" if vix_closes else "DEFAULT",
+        "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
+        "drawdown_pct": "LIVE" if spx_closes else "DEFAULT",
+        "stlfsi_index": stlfsi_source,
         "bond_yield_10y": bond_source,
-        "dxy_spot": "LIVE (Yahoo Finance DX-Y.NYB)" if dxy_closes else "DEFAULT",
-        "spx_spot": "LIVE (Yahoo Finance ^GSPC)" if spx_closes else "DEFAULT",
+        "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
+        "market_breadth_pct": breadth_source,
+        "spx_spot": "LIVE" if spx_closes else "DEFAULT",
     }
 
     return {"market_data": market_data, "market_sources": market_sources}
@@ -896,16 +1210,19 @@ with st.sidebar:
         confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Number of consecutive days a signal must remain in a new regime before triggering action.")
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days to wait after making a transfer before making another.")
 
-    with st.expander("📊 Market Overrides (Advanced)", expanded=True):
-        st.info("Manually input indicators to keep calculations fast and avoid cloud connection blocks.")
+    with st.expander("📊 Market Overrides (Advanced)", expanded=False):
+        use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="When checked, the engine automatically calculates Core PCE YoY inflation and ISM Manufacturing PMI from Trading Economics, reads Shiller CAPE from multpl.com, and extracts Market Breadth from ^S5TH. It falls back to your manual entries below only if the live downloads fail.")
+        st.markdown("---")
+        st.warning("These manual values serve as overrides or fallback configurations.")
         core_pce_yoy = st.number_input("Core PCE Inflation %", value=float(cfg.get("core_pce_yoy", DEFAULTS["core_pce_yoy"])), step=0.1, help="Core Personal Consumption Expenditures index. Tracks core inflation trends.")
         ism_pmi = st.number_input("ISM PMI (Growth)", value=float(cfg.get("ism_pmi", DEFAULTS["ism_pmi"])), step=0.5, help="Manufacturing Purchasing Managers Index. Measures economic growth strength.")
         sloos_net_pct = st.number_input("SLOOS Net Tightening %", value=float(cfg.get("sloos_net_pct", DEFAULTS["sloos_net_pct"])), step=1.0, help="Senior Loan Officer Opinion Survey net percentage of banks tightening standards.")
         hy_oas = st.number_input("High Yield OAS Spread %", value=float(cfg.get("hy_oas", DEFAULTS["hy_oas"])), step=0.05, help="High Yield Option-Adjusted Spread percentage. Measures corporate credit risk.")
         shiller_cape = st.number_input("Shiller CAPE (Valuation)", value=float(cfg.get("shiller_cape", DEFAULTS["shiller_cape"])), step=0.5, help="Cyclically Adjusted Price-to-Earnings. Tracks long-term valuation of stocks.")
         fwd_eps_growth_yoy = st.number_input("Fwd EPS Growth %", value=float(cfg.get("fwd_eps_growth_yoy", DEFAULTS["fwd_eps_growth_yoy"])), step=0.5, help="Forecasted growth of company earnings over the next year.")
-        stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
+        bond_yield_10y = st.number_input("10Y Treasury Yield %", value=float(cfg.get("bond_yield_10y", DEFAULTS["bond_yield_10y"])), step=0.05, help="10-Year U.S. Treasury Yield percentage rate. Used to calculate bond market unlocking.")
         market_breadth_pct = st.number_input("Market Breadth %", value=float(cfg.get("market_breadth_pct", DEFAULTS["market_breadth_pct"])), step=0.5, help="Measures what % of stocks are participating in the market's uptrend.")
+        stlfsi_index = st.number_input("STLFSI Stress Index", value=float(cfg.get("stlfsi_index", DEFAULTS["stlfsi_index"])), step=0.05, help="St. Louis Fed Financial Stress Index. Values above 0 indicate elevated stress.")
 
     st.markdown("---")
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True, help="Click if you executed a real-life transfer today, keeping the monthly count synchronized.")
@@ -924,10 +1241,12 @@ if save_config_btn:
     cfg["ism_pmi"] = float(ism_pmi)
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
+    cfg["bond_yield_10y"] = float(bond_yield_10y)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
     cfg["sloos_net_pct"] = float(sloos_net_pct)
     cfg["hy_oas"] = float(hy_oas)
     cfg["stlfsi_index"] = float(stlfsi_index)
+    cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
     st.sidebar.success("Config saved.")
 
@@ -982,24 +1301,61 @@ if run:
             market_data["spx_spot"] = 5000.0
             market_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
-        # Bind manual overrides as the primary data sources
-        market_data["core_pce_yoy"] = core_pce_yoy
-        market_data["ism_pmi"] = ism_pmi
-        market_data["shiller_cape"] = shiller_cape
-        market_data["market_breadth_pct"] = market_breadth_pct
-        market_data["sloos_net_pct"] = sloos_net_pct
-        market_data["hy_oas"] = hy_oas
-        market_data["stlfsi_index"] = stlfsi_index
-        market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
+        # Core logic: Prioritize automated live data OR revert to manual inputs
+        if not use_live_macro:
+            market_data["core_pce_yoy"] = core_pce_yoy
+            market_data["ism_pmi"] = ism_pmi
+            market_data["shiller_cape"] = shiller_cape
+            market_data["market_breadth_pct"] = market_breadth_pct
+            market_data["bond_yield_10y"] = bond_yield_10y
+            market_data["sloos_net_pct"] = sloos_net_pct
+            market_data["hy_oas"] = hy_oas
+            market_data["stlfsi_index"] = stlfsi_index
+            
+            market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
+            market_sources["ism_pmi"] = "MANUAL OVERRIDE"
+            market_sources["shiller_cape"] = "MANUAL OVERRIDE"
+            market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
+            market_sources["bond_yield_10y"] = "MANUAL OVERRIDE"
+            market_sources["sloos_net_pct"] = "MANUAL OVERRIDE"
+            market_sources["hy_oas"] = "MANUAL OVERRIDE"
+            market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
+        else:
+            # Overwrite only if the live snapshot calculation resulted in a DEFAULT
+            if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
+                market_data["core_pce_yoy"] = core_pce_yoy
+                market_sources["core_pce_yoy"] = "CONFIG/DEFAULT"
+                
+            if "DEFAULT" in str(market_sources.get("ism_pmi")).upper():
+                market_data["ism_pmi"] = ism_pmi
+                market_sources["ism_pmi"] = "CONFIG/DEFAULT"
+                
+            if "DEFAULT" in str(market_sources.get("shiller_cape")).upper():
+                market_data["shiller_cape"] = shiller_cape
+                market_sources["shiller_cape"] = "CONFIG/DEFAULT"
+                
+            if "DEFAULT" in str(market_sources.get("market_breadth_pct")).upper():
+                market_data["market_breadth_pct"] = market_breadth_pct
+                market_sources["market_breadth_pct"] = "CONFIG/DEFAULT"
+                
+            if "DEFAULT" in str(market_sources.get("bond_yield_10y")).upper():
+                market_data["bond_yield_10y"] = bond_yield_10y
+                market_sources["bond_yield_10y"] = "CONFIG/DEFAULT"
 
-        market_sources["core_pce_yoy"] = "MANUAL OVERRIDE"
-        market_sources["ism_pmi"] = "MANUAL OVERRIDE"
-        market_sources["shiller_cape"] = "MANUAL OVERRIDE"
-        market_sources["market_breadth_pct"] = "MANUAL OVERRIDE"
-        market_sources["sloos_net_pct"] = "MANUAL OVERRIDE"
-        market_sources["hy_oas"] = "MANUAL OVERRIDE"
-        market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
-        market_sources["fwd_eps_growth_yoy"] = "MANUAL OVERRIDE"
+            if "DEFAULT" in str(market_sources.get("sloos_net_pct")).upper():
+                market_data["sloos_net_pct"] = sloos_net_pct
+                market_sources["sloos_net_pct"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("hy_oas")).upper():
+                market_data["hy_oas"] = hy_oas
+                market_sources["hy_oas"] = "CONFIG/DEFAULT"
+
+            if "DEFAULT" in str(market_sources.get("stlfsi_index")).upper():
+                market_data["stlfsi_index"] = stlfsi_index
+                market_sources["stlfsi_index"] = "CONFIG/DEFAULT"
+
+        # Set variables that do not have automated feeds
+        market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
 
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
 
@@ -1040,10 +1396,12 @@ if run:
     cfg["ism_pmi"] = float(ism_pmi)
     cfg["shiller_cape"] = float(shiller_cape)
     cfg["fwd_eps_growth_yoy"] = float(fwd_eps_growth_yoy)
+    cfg["bond_yield_10y"] = float(bond_yield_10y)
     cfg["market_breadth_pct"] = float(market_breadth_pct)
     cfg["sloos_net_pct"] = float(sloos_net_pct)
     cfg["hy_oas"] = float(hy_oas)
     cfg["stlfsi_index"] = float(stlfsi_index)
+    cfg["use_live_macro"] = bool(use_live_macro)
     save_config(cfg)
 
     append_log_row({
@@ -1227,7 +1585,7 @@ if st.session_state["engine_ran"]:
                 # Design visual variables based on status
                 border_style = "border-left: 5px solid #dc2626;" if is_failed else "border-left: 5px solid #10b981;"
                 status_icon = "⚠️" if is_failed else "✅"
-                status_tooltip = "Failed to fetch live data (reverted to default/config fallback)" if is_failed else "Manual Configuration Override"
+                status_tooltip = "Failed to fetch live data (reverted to default/config fallback)" if is_failed else "Downloaded live data successfully"
                 
                 st.markdown(
                     f"""
