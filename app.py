@@ -175,7 +175,7 @@ with col_header:
     st.markdown(
         """
         <div style="padding-top: 0.3rem;">
-            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP Rebalance Engine</div>
+            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP REBLANCE ENGINE</div>
             <div style="color: #64748b; font-size: 0.95rem; margin-top: 0.25rem;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
         </div>
         """,
