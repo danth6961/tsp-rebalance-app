@@ -36,6 +36,130 @@ st.set_page_config(
 
 
 # ==============================================================================
+# FILES / CONFIG & ROBUST FALLBACKS
+# ==============================================================================
+
+MAX_RETRIES = 3
+RETRY_SLEEP_SEC = 1.5
+
+STATE_FILE = Path("tsp_state.json")
+CONFIG_FILE = Path("tsp_config.json")
+LOG_FILE = Path("tsp_daily_log.csv")
+
+DEFAULTS = {
+    "core_pce_yoy": 3.4,
+    "ism_pmi": 54.0,
+    "sloos_net_pct": 6.6,
+    "hy_oas": 2.76,
+    "shiller_cape": 39.66,
+    "fwd_eps_growth_yoy": 11.8,
+    "stlfsi_index": -0.9568,
+    "bond_yield_10y": 4.50,
+    "market_breadth_pct": 73.20,
+    "vix_spot": 19.0,
+    "dxy_spot": 105.80,
+}
+
+# Standard liquid ETFs that approximate the respective TSP funds
+PROXIES = {
+    "C Fund (S&P 500 Stock Index)": "SPY",
+    "S Fund (Mid/Small Cap Stock Index)": "VXF",
+    "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
+    "F Fund (U.S. Aggregate Bond Index)": "AGG",
+    "G Fund (Short-Term U.S. Treasury Bills)": "BIL"
+}
+
+
+# ==============================================================================
+# STATE & CONFIG HELPERS
+# ==============================================================================
+
+def default_state() -> Dict[str, Any]:
+    return {
+        "month": date.today().strftime("%Y-%m"),
+        "ift_count_this_month": 0,
+        "last_ift_date": None,
+        "recent_regimes": [],
+        "recent_scores": [],
+        "recent_allocations": []
+    }
+
+def load_state() -> Dict[str, Any]:
+    if STATE_FILE.exists():
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return default_state()
+
+def save_state(state_data: Dict[str, Any]) -> None:
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state_data, f, indent=4)
+    except Exception:
+        pass
+
+def load_config() -> Dict[str, Any]:
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
+        "allow_second_ift": False,
+        "normal_drift_threshold_pct": 7.5,
+        "score_change_threshold": 3,
+        "confirmation_days": 3,
+        "cooldown_days": 5,
+        "core_pce_yoy": DEFAULTS["core_pce_yoy"],
+        "ism_pmi": DEFAULTS["ism_pmi"],
+        "shiller_cape": DEFAULTS["shiller_cape"],
+        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
+        "bond_yield_10y": DEFAULTS["bond_yield_10y"],
+        "market_breadth_pct": DEFAULTS["market_breadth_pct"],
+        "sloos_net_pct": DEFAULTS["sloos_net_pct"],
+        "hy_oas": DEFAULTS["hy_oas"],
+        "stlfsi_index": DEFAULTS["stlfsi_index"],
+        "use_live_macro": True
+    }
+
+def save_config(config_data: Dict[str, Any]) -> None:
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config_data, f, indent=4)
+    except Exception:
+        pass
+
+def reset_monthly_if_needed(state_data: Dict[str, Any], today_date: date) -> Dict[str, Any]:
+    current_month_str = today_date.strftime("%Y-%m")
+    if state_data.get("month") != current_month_str:
+        state_data["month"] = current_month_str
+        state_data["ift_count_this_month"] = 0
+    return state_data
+
+def update_signal_history(state_data: Dict[str, Any], regime: str, score: int, alloc: Dict[str, float]) -> Dict[str, Any]:
+    if "recent_regimes" not in state_data:
+        state_data["recent_regimes"] = []
+    if "recent_scores" not in state_data:
+        state_data["recent_scores"] = []
+    if "recent_allocations" not in state_data:
+        state_data["recent_allocations"] = []
+        
+    state_data["recent_regimes"].append(regime)
+    state_data["recent_scores"].append(score)
+    state_data["recent_allocations"].append(alloc)
+    
+    # Keep only the last 30 runs to prevent state file bloating
+    state_data["recent_regimes"] = state_data["recent_regimes"][-30:]
+    state_data["recent_scores"] = state_data["recent_scores"][-30:]
+    state_data["recent_allocations"] = state_data["recent_allocations"][-30:]
+    return state_data
+
+
+# ==============================================================================
 # STYLE (Dark-Mode Compliant & Modern Cards)
 # ==============================================================================
 
@@ -133,12 +257,11 @@ inject_custom_css()
 
 
 # ==============================================================================
-# UTILITIES & HTML CLEANERS (Moved to the top to guarantee global scope)
+# UTILITIES
 # ==============================================================================
 
 def clean_html(raw_html: str) -> str:
     """Removes newlines and leading indentation, forcing the Streamlit Markdown
-
     parser to render the payload purely as HTML rather than a raw code block.
     """
     return " ".join([line.strip() for line in raw_html.split("\n") if line.strip()])
@@ -211,139 +334,6 @@ def df_to_json_bytes(df: pd.DataFrame) -> bytes:
 
 
 # ==============================================================================
-# FILES / CONFIG & ROBUST FALLBACKS
-# ==============================================================================
-
-MAX_RETRIES = 3
-RETRY_SLEEP_SEC = 1.5
-
-STATE_FILE = Path("tsp_state.json")
-CONFIG_FILE = Path("tsp_config.json")
-LOG_FILE = Path("tsp_daily_log.csv")
-
-DEFAULTS = {
-    "core_pce_yoy": 3.4,
-    "ism_pmi": 54.0,
-    "sloos_net_pct": 6.6,
-    "hy_oas": 2.76,
-    "shiller_cape": 39.66,
-    "fwd_eps_growth_yoy": 11.8,
-    "stlfsi_index": -0.9568,
-    "bond_yield_10y": 4.50,
-    "market_breadth_pct": 73.20,
-    "vix_spot": 19.0,
-    "dxy_spot": 105.80,
-}
-
-# Standard liquid ETFs that approximate the respective TSP funds
-PROXIES = {
-    "C Fund (S&P 500 Stock Index)": "SPY",
-    "S Fund (Mid/Small Cap Stock Index)": "VXF",
-    "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
-    "F Fund (U.S. Aggregate Bond Index)": "AGG",
-    "G Fund (Short-Term U.S. Treasury Bills)": "BIL"
-}
-
-
-# ==============================================================================
-# STATE / CONFIGURATION LOADER
-# ==============================================================================
-
-def default_state() -> Dict[str, Any]:
-    return {
-        "month": None,
-        "ift_count_this_month": 0,
-        "last_ift_date": None,
-        "recent_regimes": [],
-        "recent_scores": [],
-        "recent_allocations": [],
-    }
-
-
-def load_state() -> Dict[str, Any]:
-    if "session_state_fallback" not in st.session_state:
-        st.session_state["session_state_fallback"] = default_state()
-        
-    if not STATE_FILE.exists():
-        return st.session_state["session_state_fallback"]
-    try:
-        with STATE_FILE.open("r", encoding="utf-8") as f:
-            state = json.load(f)
-    except Exception:
-        return st.session_state["session_state_fallback"]
-    base = default_state()
-    base.update(state)
-    return base
-
-
-def save_state(state: Dict[str, Any]) -> None:
-    st.session_state["session_state_fallback"] = state
-    try:
-        with STATE_FILE.open("w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, sort_keys=True, default=str)
-    except Exception:
-        pass
-
-
-def reset_monthly_if_needed(state: Dict[str, Any], today: date) -> Dict[str, Any]:
-    current_month = today.strftime("%Y-%m")
-    if state.get("month") != current_month:
-        state["month"] = current_month
-        state["ift_count_this_month"] = 0
-        state["last_ift_date"] = None
-    return state
-
-
-def update_signal_history(state: Dict[str, Any], regime: str, total_score: int, alloc: Dict[str, float]) -> Dict[str, Any]:
-    state["recent_regimes"].append(regime)
-    state["recent_scores"].append(int(total_score))
-    state["recent_allocations"].append(alloc)
-    state["recent_regimes"] = state["recent_regimes"][-30:]
-    state["recent_scores"] = state["recent_scores"][-30:]
-    state["recent_allocations"] = state["recent_allocations"][-30:]
-    return state
-
-
-def load_config() -> Dict[str, Any]:
-    default_cfg = {
-        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
-        "allow_second_ift": False,
-        "normal_drift_threshold_pct": 7.5,
-        "score_change_threshold": 3,
-        "confirmation_days": 3,
-        "cooldown_days": 5,
-        "core_pce_yoy": DEFAULTS["core_pce_yoy"],
-        "ism_pmi": DEFAULTS["ism_pmi"],
-        "shiller_cape": DEFAULTS["shiller_cape"],
-        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
-        "bond_yield_10y": DEFAULTS["bond_yield_10y"],
-        "market_breadth_pct": DEFAULTS["market_breadth_pct"],
-        "sloos_net_pct": DEFAULTS["sloos_net_pct"],
-        "hy_oas": DEFAULTS["hy_oas"],
-        "stlfsi_index": DEFAULTS["stlfsi_index"],
-        "use_live_macro": True,
-    }
-    if not CONFIG_FILE.exists():
-        return default_cfg
-    try:
-        with CONFIG_FILE.open("r", encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        return default_cfg
-    default_cfg.update(cfg)
-    default_cfg["current_alloc"] = cfg.get("current_alloc", default_cfg["current_alloc"])
-    return default_cfg
-
-
-def save_config(cfg: Dict[str, Any]) -> None:
-    try:
-        with CONFIG_FILE.open("w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, sort_keys=True, default=str)
-    except Exception:
-        pass
-
-
-# ==============================================================================
 # DATA HELPERS & ADVANCED SCRAPING LOGIC
 # ==============================================================================
 
@@ -376,7 +366,7 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
 
 
 def fetch_fred_latest(series_id: str) -> Optional[float]:
-    # 1. Try DBnomics mirror first (unblocked, extremely fast on Streamlit Cloud)
+    # 1. Try DBnomics mirror first
     try:
         data_points = fetch_from_dbnomics(series_id)
         if data_points:
@@ -389,7 +379,7 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout to prevent hanging
+        with urllib.request.urlopen(req, timeout=3) as response:
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -411,7 +401,7 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
 
 def fetch_fred_core_pce_yoy() -> Optional[float]:
     """Downloads monthly core PCE index values from FRED and calculates the 12-month change %."""
-    # 1. Try DBnomics mirror first (unblocked, extremely fast)
+    # 1. Try DBnomics mirror first
     try:
         data_points = fetch_from_dbnomics("PCEPILFE")
         if len(data_points) >= 13:
@@ -426,7 +416,7 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=PCEPILFE"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=3) as response:  # Lowered timeout
+        with urllib.request.urlopen(req, timeout=3) as response:
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -463,7 +453,7 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
     
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:  # Added reasonable timeout
+        with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read().decode('utf-8')
             
         dfs = pd.read_html(html)
@@ -496,7 +486,7 @@ def fetch_shiller_cape_live() -> Optional[float]:
     def _load():
         url = "https://www.multpl.com/shiller-pe"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        with urllib.request.urlopen(req, timeout=5) as response:  # Added timeout
+        with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read().decode('utf-8')
         
         match = re.search(r'class=["\']num["\']>\s*([0-9\.]+)\s*<', html)
@@ -524,7 +514,7 @@ def fetch_barchart_s5th_fallback() -> Optional[float]:
     }
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:  # Added timeout
+        with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read().decode('utf-8')
             
         for pattern in [
@@ -545,7 +535,6 @@ def fetch_barchart_s5th_fallback() -> Optional[float]:
 
 def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d") -> List[float]:
     def _load():
-        # First attempt: standard download
         df = yf.download(
             ticker,
             period=period,
@@ -571,7 +560,6 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
             if closes_list:
                 return closes_list
                 
-        # Second attempt: Ticker history fallback (highly robust for custom indexes)
         try:
             t = yf.Ticker(ticker)
             history_df = t.history(period=period, interval=interval)
@@ -723,7 +711,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     live_breadth = None
     breadth_source = "CONFIG/DEFAULT"
     
-    # Core PCE YoY: Prioritize Trading Economics, Fallback to FRED index YoY, Fallback to defaults
+    # Core PCE YoY
     if te_pce is not None:
         final_pce = te_pce
         pce_source = "LIVE (Trading Economics)"
@@ -736,7 +724,7 @@ def get_market_snapshot() -> Dict[str, Any]:
             final_pce = DEFAULTS["core_pce_yoy"]
             pce_source = "CONFIG/DEFAULT"
 
-    # ISM PMI: Prioritize Trading Economics, Fallback to defaults
+    # ISM PMI
     if te_pmi is not None:
         final_pmi = te_pmi
         pmi_source = "LIVE (Trading Economics)"
@@ -744,7 +732,7 @@ def get_market_snapshot() -> Dict[str, Any]:
         final_pmi = DEFAULTS["ism_pmi"]
         pmi_source = "CONFIG/DEFAULT"
 
-    # Breadth Logic: Prioritize Yahoo Finance closes, fallback to Barchart HTML scrape, fallback to default
+    # Breadth Logic
     if breadth_closes:
         live_breadth = breadth_closes[-1]
         breadth_source = "LIVE (Yahoo Finance ^S5TH)"
@@ -757,7 +745,7 @@ def get_market_snapshot() -> Dict[str, Any]:
             live_breadth = DEFAULTS["market_breadth_pct"]
             breadth_source = "CONFIG/DEFAULT"
 
-    # 10Y Yield: Prioritize Yahoo Finance ^TNX (Divided by 10), Fallback to FRED DGS10, Fallback to defaults
+    # 10Y Yield
     if bond_yield_closes:
         live_bond_yield = round(bond_yield_closes[-1] / 10.0, 3)
         bond_source = "LIVE (Yahoo Finance ^TNX)"
@@ -770,7 +758,7 @@ def get_market_snapshot() -> Dict[str, Any]:
             live_bond_yield = DEFAULTS["bond_yield_10y"]
             bond_source = "CONFIG/DEFAULT"
 
-    # 3-day Panic Valve Logic Evaluations
+    # 3-day Panic Valve Logic
     vix_3d_panic = False
     vix_last_3 = []
     if len(vix_closes) >= 3:
@@ -792,7 +780,6 @@ def get_market_snapshot() -> Dict[str, Any]:
         spx_dist_last_3 = [round(dist_2, 2), round(dist_1, 2), round(dist_0, 2)]
         spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
 
-    # Re-calculate sources to reflect redirect routes (e.g. if FRED failed but DBnomics succeeded)
     def determine_source(series_id, label, default_src):
         if results.get(label) is not None:
             return default_src
@@ -936,7 +923,6 @@ def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
     f_fund_unlocked = (bond_yield - pce) >= 1.5
     dxy_strong = dxy_spot >= 103.5
 
-    # Fixed: Safely define default state for panic_valve_triggered to avoid NameError under any context path
     panic_valve_triggered = False
     vix_3d_panic = data.get("vix_3d_panic", False)
     spx_3d_panic = data.get("spx_3d_panic", False)
@@ -1131,7 +1117,7 @@ def source_pill_html(source: str) -> str:
 
 
 # ==============================================================================
-# APP STATE
+# APP STATE INITIALIZATION
 # ==============================================================================
 
 today = date.today()
@@ -1140,7 +1126,7 @@ cfg = load_config()
 
 
 # ==============================================================================
-# SIDEBAR (Header & Subtitle Relocated here to declutter main page)
+# SIDEBAR
 # ==============================================================================
 
 with st.sidebar:
@@ -1192,7 +1178,6 @@ with st.sidebar:
     clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True, help="Removes the daily logs CSV file permanently.")
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True, help="Saves your current portfolio holdings and safety preferences permanently.")
     
-    # Standardized root action rendering (Nesting Bypassed to fix NameError completely)
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
@@ -1245,7 +1230,6 @@ if "engine_ran" not in st.session_state:
     st.session_state["engine_ran"] = False
     st.session_state["engine_results"] = {}
 
-# Fixed: This if block now correctly sees 'run' in the global scope with no nesting errors
 if run:
     with st.spinner("Loading live data and running engine..."):
         try:
@@ -1265,7 +1249,6 @@ if run:
             market_data["spx_spot"] = 5000.0
             market_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
-        # Core logic: Prioritize automated live data OR revert to manual inputs
         if not use_live_macro:
             market_data["core_pce_yoy"] = core_pce_yoy
             market_data["ism_pmi"] = ism_pmi
@@ -1285,7 +1268,6 @@ if run:
             market_sources["hy_oas"] = "MANUAL OVERRIDE"
             market_sources["stlfsi_index"] = "MANUAL OVERRIDE"
         else:
-            # Overwrite only if the live snapshot calculation resulted in a DEFAULT
             if "DEFAULT" in str(market_sources.get("core_pce_yoy")).upper():
                 market_data["core_pce_yoy"] = core_pce_yoy
                 market_sources["core_pce_yoy"] = "CONFIG/DEFAULT"
@@ -1318,7 +1300,6 @@ if run:
                 market_data["stlfsi_index"] = stlfsi_index
                 market_sources["stlfsi_index"] = "CONFIG/DEFAULT"
 
-        # Set variables that do not have automated feeds
         market_data["fwd_eps_growth_yoy"] = fwd_eps_growth_yoy
 
         allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
@@ -1382,7 +1363,6 @@ if run:
         "drawdown_pct": market_data["drawdown_pct"],
     })
 
-    # Save outputs to memory to protect against resetting during user clicks
     st.session_state["engine_results"] = {
         "market_data": market_data,
         "market_sources": market_sources,
@@ -1402,7 +1382,6 @@ if run:
 # ==============================================================================
 
 if st.session_state["engine_ran"]:
-    # Retrieve active outputs from persistent session memory
     res = st.session_state["engine_results"]
     market_data = res["market_data"]
     market_sources = res["market_sources"]
@@ -1416,7 +1395,6 @@ if st.session_state["engine_ran"]:
 
     render_metric_cards(total_score, regime, action, state["ift_count_this_month"], reason)
 
-    # Added spacing margin between the high-level KPI cards and the tab navigation layout
     st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
@@ -1453,7 +1431,6 @@ if st.session_state["engine_ran"]:
 
         st.caption("Left = current allocation. Right = target allocation. Drift shown at far right.")
 
-        # Re-architected and beautified Regime Directory Grid in Tab 1 (Baseline and redundancy removed)
         st.markdown("<div style='margin: 2.6rem 0; border-bottom: 1px solid rgba(148,163,184,0.12);'></div>", unsafe_allow_html=True)
         st.markdown("### 🧭 Strategic Regime Directory")
         st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
@@ -1523,7 +1500,6 @@ if st.session_state["engine_ran"]:
                 )
 
     with tab2:
-        # Panic Valve Auditing & Verification Displays
         st.markdown("### 🚨 Panic Valve & Emergency Dispatch Diagnostic")
         pv_cols = st.columns(3)
         with pv_cols[0]:
@@ -1549,7 +1525,6 @@ if st.session_state["engine_ran"]:
                 unsafe_allow_html=True,
             )
 
-        # Added spacious dividers to create breathing room between main snapshot sections
         st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.markdown("### Factor Scores")
         score_order = [
@@ -1594,16 +1569,13 @@ if st.session_state["engine_ran"]:
         market_cols = st.columns(4)
         for i, (label, value, source) in enumerate(market_items):
             with market_cols[i % 4]:
-                # Format floats cleanly
                 val_formatted = f"{value:.2f}%" if label in ["Core PCE YoY", "Breadth %"] and isinstance(value, (int, float)) else (f"{value:.2f}" if isinstance(value, (int, float)) else str(value))
                 
-                # Check download status
                 is_failed = False
                 source_str = str(source).upper()
                 if "FAILED" in source_str or "DEFAULT" in source_str or "FALLBACK" in source_str:
                     is_failed = True
                 
-                # Design visual variables based on status
                 border_style = "border-left: 5px solid #dc2626;" if is_failed else "border-left: 5px solid #10b981;"
                 status_icon = "⚠️" if is_failed else "✅"
                 status_tooltip = "Failed to fetch live data (reverted to default/config fallback)" if is_failed else "Downloaded live data successfully"
@@ -1626,7 +1598,6 @@ if st.session_state["engine_ran"]:
         st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
-        # Colored visual indicators for the current engine regime
         if regime == "RISK-ON OVERRIDE":
             st.success(f"🟢 Current Regime: {regime}")
         elif regime == "OPTIMIZED NEUTRAL":
@@ -1641,7 +1612,6 @@ if st.session_state["engine_ran"]:
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
             st.markdown("#### 1. Macro & Stress Factor Scoring")
             
-            # Attributing positive, neutral, and negative drivers dynamically
             pos_factors = []
             neg_factors = []
             neu_factors = []
@@ -1679,21 +1649,18 @@ if st.session_state["engine_ran"]:
             st.markdown(f"**Step A: Initial Score Evaluation**  \nRaw Composite Score of **{total_score}** maps the engine to the **{regime}** regime base allocation.")
             
             st.markdown("**Step B: Overlay Adjustments & Filter Logic**")
-            # Volatility overlay
             asymmetric_vol_trigger = factor_scores.get("market_stress", 0) <= -3 or factor_scores.get("momentum", 0) <= -3
             if asymmetric_vol_trigger:
                 st.markdown("* ⚠️ **Asymmetric Volatility Filter Active:** Market stress or price momentum has weakened below critical levels. The engine has automatically removed S Fund holdings and safely redistributed them.")
             else:
                 st.markdown("* ✅ **Asymmetric Volatility Filter Inactive:** Markets exhibit stable volatility metrics; standard S Fund allocations remain intact.")
                 
-            # DXY overlay
             dxy_strong = market_data.get("dxy_spot", 0) >= 103.5
             if dxy_strong:
                 st.markdown("* 💵 **Strong USD Modifier Active:** Dollar Index is trading above historical resistance ($\ge 103.5$). Shifted 5% from International (I Fund) to domestic US large-caps (C Fund) to hedge currency drag.")
             else:
                 st.markdown("* 🌐 **USD Modifier Inactive:** Dollar strength is within standard limits. Standard international equity allocations remain unmodified.")
                 
-            # Bond Yield overlay
             bond_unlocked = (market_data.get("bond_yield_10y", 0) - market_data.get("core_pce_yoy", 0)) >= 1.5
             if bond_unlocked:
                 st.markdown("* 📈 **F Fund Yield Unlock Active:** 10-Year Real Yield is highly attractive ($\ge 1.5\%$ above Core PCE inflation). Decreased conservative cash G Fund holdings by 10% to capture bond-market F Fund yield.")
@@ -1773,7 +1740,6 @@ if st.session_state["engine_ran"]:
         st.markdown("---")
         st.markdown("### Recent State Overview")
         
-        # Display meta metrics side-by-side using Streamlit columns
         state_cols = st.columns(3)
         with state_cols[0]:
             st.metric(label="Current Tracking Month", value=state.get("month") or "N/A")
@@ -1785,7 +1751,6 @@ if st.session_state["engine_ran"]:
             
         st.markdown("### Run History Log")
         
-        # Combine historical tracking lists into a readable chronological table
         regimes = state.get("recent_regimes", [])
         scores = state.get("recent_scores", [])
         allocations_list = state.get("recent_allocations", [])
@@ -1806,7 +1771,6 @@ if st.session_state["engine_ran"]:
                     "Target Portfolio": alloc_str
                 })
             
-            # Reverse so that the most recent execution appears at the top
             history_df = pd.DataFrame(history_data).iloc[::-1]
             
             st.dataframe(
