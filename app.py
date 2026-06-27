@@ -50,8 +50,6 @@ DEFAULTS = {
     "stlfsi_index": -0.9568,
     "bond_yield_10y": 4.50,
     "market_breadth_pct": 73.20,
-    "vix_spot": 19.0,
-    "dxy_spot": 105.80,
 }
 
 # Standard liquid ETFs that approximate the respective TSP funds
@@ -361,12 +359,41 @@ def save_config(cfg: Dict[str, Any]) -> None:
 # DATA HELPERS & ADVANCED SCRAPING LOGIC
 # ==============================================================================
 
+def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
+    """Helper to query the stable, unblocked DBnomics JSON API for any FRED Series ID."""
+    url = f"https://api.db.nomics.world/v22/series/FRED/{urllib.parse.quote(series_id)}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+        docs = data.get("series", {}).get("docs", [])
+        if not docs:
+            return []
+        
+        doc = docs[0]
+        periods = doc.get("period", [])
+        values = doc.get("value", [])
+        
+        result = []
+        for p, v in zip(periods, values):
+            val = clean_and_parse_float(v)
+            if val is not None:
+                result.append((p, val))
+        return result
+    except Exception as e:
+        print(f"❌ DBnomics API request failed for '{series_id}': {e}")
+        return []
+
+
 def fetch_fred_latest(series_id: str) -> Optional[float]:
-    def _load():
+    # 1. Try standard FRED CSV first
+    def _load_fred():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -379,19 +406,29 @@ def fetch_fred_latest(series_id: str) -> Optional[float]:
         return float(series.iloc[-1])
 
     try:
-        return retry_call(_load)
+        return retry_call(_load_fred)
     except Exception as e:
-        print(f"⚠️ Live fetch for FRED series '{series_id}' failed: {e}")
-        return None
+        print(f"⚠️ FRED server blocked standard fetch for '{series_id}' ({e}). Re-routing to DBnomics mirror...")
+        
+    # 2. Redirect to DBnomics mirror fallback (unblocked)
+    try:
+        data_points = fetch_from_dbnomics(series_id)
+        if data_points:
+            return data_points[-1][1]
+    except Exception as err:
+        print(f"❌ DBnomics mirror fetch failed for '{series_id}': {err}")
+        
+    return None
 
 
 def fetch_fred_core_pce_yoy() -> Optional[float]:
     """Downloads monthly core PCE index values from FRED and calculates the 12-month change %."""
-    def _load():
+    # 1. Try standard FRED first
+    def _load_fred_yoy():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=PCEPILFE"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             df = pd.read_csv(response)
 
         if df.empty or len(df.columns) < 2:
@@ -407,10 +444,21 @@ def fetch_fred_core_pce_yoy() -> Optional[float]:
         return round(((latest_val - past_val) / past_val) * 100.0, 2)
 
     try:
-        return retry_call(_load)
+        return retry_call(_load_fred_yoy)
     except Exception as e:
-        print(f"Live Core PCE YoY calculation from FRED failed: {e}")
-        return None
+        print(f"⚠️ FRED server blocked standard YoY PCE fetch ({e}). Re-routing to DBnomics mirror...")
+
+    # 2. Redirect to DBnomics mirror fallback (unblocked)
+    try:
+        data_points = fetch_from_dbnomics("PCEPILFE")
+        if len(data_points) >= 13:
+            latest_val = data_points[-1][1]
+            past_val = data_points[-13][1]
+            return round(((latest_val - past_val) / past_val) * 100.0, 2)
+    except Exception as err:
+        print(f"❌ DBnomics mirror YoY PCE fetch failed: {err}")
+
+    return None
 
 
 def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
@@ -756,17 +804,32 @@ def get_market_snapshot() -> Dict[str, Any]:
         spx_dist_last_3 = [round(dist_2, 2), round(dist_1, 2), round(dist_0, 2)]
         spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
 
+    # Re-calculate sources to reflect redirect routes (e.g. if FRED failed but DBnomics succeeded)
+    def determine_source(series_id, label, default_src):
+        # If the fetched result was successfully retrieved (not defaulted)
+        if results.get(label) is not None:
+            return default_src
+        # If we had to run the fallback which returned a non-None value
+        val_fetched = fetch_fred_latest(series_id)
+        if val_fetched is not None:
+            return f"LIVE (DBnomics {series_id} Mirror)"
+        return "CONFIG/DEFAULT"
+
+    sloos_source = determine_source("DRTSCIS", "sloos_val", "LIVE (FRED DRTSCIS)")
+    hy_source = determine_source("BAMLH0A0HYM2", "hy_val", "LIVE (FRED BAMLH0A0HYM2)")
+    stlfsi_source = determine_source("STLFSI4", "stlfsi_val", "LIVE (FRED STLFSI4)")
+
     market_data = {
         "core_pce_yoy": final_pce,
         "ism_pmi": final_pmi,
-        "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else DEFAULTS["sloos_net_pct"],
-        "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else DEFAULTS["hy_oas"],
+        "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else fetch_fred_latest("DRTSCIS"),
+        "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else fetch_fred_latest("BAMLH0A0HYM2"),
         "shiller_cape": shiller_cape if shiller_cape is not None else DEFAULTS["shiller_cape"],
         "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
         "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
         "pct_dist_200_sma": sma_dist_live,
         "drawdown_pct": drawdown_live,
-        "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else DEFAULTS["stlfsi_index"],
+        "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else fetch_fred_latest("STLFSI4"),
         "bond_yield_10y": live_bond_yield,
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
         "market_breadth_pct": live_breadth,
@@ -778,17 +841,25 @@ def get_market_snapshot() -> Dict[str, Any]:
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
 
+    # Ensure defaults are fully populated if fallback completely failed
+    if market_data["sloos_net_pct"] is None:
+        market_data["sloos_net_pct"] = DEFAULTS["sloos_net_pct"]
+    if market_data["hy_oas"] is None:
+        market_data["hy_oas"] = DEFAULTS["hy_oas"]
+    if market_data["stlfsi_index"] is None:
+        market_data["stlfsi_index"] = DEFAULTS["stlfsi_index"]
+
     market_sources = {
         "core_pce_yoy": pce_source,
         "ism_pmi": pmi_source,
-        "sloos_net_pct": "LIVE (FRED DRTSCIS)" if results.get("sloos_val") is not None else "CONFIG/DEFAULT",
-        "hy_oas": "LIVE (FRED BAMLH0A0HYM2)" if results.get("hy_val") is not None else "CONFIG/DEFAULT",
+        "sloos_net_pct": sloos_source,
+        "hy_oas": hy_source,
         "shiller_cape": "LIVE (Multpl.com CAPE)" if shiller_cape is not None else "CONFIG/DEFAULT",
         "fwd_eps_growth_yoy": "CONFIG/DEFAULT",
         "vix_spot": "LIVE" if vix_closes else "DEFAULT",
         "pct_dist_200_sma": "LIVE" if spx_closes else "DEFAULT",
         "drawdown_pct": "LIVE" if spx_closes else "DEFAULT",
-        "stlfsi_index": "LIVE (FRED STLFSI4)" if results.get("stlfsi_val") is not None else "CONFIG/DEFAULT",
+        "stlfsi_index": stlfsi_source,
         "bond_yield_10y": bond_source,
         "dxy_spot": "LIVE" if dxy_closes else "DEFAULT",
         "market_breadth_pct": breadth_source,
