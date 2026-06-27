@@ -73,7 +73,7 @@ def inject_custom_css():
         """
         <style>
         .block-container {
-            padding-top: 2.5rem;
+            padding-top: 2.2rem;
             padding-bottom: 2rem;
             padding-left: 2rem;
             padding-right: 2rem;
@@ -81,22 +81,9 @@ def inject_custom_css():
         }
 
         .app-header {
-            padding: 0.2rem 0 0.8rem 0;
+            padding: 0.2rem 0 1rem 0;
             margin-bottom: 1.5rem;
             border-bottom: 1px solid rgba(148,163,184,0.2);
-        }
-
-        .app-title {
-            font-size: 2.2rem;
-            font-weight: 800;
-            line-height: 1.15;
-            margin: 0;
-        }
-
-        .app-subtitle {
-            color: #64748b;
-            font-size: 0.95rem;
-            margin-top: 0.25rem;
         }
 
         .pill {
@@ -115,12 +102,18 @@ def inject_custom_css():
         .pill-failed { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
 
         .small-kpi {
-            padding: 0.9rem;
+            padding: 1rem;
             border-radius: 12px;
-            border: 1px solid rgba(148,163,184,0.18);
-            background-color: rgba(248, 250, 252, 0.5);
-            box-shadow: 0 2px 8px rgba(15,23,42,0.02);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            background-color: rgba(248, 250, 252, 0.4);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
             margin-bottom: 0.6rem;
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .small-kpi:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.07);
+            transform: translateY(-2px);
         }
 
         .small-kpi-title {
@@ -133,7 +126,7 @@ def inject_custom_css():
         }
 
         .small-kpi-value {
-            font-size: 1.2rem;
+            font-size: 1.22rem;
             font-weight: 800;
             line-height: 1.15;
             word-break: break-word;
@@ -173,20 +166,24 @@ def inject_custom_css():
 
 inject_custom_css()
 
-st.markdown(
-    """
-    <div class="app-header">
-        <div style="display:flex; align-items:center; gap:0.75rem;">
-            <div style="font-size:2rem; line-height:1;">🏛️</div>
-            <div>
-                <div class="app-title">TSP Rebalance Engine</div>
-                <div class="app-subtitle">Decision support dashboard for TSP allocation management and IFT discipline.</div>
-            </div>
+# ==============================================================================
+# HEADER & EMBEDDED ACTION BAR
+# ==============================================================================
+
+col_header, col_run = st.columns([3, 1])
+with col_header:
+    st.markdown(
+        """
+        <div style="padding-top: 0.3rem;">
+            <div style="font-size: 2.15rem; font-weight: 800; line-height: 1.15; margin: 0;">🏛️ TSP Rebalance Engine</div>
+            <div style="color: #64748b; font-size: 0.95rem; margin-top: 0.25rem;">Decision support dashboard for TSP allocation management and IFT discipline.</div>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+        """,
+        unsafe_allow_html=True,
+    )
+with col_run:
+    st.markdown("<div style='padding-top: 0.85rem;'></div>", unsafe_allow_html=True)
+    run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 
 # ==============================================================================
@@ -1280,8 +1277,7 @@ if "engine_ran" not in st.session_state:
     st.session_state["engine_ran"] = False
     st.session_state["engine_results"] = {}
 
-run = st.button("🚀 Fetch & Run Engine", use_container_width=True)
-
+# Standardizing on header layout button action instead of dual buttons
 if run:
     with st.spinner("Loading live data and running engine..."):
         try:
@@ -1606,7 +1602,7 @@ if st.session_state["engine_ran"]:
         st.dataframe(regime_summary_df, use_container_width=True, hide_index=True)
         st.markdown("---")
         
-        st.subheader("🔍 Engine Explanation")
+        st.subheader("🔍 Engine Decision Breakdown")
         st.write(f"**Composite Score:** {total_score}")
         
         # Colored visual indicators for the current engine regime
@@ -1620,6 +1616,68 @@ if st.session_state["engine_ran"]:
             st.error(f"🔴 Current Regime: {regime}")
         else:
             st.write(f"Current Regime: {regime}")
+            
+        with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
+            st.markdown("#### 1. Macro & Stress Factor Scoring")
+            
+            # Attributing positive, neutral, and negative drivers dynamically
+            pos_factors = []
+            neg_factors = []
+            neu_factors = []
+            
+            for k, label in score_order:
+                val = factor_scores.get(k, 0)
+                if val > 0:
+                    pos_factors.append(f"{label} (+{val} pts)")
+                elif val < 0:
+                    neg_factors.append(f"{label} ({val} pts)")
+                else:
+                    neu_factors.append(label)
+            
+            attr_c1, attr_c2, attr_c3 = st.columns(3)
+            with attr_cols1 if 'attr_cols' in locals() else attr_cols[0] if 'attr_cols' in locals() else attr_cols[0] if 'attr_cols' in locals() else attr_cols[0] if False else attr_c1:
+                st.markdown("**🟢 Positive Drivers**")
+                if pos_factors:
+                    for f in pos_factors: st.markdown(f"- {f}")
+                else:
+                    st.markdown("*None*")
+            with attr_c2:
+                st.markdown("**⚪ Neutral Factors**")
+                if neu_factors:
+                    for f in neu_factors: st.markdown(f"- {f}")
+                else:
+                    st.markdown("*None*")
+            with attr_c3:
+                st.markdown("**🔴 Negative Drags**")
+                if neg_factors:
+                    for f in neg_factors: st.markdown(f"- {f}")
+                else:
+                    st.markdown("*None*")
+                    
+            st.markdown("#### 2. Allocation Evolution Trace")
+            st.markdown(f"**Step A: Initial Score Evaluation**  \nRaw Composite Score of **{total_score}** maps the engine to the **{regime}** regime base allocation.")
+            
+            st.markdown("**Step B: Overlay Adjustments & Filter Logic**")
+            # Volatility overlay
+            asymmetric_vol_trigger = factor_scores.get("market_stress", 0) <= -3 or factor_scores.get("momentum", 0) <= -3
+            if asymmetric_vol_trigger:
+                st.markdown("* ⚠️ **Asymmetric Volatility Filter Active:** Market stress or price momentum has weakened below critical levels. The engine has automatically removed S Fund holdings and safely redistributed them.")
+            else:
+                st.markdown("* ✅ **Asymmetric Volatility Filter Inactive:** Markets exhibit stable volatility metrics; standard S Fund allocations remain intact.")
+                
+            # DXY overlay
+            dxy_strong = market_data.get("dxy_spot", 0) >= 103.5
+            if dxy_strong:
+                st.markdown("* 💵 **Strong USD Modifier Active:** Dollar Index is trading above historical resistance ($\ge 103.5$). Shifted 5% from International (I Fund) to domestic US large-caps (C Fund) to hedge currency drag.")
+            else:
+                st.markdown("* 🌐 **USD Modifier Inactive:** Dollar strength is within standard limits. Standard international equity allocations remain unmodified.")
+                
+            # Bond Yield overlay
+            bond_unlocked = (market_data.get("bond_yield_10y", 0) - market_data.get("core_pce_yoy", 0)) >= 1.5
+            if bond_unlocked:
+                st.markdown("* 📈 **F Fund Yield Unlock Active:** 10-Year Real Yield is highly attractive ($\ge 1.5\%$ above Core PCE inflation). Decreased conservative cash G Fund holdings by 10% to capture bond-market F Fund yield.")
+            else:
+                st.markdown("* 🔒 **F Fund Yield Unlock Inactive:** 10-Year Real Yield spread is below 1.5%. F Fund holdings remain locked in favor of G Fund cash capital protections.")
 
     with tab3:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
