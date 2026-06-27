@@ -1773,33 +1773,52 @@ if st.session_state["engine_ran"]:
                 step_val = 1.0
                 format_val = "%.2f"
                 
+            card_key = f"container_{key}"
+            
+            # Inject CSS override to color the full border/outline of this specific card container
+            st.markdown(
+                f"""
+                <style>
+                div[data-testid="stVerticalBlockBorderWrapper"]:has(.st-key-{card_key}) {{
+                    border: 2px solid {border_color} !important;
+                    border-radius: 12px !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            
             with market_cols[i % 4]:
-                st.markdown(
-                    clean_html(f"""
-                    <div style="border-left: 5px solid {border_color}; padding-left: 10px; margin-top: 10px; margin-bottom: 2px;">
-                        <span style="font-size: 0.82rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing:0.04em;">{label}</span>
-                    </div>
-                    """),
-                    unsafe_allow_html=True
-                )
-                
-                st.number_input(
-                    label=label,
-                    value=float(st.session_state[key]),
-                    step=step_val,
-                    format=format_val,
-                    key=key,
-                    label_visibility="collapsed"
-                )
-                
-                st.markdown(
-                    clean_html(f"""
-                    <div style="margin-top: -8px; margin-bottom: 12px; padding-left: 10px;">
-                        {source_pill_html(source)}
-                    </div>
-                    """),
-                    unsafe_allow_html=True
-                )
+                with st.container(border=True):
+                    # Empty target hook div for the parent card CSS override selector above
+                    st.markdown(f'<div class="st-key-{card_key}"></div>', unsafe_allow_html=True)
+                    
+                    st.markdown(
+                        clean_html(f"""
+                        <div style="margin-bottom: 2px;">
+                            <span style="font-size: 0.82rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing:0.04em;">{label}</span>
+                        </div>
+                        """),
+                        unsafe_allow_html=True
+                    )
+                    
+                    st.number_input(
+                        label=label,
+                        value=float(st.session_state[key]),
+                        step=step_val,
+                        format=format_val,
+                        key=key,
+                        label_visibility="collapsed"
+                    )
+                    
+                    st.markdown(
+                        clean_html(f"""
+                        <div style="margin-top: -8px; margin-bottom: 4px;">
+                            {source_pill_html(source)}
+                        </div>
+                        """),
+                        unsafe_allow_html=True
+                    )
 
         st.markdown("<div style='margin: 2.5rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
