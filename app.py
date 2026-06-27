@@ -794,50 +794,50 @@ def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, flo
 
 
 # ==============================================================================
-# CACHED SNAPSHOTS
+# CACHED SNAPSHOTS (Optimized to 1-hour cache duration)
 # ==============================================================================
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def cached_fred(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fred_latest(series_id, api_key)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def cached_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fred_core_pce_yoy(api_key)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def cached_fred_fed_assets_yoy(api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fed_assets_yoy_growth(api_key)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def get_te_live_data() -> Dict[str, Optional[float]]:
     return fetch_indicators_from_te_indicators_page()
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def cached_shiller_cape_live() -> Optional[float]:
     return fetch_shiller_cape_live()
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600) # Increased to match 1-hour cache logic
 def cached_barchart_s5th() -> Optional[float]:
     return fetch_barchart_s5th_fallback()
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
     return fetch_yfinance_dataframe(ticker, period)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def fetch_ytd_return(ticker: str) -> Optional[float]:
     df = get_cached_proxy_df(ticker, "1y")
     if df.empty:
@@ -856,7 +856,7 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
     return round(ytd_return, 2)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=15) as executor:
@@ -1929,10 +1929,9 @@ if st.session_state["engine_ran"]:
                         unsafe_allow_html=True
                     )
 
-        # Reduced separator margin slightly to further compact layout
+        # Reduced separator margin to 1.0rem to compress vertical height
         st.markdown("<div style='margin: 1.0rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
-        st.write(f"**Composite Score:** {total_score}")
         
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
             st.markdown("#### 1. Macro & Stress Factor Scoring")
