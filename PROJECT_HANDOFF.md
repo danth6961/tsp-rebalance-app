@@ -1,8 +1,3 @@
-
-Here is the updated, technically complete PROJECT_HANDOFF.md document, meticulously reflecting all the architecture, security, calculations, and visual designs implemented in the codebase as of June 2026.
-
-PROJECT_HANDOFF.md
-
 TSP Rebalance Engine — Master Project Handoff
 
 1) Purpose & Scope
