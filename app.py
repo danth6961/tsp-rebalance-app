@@ -1641,9 +1641,7 @@ with st.sidebar:
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True)
 
     st.markdown("---")
-    reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
-    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
-    
+        
     # API Keys expander sitting between Clear Daily Log and Save Config buttons
     with st.expander("🔑 API Keys & Settings", expanded=False):
         active_api_key_default = secrets_api_key if secrets_api_key else cfg.get("fred_api_key", "")
@@ -1655,7 +1653,11 @@ with st.sidebar:
         )
         if secrets_api_key:
             st.caption("🔒 *Configured securely via encrypted Streamlit Secrets.*")
-            
+    
+    reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
+    
+    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
+    
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
     
     # Vertical spacer to pad the main launch button down visually
