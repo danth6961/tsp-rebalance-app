@@ -1681,7 +1681,9 @@ with st.sidebar:
     
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
     
-    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)        
+    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
+
+    clear_tx_btn = st.button("🗑️ Clear Audit Trail File", use_container_width=True)
     
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
 
@@ -1709,7 +1711,7 @@ if save_config_btn:
 
 
 # ==============================================================================
-# BUTTON ACTION HANDLERS (FIXED)
+# BUTTON ACTION HANDLERS
 # ==============================================================================
 
 if reset_state_btn:
@@ -1738,6 +1740,19 @@ if clear_logs_btn:
             st.sidebar.error(f"Failed to clear log file: {e}")
     else:
         st.sidebar.info("No log file exists to clear.")
+
+if clear_tx_btn:
+    # Delete the Transaction Ledger cleanly from disk
+    if TRANSACTION_FILE.exists():
+        try:
+            TRANSACTION_FILE.unlink()
+            st.sidebar.success("Audit trail file cleared successfully.")
+            time.sleep(0.5)
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Failed to clear audit trail: {e}")
+    else:
+        st.sidebar.info("No audit trail file exists to clear.")
 
 
 # ==============================================================================
