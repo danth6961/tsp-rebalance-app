@@ -47,6 +47,7 @@ RETRY_SLEEP_SEC = 1.5
 STATE_FILE = Path("tsp_state.json")
 CONFIG_FILE = Path("tsp_config.json")
 LOG_FILE = Path("tsp_daily_log.csv")
+TRANSACTION_FILE = Path("tsp_transactions.csv")
 
 DEFAULTS = {
     "core_pce_yoy": 3.4,
@@ -79,11 +80,11 @@ PROXIES = {
 
 
 # ==============================================================================
-# TIMEZONE & EST DETECTION HELPER
+# TIMEZONE, EST DETECTION, & OFFLINE SAFETY GATES
 # ==============================================================================
 
 def get_est_now() -> datetime:
-    """Attempts to calculate the exact current time in Eastern Standard/Daylight Time."""
+    """Calculates the exact current time in Eastern Standard/Daylight Time."""
     try:
         from zoneinfo import ZoneInfo
         return datetime.now(ZoneInfo("America/New_York"))
@@ -94,10 +95,18 @@ def get_est_now() -> datetime:
         except Exception:
             # Fallback DST calculation: Estimate Eastern time manually
             utc_now = datetime.now(timezone.utc)
-            # March (3) to November (11) is typically US Daylight Savings Time (UTC-4)
             is_dst = 3 < utc_now.month < 11
             offset = 4 if is_dst else 5
             return utc_now - timedelta(hours=offset)
+
+
+def check_internet_connection() -> bool:
+    """Verifies external network accessibility with a 1.0-second timeout."""
+    try:
+        urllib.request.urlopen("https://www.google.com", timeout=1.0)
+        return True
+    except Exception:
+        return False
 
 
 # ==============================================================================
@@ -123,11 +132,9 @@ def load_fred_api_secret() -> str:
 def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
     """Writes a JSON file atomically and maintains a backup version."""
     try:
-        # Create a backup of the previous configuration if it exists and is valid
         if file_path.exists() and file_path.stat().st_size > 0:
             shutil.copy(file_path, file_path.with_suffix(".json.bak"))
             
-        # Atomic Write: write to a temporary file first, then replace the original
         temp_file = file_path.with_suffix(".tmp")
         with open(temp_file, "w") as f:
             json.dump(data, f, indent=4)
@@ -147,13 +154,11 @@ def safe_load_json(file_path: Path, default_factory) -> Dict[str, Any]:
         except Exception as e:
             print(f"⚠️ Main file '{file_path}' failed to parse: {e}. Attempting backup restore...")
             
-    # Try reading the backup file if the main file is missing or corrupted
     bak_path = file_path.with_suffix(".json.bak")
     if bak_path.exists():
         try:
             with open(bak_path, "r") as f:
                 data = json.load(f)
-            # Restore the parsed data to recover the environment
             shutil.copy(bak_path, file_path)
             print(f"ℹ️ Successfully recovered configuration for '{file_path}' from local backup.")
             return data
@@ -237,7 +242,6 @@ def update_signal_history(state_data: Dict[str, Any], regime: str, score: int, a
         
     today_str = date.today().isoformat()
     
-    # Intraday Run Safeguard: update current index rather than appending on multi-clicks
     if state_data.get("last_run_date") == today_str and state_data["recent_regimes"]:
         state_data["recent_regimes"][-1] = regime
         state_data["recent_scores"][-1] = score
@@ -248,11 +252,41 @@ def update_signal_history(state_data: Dict[str, Any], regime: str, score: int, a
         state_data["recent_scores"].append(score)
         state_data["recent_allocations"].append(alloc)
     
-    # Prevent bloat
     state_data["recent_regimes"] = state_data["recent_regimes"][-30:]
     state_data["recent_scores"] = state_data["recent_scores"][-30:]
     state_data["recent_allocations"] = state_data["recent_allocations"][-30:]
     return state_data
+
+
+# ==============================================================================
+# AUDITING LEDGER SYSTEM
+# ==============================================================================
+
+def append_transaction_row(date_str: str, from_alloc: Dict[str, float], to_alloc: Dict[str, float], regime: str) -> None:
+    """Appends an executed interfund transaction entry directly to a separate audited ledger."""
+    try:
+        file_exists = TRANSACTION_FILE.exists()
+        row = {
+            "date": date_str,
+            "regime": regime,
+            "from_G": from_alloc.get("G", 0.0),
+            "from_C": from_alloc.get("C", 0.0),
+            "from_I": from_alloc.get("I", 0.0),
+            "from_S": from_alloc.get("S", 0.0),
+            "from_F": from_alloc.get("F", 0.0),
+            "to_G": to_alloc.get("G", 0.0),
+            "to_C": to_alloc.get("C", 0.0),
+            "to_I": to_alloc.get("I", 0.0),
+            "to_S": to_alloc.get("S", 0.0),
+            "to_F": to_alloc.get("F", 0.0),
+        }
+        with TRANSACTION_FILE.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+    except Exception as e:
+        print(f"Error writing to transaction ledger: {e}")
 
 
 # ==============================================================================
@@ -345,7 +379,6 @@ def inject_custom_css():
             border-color: #7dd3fc !important;
         }
 
-        /* Fully aligns the design elements of the Market Snapshot cards to match the Factor Scores */
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.card-live) {
             border: 1px solid rgba(148, 163, 184, 0.15) !important;
             border-left: 5px solid #10b981 !important;
@@ -489,7 +522,7 @@ def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tup
             val = clean_and_parse_float(obs.get("value"))
             if val is not None:
                 result.append((obs.get("date"), val))
-        result.reverse()  # chronological order
+        result.reverse()
         return result
     except Exception as e:
         print(f"❌ FRED API request failed for '{series_id}': {e}")
@@ -524,7 +557,6 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
 
 
 def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
-    # 1. Try Live FRED API first
     if api_key:
         try:
             data_points = fetch_via_fred_api(series_id, api_key, limit=5)
@@ -533,7 +565,6 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
         except Exception as err:
             print(f"⚠️ FRED API fetch failed for '{series_id}' ({err}). Falling back...")
 
-    # 2. Try DBnomics mirror
     try:
         data_points = fetch_from_dbnomics(series_id)
         if data_points:
@@ -541,7 +572,6 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
     except Exception as err:
         print(f"⚠️ DBnomics mirror fetch failed for '{series_id}' ({err}). Falling back to standard FRED...")
 
-    # 3. Fallback to standard FRED CSV
     def _load_fred():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
@@ -567,7 +597,6 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
 
 
 def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
-    # 1. Try Live FRED API
     if api_key:
         try:
             data_points = fetch_via_fred_api("PCEPILFE", api_key, limit=20)
@@ -578,7 +607,6 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
         except Exception as err:
             print(f"⚠️ FRED API YoY PCE fetch failed ({err}). Falling back...")
 
-    # 2. Try DBnomics mirror
     try:
         data_points = fetch_from_dbnomics("PCEPILFE")
         if len(data_points) >= 13:
@@ -588,7 +616,6 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     except Exception as err:
         print(f"⚠️ DBnomics mirror YoY PCE fetch failed ({err}). Falling back to standard FRED...")
 
-    # 3. Fallback to standard FRED CSV
     def _load_fred_yoy():
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=PCEPILFE"
@@ -617,7 +644,6 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
 
 
 def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float]:
-    # 1. Try Live FRED API
     if api_key:
         try:
             data_points = fetch_via_fred_api("WALCL", api_key, limit=60)
@@ -628,7 +654,6 @@ def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float
         except Exception as err:
             print(f"⚠️ FRED API WALCL fetch failed ({err}). Falling back...")
 
-    # 2. Try DBnomics mirror
     try:
         data_points = fetch_from_dbnomics("WALCL")
         if len(data_points) >= 53:
@@ -1406,7 +1431,6 @@ def should_use_tsp_ift(
             min_baseline_drift = b_drift
             implied_regime = name
             
-    # Normalize alternative baseline profile names back to core policy regimes
     if "EMERGENCY" in implied_regime:
         implied_regime_normalized = "EMERGENCY DISPATCH"
     elif "DEFENSIVE" in implied_regime:
@@ -1414,7 +1438,6 @@ def should_use_tsp_ift(
     else:
         implied_regime_normalized = implied_regime
 
-    # Catch-Up condition: Current portfolio reflects an allocation regime different from confirmed regime
     regime_mismatch = (implied_regime_normalized != current_confirmed_regime)
 
     # ==========================================================================
@@ -1425,7 +1448,6 @@ def should_use_tsp_ift(
     else:
         score_change = score_change_threshold
         
-    # Bypass amplitude check ONLY if we have a verified stable regime mismatch (Regime Catch-Up)
     if score_change < score_change_threshold and not regime_mismatch:
         return False, f"Score change not strong enough ({score_change} vs {score_change_threshold})"
         
@@ -1562,7 +1584,6 @@ state = load_state()
 cfg = load_config()
 state = reset_monthly_if_needed(state, today)
 
-# Read from secure Streamlit Secrets first
 secrets_api_key = load_fred_api_secret()
 
 INDICATOR_KEYS = [
@@ -1585,6 +1606,13 @@ for key in DERIVED_KEYS:
     if key not in st.session_state:
         st.session_state[key] = 0.0 if "pct" in key or "dist" in key else False
 
+# Auto-hydrate the layout if a historical state is detected on startup (Zero-Click Launch)
+if "engine_ran" not in st.session_state:
+    if state.get("recent_scores"):
+        st.session_state["engine_ran"] = True
+    else:
+        st.session_state["engine_ran"] = False
+
 
 # ==============================================================================
 # SIDEBAR
@@ -1602,7 +1630,7 @@ with st.sidebar:
     )
 
     with st.expander("💼 Your Current Allocation", expanded=True):
-        st.info("Input your current TSP holdings percentage. They must sum to 100%.")
+        st.info("Input your current TSP holdings percentage. They must sum to exactly 100%.")
         current_alloc = {
             "G": st.number_input("G Fund %", value=float(cfg.get("current_alloc", {}).get("G", 40.0)), step=1.0, help="Government Securities Fund: Extremely low-risk; safe interest-earning fund."),
             "C": st.number_input("C Fund %", value=float(cfg.get("current_alloc", {}).get("C", 30.0)), step=1.0, help="Common Stock Index Fund: Mimics the S&P 500 Index (large US companies)."),
@@ -1621,7 +1649,6 @@ with st.sidebar:
         st.markdown("---")
         use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="Fetches live data from public APIs and fallback mirrors.")
 
-    # Manual overrides section directly below Rules expander
     with st.sidebar.expander("🛠️ Manual Overrides & Regime Lock", expanded=False):
         st.warning("Force manual settings to bypass automatic macro indicators during API outages.")
         manual_override_enabled = st.checkbox(
@@ -1637,12 +1664,10 @@ with st.sidebar:
             )
         )
 
-    # Mark IFT button
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True)
 
     st.markdown("---")
         
-    # API Keys expander sitting between Clear Daily Log and Save Config buttons
     with st.expander("🔑 API Keys & Settings", expanded=False):
         active_api_key_default = secrets_api_key if secrets_api_key else cfg.get("fred_api_key", "")
         fred_api_key = st.text_input(
@@ -1656,13 +1681,13 @@ with st.sidebar:
     
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
     
-    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
+    clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)        
     
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
+
+    st.markdown("---")
     
-    # Vertical spacer to pad the main launch button down visually
-    st.divider()
-    st.markdown("<div style='padding-top: 1.5rem;'></div>", unsafe_allow_html=True)
+    st.markdown("<hr style='border: 0; border-top: 1px solid rgba(148,163,184,0.18); margin: 1.5rem 0 1rem 0;' />", unsafe_allow_html=True)
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
@@ -1676,7 +1701,6 @@ if save_config_btn:
     cfg["manual_override_enabled"] = manual_override_enabled
     cfg["manual_regime"] = manual_regime
     
-    # Save manually edited key only if not overridden by secure system secrets
     if not secrets_api_key:
         cfg["fred_api_key"] = fred_api_key
         
@@ -1685,53 +1709,50 @@ if save_config_btn:
     save_config(cfg)
     st.sidebar.success("Config and overrides saved.")
 
-if mark_ift:
-    state["ift_count_this_month"] += 1
-    state["last_ift_date"] = today.isoformat()
-    save_state(state)
-    st.sidebar.success("IFT marked for today.")
 
-if reset_state_btn:
-    state = default_state()
-    save_state(state)
-    st.sidebar.warning("State reset.")
+# ==============================================================================
+# BLOCKING PORTFOLIO INPUT BOUNDARY VALIDATION
+# ==============================================================================
 
-if clear_logs_btn:
-    try:
-        if LOG_FILE.exists():
-            LOG_FILE.unlink()
-            st.sidebar.success("Log file successfully deleted.")
-        else:
-            st.sidebar.info("No log file exists to delete.")
-    except Exception as e:
-        st.sidebar.error(f"Error deleting log file: {e}")
+current_alloc_sum = sum(current_alloc.values())
+alloc_sum_valid = math.isclose(current_alloc_sum, 100.0, rel_tol=1e-5)
 
 
 # ==============================================================================
 # MAIN ENGINE EXECUTION
 # ==============================================================================
 
-if "engine_ran" not in st.session_state:
-    st.session_state["engine_ran"] = False
-
-if run:
-    with st.spinner("Loading live macroeconomic datasets..."):
-        try:
-            snapshot = get_market_snapshot(fred_api_key)
-            fetched_data = snapshot["market_data"]
-            fetched_sources = snapshot["market_sources"]
-        except Exception as e:
-            st.error(f"Could not connect to live feeds. Using system offline baselines. (Info: {e})")
-            fetched_data = DEFAULTS.copy()
-            fetched_data["vix_spot"] = DEFAULTS["vix_spot"]
-            fetched_data["pct_dist_200_sma"] = 1.2
-            fetched_data["drawdown_pct"] = 2.5
-            fetched_data["vix_3d_panic"] = False
-            fetched_data["vix_last_3"] = [19.0, 19.1, 19.0]
-            fetched_data["spx_3d_panic"] = False
-            fetched_data["spx_dist_last_3"] = [1.1, 1.2, 1.2]
-            fetched_data["spx_spot"] = DEFAULTS["spx_spot"]
-            fetched_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
+if run and alloc_sum_valid:
+    with st.spinner("Connecting to live feeds..."):
+        # Zero-Network / Offline Connectivity Safety Check
+        is_online = check_internet_connection()
+        
+        if not is_online:
+            st.sidebar.warning("⚠️ **Offline Mode**: Connection failed. Fast-loading saved configurations directly.")
+            fetched_data = {k: float(st.session_state[k]) for k in INDICATOR_KEYS}
+            fetched_data["pct_dist_200_sma"] = float(st.session_state["pct_dist_200_sma"])
+            fetched_data["drawdown_pct"] = float(st.session_state["drawdown_pct"])
+            fetched_data["vix_3d_panic"] = bool(st.session_state["vix_3d_panic"])
+            fetched_data["spx_3d_panic"] = bool(st.session_state["spx_3d_panic"])
+            fetched_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
+            fetched_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
+            fetched_sources = {k: "LOCAL OFFLINE" for k in INDICATOR_KEYS}
+        else:
+            try:
+                snapshot = get_market_snapshot(fred_api_key)
+                fetched_data = snapshot["market_data"]
+                fetched_sources = snapshot["market_sources"]
+            except Exception as e:
+                st.error(f"Fallback initiated. (Info: {e})")
+                fetched_data = DEFAULTS.copy()
+                fetched_data["pct_dist_200_sma"] = 1.2
+                fetched_data["drawdown_pct"] = 2.5
+                fetched_data["vix_3d_panic"] = False
+                fetched_data["vix_last_3"] = [19.0, 19.1, 19.0]
+                fetched_data["spx_3d_panic"] = False
+                fetched_data["spx_dist_last_3"] = [1.1, 1.2, 1.2]
+                fetched_data["spx_spot"] = DEFAULTS["spx_spot"]
+                fetched_sources = {k: "OFFLINE FALLBACK" for k in DEFAULTS.keys()}
 
         for key in INDICATOR_KEYS:
             src = fetched_sources.get(key, "CONFIG/DEFAULT")
@@ -1803,10 +1824,34 @@ if run:
 
 
 # ==============================================================================
+# AUDITING LEDGER REGISTRATION (MARK IFT USED TODAY)
+# ==============================================================================
+
+if mark_ift and alloc_sum_valid:
+    temp_snapshot_data = {key: float(st.session_state[key]) for key in INDICATOR_KEYS}
+    temp_snapshot_data["vix_3d_panic"] = bool(st.session_state["vix_3d_panic"])
+    temp_snapshot_data["spx_3d_panic"] = bool(st.session_state["spx_3d_panic"])
+    
+    temp_allocs, _, _, temp_regime, _, _, _ = execute_tsp_allocation_engine_final(
+        temp_snapshot_data,
+        override_active=cfg.get("manual_override_enabled", False),
+        override_regime=cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
+    )
+    # Log the audited transaction
+    append_transaction_row(today.isoformat(), current_alloc, temp_allocs, temp_regime)
+
+
+# ==============================================================================
 # DASHBOARD LAYOUT & TABS
 # ==============================================================================
 
-if st.session_state["engine_ran"]:
+if not alloc_sum_valid:
+    st.error(
+        f"❌ **Boundary Input Error**: Your current holdings sum to **{current_alloc_sum:.1f}%**. "
+        "Holdings must equal exactly **100.0%** to safeguard the cumulative drift and rebalancing "
+        "calculators against structural distortion. Please adjust your portfolio weights in the sidebar."
+    )
+elif st.session_state["engine_ran"]:
     market_data = {key: st.session_state[key] for key in INDICATOR_KEYS}
     market_data["pct_dist_200_sma"] = st.session_state["pct_dist_200_sma"]
     market_data["drawdown_pct"] = st.session_state["drawdown_pct"]
@@ -1891,7 +1936,7 @@ if st.session_state["engine_ran"]:
 
         st.markdown("---")
 
-        # Dynamic, Step-by-Step IFT Order Guide Panel
+        # Step-by-Step IFT Order Guide Panel
         if action == "SUBMIT IFT":
             st.markdown("### 📋 TSP.gov Interfund Transfer (IFT) Action Plan")
             st.warning("⚠️ **Action Required**: The engine has confirmed a strategic regime shift. Execute this exact rebalance on your TSP.gov portal.")
@@ -2125,7 +2170,6 @@ if st.session_state["engine_ran"]:
             source_str = str(source).upper()
             is_failed = "FAILED" in source_str or "DEFAULT" in source_str or "FALLBACK" in source_str or "OFFLINE" in source_str
             
-            # Selector hook class based on data source state
             cls_name = "card-failed" if is_failed else "card-live"
             
             step_val = 0.1
@@ -2143,7 +2187,6 @@ if st.session_state["engine_ran"]:
             
             with market_cols[i % 4]:
                 with st.container(border=True):
-                    # Zero-height target hook div for the global stylesheet selector
                     st.markdown(f'<div class="{cls_name}" style="display:none;"></div>', unsafe_allow_html=True)
                     
                     st.markdown(
@@ -2380,7 +2423,33 @@ if st.session_state["engine_ran"]:
             st.info("No historical runs tracked yet.")
 
     with tab5:
-        st.markdown("### Log Viewer")
+        st.markdown("### Transaction History (Audit Trail)")
+        if TRANSACTION_FILE.exists():
+            tx_df = pd.read_csv(TRANSACTION_FILE)
+            st.dataframe(
+                tx_df.tail(25), 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "date": st.column_config.TextColumn("Execution Date"),
+                    "regime": st.column_config.TextColumn("System Regime"),
+                    "from_G": st.column_config.NumberColumn("Old G", format="%.1f%%"),
+                    "from_C": st.column_config.NumberColumn("Old C", format="%.1f%%"),
+                    "from_I": st.column_config.NumberColumn("Old I", format="%.1f%%"),
+                    "from_S": st.column_config.NumberColumn("Old S", format="%.1f%%"),
+                    "from_F": st.column_config.NumberColumn("Old F", format="%.1f%%"),
+                    "to_G": st.column_config.NumberColumn("New G", format="%.1f%%"),
+                    "to_C": st.column_config.NumberColumn("New C", format="%.1f%%"),
+                    "to_I": st.column_config.NumberColumn("New I", format="%.1f%%"),
+                    "to_S": st.column_config.NumberColumn("New S", format="%.1f%%"),
+                    "to_F": st.column_config.NumberColumn("To F", format="%.1f%%")
+                }
+            )
+        else:
+            st.info("No physical portfolio transactions recorded yet. Click 'Mark IFT Used Today' in the sidebar to log your first trade.")
+
+        st.markdown("---")
+        st.markdown("### Daily Run Log Viewer")
         if LOG_FILE.exists():
             log_df = pd.read_csv(LOG_FILE)
             st.dataframe(log_df.tail(25), use_container_width=True, hide_index=True)
