@@ -1685,7 +1685,7 @@ with st.sidebar:
     
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
 
-    st.markdown("<hr style='border: 0; border-top: 1px solid rgba(148,163,184,0.18); margin: 1.5rem 0 1rem 0;' />", unsafe_allow_html=True)
+    st.divider()
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
 if save_config_btn:
