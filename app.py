@@ -363,7 +363,7 @@ inject_custom_css()
 
 
 # ==============================================================================
-# UTILITIES
+# UTILITIES & REBALANCE ALIGNMENT CHECKS
 # ==============================================================================
 
 def clean_html(raw_html: str) -> str:
@@ -412,8 +412,16 @@ def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kw
 
 
 def max_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, float]) -> float:
+    """Calculates the absolute maximum drift of any individual asset."""
     funds = set(current_alloc.keys()) | set(target_alloc.keys())
     return max(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
+
+
+def cumulative_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, float]) -> float:
+    """Calculates cumulative absolute portfolio drift: Sum(|Current_f - Target_f|) / 2."""
+    funds = set(current_alloc.keys()) | set(target_alloc.keys())
+    total_abs_diff = sum(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
+    return total_abs_diff / 2.0
 
 
 def append_log_row(row: Dict[str, Any]) -> None:
@@ -1326,19 +1334,65 @@ def should_use_tsp_ift(
     if len(set(recent_regimes[-confirmation_days:])) != 1:
         return False, "Regime not yet confirmed"
         
-    # Measures the transition amplitude across the confirmed regime boundary
+    current_confirmed_regime = recent_regimes[-1]
+
+    # ==========================================================================
+    # 1. DETECT REGIME MATCH (TO SOLVE STABLE REGIME LOCK / AMPLITUDE TRAP)
+    # ==========================================================================
+    baselines = {
+        "RISK-ON OVERRIDE": {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0},
+        "OPTIMIZED NEUTRAL": {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0},
+        "DEFENSIVE ALLOCATION": {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0},
+        "EMERGENCY DISPATCH": {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
+    }
+    baselines_alt = {
+        "EMERGENCY DISPATCH (F-Unlocked)": {"G": 90, "C": 0, "I": 0, "S": 0, "F": 10},
+        "DEFENSIVE ALLOCATION (High Risk)": {"G": 70, "C": 20, "I": 5, "S": 5, "F": 0}
+    }
+    all_baselines = {**baselines, **baselines_alt}
+    
+    implied_regime = "UNKNOWN"
+    min_baseline_drift = 999.0
+    for name, target_b in all_baselines.items():
+        b_drift = max_alloc_drift(current_alloc, target_b)
+        if b_drift < min_baseline_drift:
+            min_baseline_drift = b_drift
+            implied_regime = name
+            
+    # Normalize alternative baseline profile names back to core policy regimes
+    if "EMERGENCY" in implied_regime:
+        implied_regime_normalized = "EMERGENCY DISPATCH"
+    elif "DEFENSIVE" in implied_regime:
+        implied_regime_normalized = "DEFENSIVE ALLOCATION"
+    else:
+        implied_regime_normalized = implied_regime
+
+    # Catch-Up condition: Current portfolio reflects an allocation regime different from confirmed regime
+    regime_mismatch = (implied_regime_normalized != current_confirmed_regime)
+
+    # ==========================================================================
+    # 2. EVALUATE TRANSITION AMPLITUDE (BOUNDARY SCORE SENSITIVITY)
+    # ==========================================================================
     if len(recent_scores) >= confirmation_days + 1:
         score_change = abs(recent_scores[-1] - recent_scores[-confirmation_days - 1])
     else:
         score_change = score_change_threshold
         
-    if score_change < score_change_threshold:
+    # Bypass amplitude check ONLY if we have a verified stable regime mismatch (Regime Catch-Up)
+    if score_change < score_change_threshold and not regime_mismatch:
         return False, f"Score change not strong enough ({score_change} vs {score_change_threshold})"
         
-    drift = max_alloc_drift(current_alloc, target_alloc)
-    if drift < normal_drift_threshold_pct:
-        return False, f"Allocation drift too small ({drift:.1f}%)"
-    return True, f"Confirmed regime shift with {drift:.1f}% drift"
+    # ==========================================================================
+    # 3. GATING BY PORTFOLIO-LEVEL CUMULATIVE ABSOLUTE DRIFT (ROBUST ALIGNMENT)
+    # ==========================================================================
+    cum_drift = cumulative_alloc_drift(current_alloc, target_alloc)
+    if cum_drift < normal_drift_threshold_pct:
+        return False, f"Cumulative portfolio drift too small ({cum_drift:.1f}% vs {normal_drift_threshold_pct}%)"
+        
+    if score_change < score_change_threshold and regime_mismatch:
+        return True, f"Confirmed Regime Catch-Up (Stable {current_confirmed_regime}) with {cum_drift:.1f}% drift"
+        
+    return True, f"Confirmed regime shift with {cum_drift:.1f}% cumulative drift"
 
 
 # ==============================================================================
@@ -1513,21 +1567,21 @@ with st.sidebar:
     with st.expander("🛡️ Transfer Rules & Safeties", expanded=False):
         st.info("Safety limits designed to preserve your monthly transfer quotas.")
         allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg.get("allow_second_ift", False)), help="Allows making a second transfer in normal regimes if conditions are favorable.")
-        normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5, help="Required drift threshold to trigger rebalances.")
+        normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg.get("normal_drift_threshold_pct", 7.5)), step=0.5, help="Required cumulative portfolio drift threshold to trigger rebalances.")
         score_change_threshold = st.number_input("Score change threshold", value=int(cfg.get("score_change_threshold", 3)), step=1, help="Required boundary point variance to qualify as a strong trend adjustment.")
         confirmation_days = st.number_input("Confirmation days", value=int(cfg.get("confirmation_days", 3)), step=1, help="Consecutive days a signal must hold inside a new regime to trigger.")
         cooldown_days = st.number_input("Cooldown days", value=int(cfg.get("cooldown_days", 5)), step=1, help="Minimum days between consecutive transfers.")
         st.markdown("---")
         use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="Fetches live data from public APIs and fallback mirrors.")
 
-    # Moved Mark IFT button directly under the Transfer Rules expander
+    # Mark IFT button under the Transfer Rules expander
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True)
 
     st.markdown("---")
     reset_state_btn = st.button("♻️ Reset State File", use_container_width=True)
     clear_logs_btn = st.button("🗑️ Clear Daily Log File", use_container_width=True)
     
-    # Moved API Keys expander to sit exactly between Clear Daily Log and Save Config buttons
+    # API Keys expander sitting between Clear Daily Log and Save Config buttons
     with st.expander("🔑 API Keys & Settings", expanded=False):
         active_api_key_default = secrets_api_key if secrets_api_key else cfg.get("fred_api_key", "")
         fred_api_key = st.text_input(
@@ -1541,7 +1595,7 @@ with st.sidebar:
             
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
     
-    # Added vertical spacer to pad the main launch button down visually
+    # Vertical spacer to pad the main launch button down visually
     st.markdown("<div style='padding-top: 1.5rem;'></div>", unsafe_allow_html=True)
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
