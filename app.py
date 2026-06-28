@@ -1709,6 +1709,38 @@ if save_config_btn:
 
 
 # ==============================================================================
+# BUTTON ACTION HANDLERS (FIXED)
+# ==============================================================================
+
+if reset_state_btn:
+    # Overwrite state file with defaults
+    default_state_data = default_state()
+    save_state(default_state_data)
+    state = default_state_data
+    
+    # Clean memory runs
+    if "engine_ran" in st.session_state:
+        st.session_state["engine_ran"] = False
+        
+    st.sidebar.success("State file reset to defaults successfully.")
+    time.sleep(0.5)
+    st.rerun()
+
+if clear_logs_btn:
+    # Delete the CSV logging path cleanly from disk
+    if LOG_FILE.exists():
+        try:
+            LOG_FILE.unlink()
+            st.sidebar.success("Log file removed successfully.")
+            time.sleep(0.5)
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Failed to clear log file: {e}")
+    else:
+        st.sidebar.info("No log file exists to clear.")
+
+
+# ==============================================================================
 # BLOCKING PORTFOLIO INPUT BOUNDARY VALIDATION
 # ==============================================================================
 
@@ -2214,7 +2246,7 @@ elif st.session_state["engine_ran"]:
                         unsafe_allow_html=True
                     )
 
-        st.markdown("<div style='margin: 1.0rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin: 2.0rem 0; border-bottom: 1px solid rgba(148,163,184,0.08);'></div>", unsafe_allow_html=True)
         st.subheader("🔍 Engine Decision Breakdown")
         
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
