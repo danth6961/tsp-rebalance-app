@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import re
 import csv
 import json
@@ -76,6 +76,28 @@ PROXIES = {
     "F Fund (U.S. Aggregate Bond Index)": "AGG",
     "G Fund (Short-Term U.S. Treasury Bills)": "BIL"
 }
+
+
+# ==============================================================================
+# TIMEZONE & EST DETECTION HELPER
+# ==============================================================================
+
+def get_est_now() -> datetime:
+    """Attempts to calculate the exact current time in Eastern Standard/Daylight Time."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        try:
+            import pytz
+            return datetime.now(pytz.timezone("America/New_York"))
+        except Exception:
+            # Fallback DST calculation: Estimate Eastern time manually
+            utc_now = datetime.now(timezone.utc)
+            # March (3) to November (11) is typically US Daylight Savings Time (UTC-4)
+            is_dst = 3 < utc_now.month < 11
+            offset = 4 if is_dst else 5
+            return utc_now - timedelta(hours=offset)
 
 
 # ==============================================================================
@@ -186,7 +208,9 @@ def load_config() -> Dict[str, Any]:
         "dxy_spot": DEFAULTS["dxy_spot"],
         "spx_spot": DEFAULTS["spx_spot"],
         "use_live_macro": True,
-        "fred_api_key": ""
+        "fred_api_key": "",
+        "manual_override_enabled": False,
+        "manual_regime": "OPTIMIZED NEUTRAL"
     }
     return safe_load_json(CONFIG_FILE, lambda: default_config)
 
@@ -1142,7 +1166,30 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
 # ENGINE / IFT DECISION
 # ==============================================================================
 
-def execute_tsp_allocation_engine_final(data: Dict[str, Any]):
+def execute_tsp_allocation_engine_final(data: Dict[str, Any], override_active: bool = False, override_regime: str = "OPTIMIZED NEUTRAL"):
+    if override_active:
+        # Bypasses automated indicator algorithms during downtime and loads manual regime baseline locks
+        scores = {k: 0 for k in ["inflation", "growth", "liquidity", "credit_spreads", "valuation", "market_stress", "momentum", "drawdown"]}
+        
+        if override_regime == "RISK-ON OVERRIDE":
+            regime_name = "RISK-ON OVERRIDE"
+            composite_score = 5
+            base_alloc = {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}
+        elif override_regime == "OPTIMIZED NEUTRAL":
+            regime_name = "OPTIMIZED NEUTRAL"
+            composite_score = 0
+            base_alloc = {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}
+        elif override_regime == "DEFENSIVE ALLOCATION":
+            regime_name = "DEFENSIVE ALLOCATION"
+            composite_score = -5
+            base_alloc = {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}
+        else:  # EMERGENCY DISPATCH
+            regime_name = "EMERGENCY DISPATCH"
+            composite_score = -50
+            base_alloc = {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
+            
+        return base_alloc.copy(), scores, composite_score, regime_name, base_alloc, False, False
+
     scores: Dict[str, int] = {}
 
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
@@ -1574,7 +1621,23 @@ with st.sidebar:
         st.markdown("---")
         use_live_macro = st.checkbox("Use Live Macro Data where available", value=bool(cfg.get("use_live_macro", True)), help="Fetches live data from public APIs and fallback mirrors.")
 
-    # Mark IFT button under the Transfer Rules expander
+    # Manual overrides section directly below Rules expander
+    with st.sidebar.expander("🛠️ Manual Overrides & Regime Lock", expanded=False):
+        st.warning("Force manual settings to bypass automatic macro indicators during API outages.")
+        manual_override_enabled = st.checkbox(
+            "Enable Manual Regime Override", 
+            value=bool(cfg.get("manual_override_enabled", False)), 
+            help="Bypasses automated indicator downloads and locks the target portfolio into the selected posture."
+        )
+        manual_regime = st.selectbox(
+            "Force Regime Active", 
+            options=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"], 
+            index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(
+                cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
+            )
+        )
+
+    # Mark IFT button
     mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True)
 
     st.markdown("---")
@@ -1607,6 +1670,8 @@ if save_config_btn:
     cfg["confirmation_days"] = int(confirmation_days)
     cfg["cooldown_days"] = int(cooldown_days)
     cfg["use_live_macro"] = bool(use_live_macro)
+    cfg["manual_override_enabled"] = manual_override_enabled
+    cfg["manual_regime"] = manual_regime
     
     # Save manually edited key only if not overridden by secure system secrets
     if not secrets_api_key:
@@ -1683,7 +1748,11 @@ if run:
         st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
         st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
 
-        allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(fetched_data)
+        allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(
+            fetched_data,
+            override_active=manual_override_enabled,
+            override_regime=manual_regime
+        )
         
         emergency_triggered = (total_score == -50)
         state = update_signal_history(state, regime, total_score, allocations)
@@ -1743,7 +1812,11 @@ if st.session_state["engine_ran"]:
     market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
     market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
-    allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(market_data)
+    allocations, factor_scores, total_score, regime, baseline, vol_t, dxy_t = execute_tsp_allocation_engine_final(
+        market_data,
+        override_active=cfg.get("manual_override_enabled", False),
+        override_regime=cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
+    )
 
     emergency_triggered = (total_score == -50)
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state["last_ift_date"] else None
@@ -1773,6 +1846,48 @@ if st.session_state["engine_ran"]:
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
 
     with tab1:
+        # 1. Execution Cutoff Time Alert
+        est_now = get_est_now()
+        if est_now.hour >= 12:
+            st.warning(
+                f"⚠️ **TSP Noon Cutoff Exceeded**: It is currently **{est_now.strftime('%I:%M %p')} EST**. "
+                "Any Interfund Transfer (IFT) submitted now will not be processed until the next business day's closing prices. "
+                "Please account for an extra day of market exposure."
+            )
+        else:
+            st.info(
+                f"🕒 **TSP Execution Window Open**: It is currently **{est_now.strftime('%I:%M %p')} EST**. "
+                "Submitting an Interfund Transfer (IFT) before 12:00 PM EST will execute at tonight's closing prices."
+            )
+
+        # 2. Manual Override Warning Card
+        if cfg.get("manual_override_enabled", False):
+            st.warning(f"🛠️ **Regime Lock Active**: The automatic engine is currently bypassed. Allocations and decision trees are locked to **{cfg.get('manual_regime')}**.")
+
+        # 3. Drift Runway Progress Bar
+        cum_drift = cumulative_alloc_drift(current_alloc, allocations)
+        drift_threshold = float(normal_drift_threshold_pct)
+        runway_pct = min(cum_drift / drift_threshold, 1.0) if drift_threshold > 0 else 1.0
+        
+        st.markdown("### 🎚️ Portfolio Drift Runway")
+        c_drift_1, c_drift_2 = st.columns([1, 3])
+        with c_drift_1:
+            st.metric(
+                label="Cumulative Portfolio Drift",
+                value=f"{cum_drift:.2f}%",
+                delta=f"{cum_drift - drift_threshold:+.2f}% vs Threshold",
+                delta_color="normal" if cum_drift >= drift_threshold else "inverse"
+            )
+        with c_drift_2:
+            st.write(f"**Rebalance Threshold Progress**: `{cum_drift:.2f}%` / `{drift_threshold:.2f}%` required.")
+            st.progress(runway_pct)
+            if cum_drift >= drift_threshold:
+                st.success("✅ **Threshold Met**: Portfolio drift exceeds the minimum rebalance threshold. A transfer is eligible.")
+            else:
+                st.info(f"⏳ **Runway Left**: Portfolio requires an additional `{drift_threshold - cum_drift:.2f}%` of cumulative drift to trigger a standard rebalance.")
+
+        st.markdown("---")
+
         # Dynamic, Step-by-Step IFT Order Guide Panel
         if action == "SUBMIT IFT":
             st.markdown("### 📋 TSP.gov Interfund Transfer (IFT) Action Plan")
