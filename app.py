@@ -1659,6 +1659,7 @@ with st.sidebar:
     save_config_btn = st.button("💾 Save Config Settings", use_container_width=True)
     
     # Vertical spacer to pad the main launch button down visually
+    st.divider()
     st.markdown("<div style='padding-top: 1.5rem;'></div>", unsafe_allow_html=True)
     run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
