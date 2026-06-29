@@ -294,6 +294,9 @@ def main():
         if state.get("month") != today.strftime("%Y-%m"):
             state["month"] = today.strftime("%Y-%m")
             state["ift_count_this_month"] = 0
+            state["recent_regimes"] = []
+            state["recent_scores"] = []
+            state["recent_allocations"] = []
 
         market_data = load_editable_market_data()
         market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
@@ -325,6 +328,19 @@ def main():
         )
 
         action = "SUBMIT IFT" if use_ift else "HOLD"
+
+        # Initialize tracking lists in state if they do not exist
+        if "recent_regimes" not in state:
+            state["recent_regimes"] = []
+        if "recent_scores" not in state:
+            state["recent_scores"] = []
+        if "recent_allocations" not in state:
+            state["recent_allocations"] = []
+
+        # Commit current run's metrics to persistent history
+        state["recent_regimes"].append(result["regime"])
+        state["recent_scores"].append(result["composite_score"])
+        state["recent_allocations"].append(result["allocations"])
 
         state["last_run_date"] = today.isoformat()
         save_state(state)
