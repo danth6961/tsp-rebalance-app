@@ -15,6 +15,7 @@ from ui import (
     render_tile_grid,
     recent_state_cards,
     render_history_table,
+    render_editable_metric_tile,
 )
 from utils import get_est_now
 
@@ -25,7 +26,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
+st.markdown(
+    """
 <style>
 .block-container {
     padding-top: 3rem;
@@ -80,8 +82,28 @@ st.markdown("""
     color: #64748b;
     margin-top: 0.15rem;
 }
+.editable-kpi-card {
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.35rem;
+}
+.editable-kpi-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.editable-kpi-header .pill {
+    margin-top: 0;
+    white-space: nowrap;
+}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 def init_session(cfg):
@@ -126,41 +148,6 @@ def render_regime_card(info, is_active: bool):
         """,
         unsafe_allow_html=True,
     )
-
-
-def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
-    source_str = str(source).upper()
-    pill_class = (
-        "pill-live" if "LIVE" in source_str
-        else "pill-failed" if ("FAILED" in source_str or "DEFAULT" in source_str or "OFFLINE" in source_str)
-        else "pill-default"
-    )
-
-    with st.container(border=True):
-        st.markdown(
-            f"""
-            <div class="small-kpi" style="border-left: 5px solid {color}; min-height: 170px;">
-                <div class="small-kpi-title">{label}</div>
-                <div class="small-kpi-value" style="color:#0f172a;">{float(value):.2f}</div>
-                <div class="small-kpi-note">{source}</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.number_input(
-            label,
-            value=float(value),
-            step=step,
-            format=fmt,
-            key=key,
-            label_visibility="collapsed"
-        )
-
-        st.markdown(
-            f"<div style='margin-top: 0.35rem;'><span class='pill {pill_class}'>{source}</span></div>",
-            unsafe_allow_html=True
-        )
 
 
 def main():
@@ -656,6 +643,7 @@ def main():
                 )
         else:
             st.info("No log file yet.")
+
 
 if __name__ == "__main__":
     main()
