@@ -159,45 +159,28 @@ def main():
                 "F": st.number_input("F Fund %", value=float(cfg["current_alloc"]["F"]), step=1.0),
             }
 
-        with st.expander("🛡️ Rules", expanded=False):
-            allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg["allow_second_ift"]))
-            normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg["normal_drift_threshold_pct"]), step=0.5)
-            score_change_threshold = st.number_input("Score change threshold", value=int(cfg["score_change_threshold"]), step=1)
-            confirmation_days = st.number_input("Confirmation days", value=int(cfg["confirmation_days"]), step=1)
-            cooldown_days = st.number_input("Cooldown days", value=int(cfg["cooldown_days"]), step=1)
-            use_live_macro = st.checkbox("Use live macro data", value=bool(cfg["use_live_macro"]))
+        st.markdown("---")
+        allow_second_ift = st.checkbox("Allow second IFT this month", value=bool(cfg.get("allow_second_ift", False)))
+        use_live_macro = st.checkbox("Use live macro feeds", value=bool(cfg.get("use_live_macro", True)))
+        manual_override_enabled = st.checkbox("Manual override regime", value=bool(cfg.get("manual_override_enabled", False)))
+        manual_regime = st.selectbox("Manual regime", ["OPTIMIZED NEUTRAL", "RISK-OFF", "RISK-ON"], index=0)
 
-        with st.expander("🛠️ Manual Override", expanded=False):
-            manual_override_enabled = st.checkbox("Enable manual override", value=bool(cfg["manual_override_enabled"]))
-            manual_regime = st.selectbox(
-                "Override regime",
-                ["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"],
-                index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(cfg["manual_regime"])
-            )
-
-        fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
-
-        st.divider()
-        save_cfg = st.button("💾 Save Config", use_container_width=True)
-        reset_state_btn = st.button("♻️ Reset State", use_container_width=True)
-        clear_logs_btn = st.button("🗑️ Clear Log File", use_container_width=True)
-        clear_tx_btn = st.button("🗑️ Clear Audit Trail", use_container_width=True)
-        st.divider()
-        run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
+        save_cfg = st.button("Save Config")
+        reset_state_btn = st.button("Reset State")
+        clear_logs_btn = st.button("Clear Logs")
+        clear_tx_btn = st.button("Clear Transactions")
+        run = st.button("Fetch and run")
 
     if save_cfg:
         cfg["current_alloc"] = current_alloc
         cfg["allow_second_ift"] = allow_second_ift
-        cfg["normal_drift_threshold_pct"] = float(normal_drift_threshold_pct)
-        cfg["score_change_threshold"] = int(score_change_threshold)
-        cfg["confirmation_days"] = int(confirmation_days)
-        cfg["cooldown_days"] = int(cooldown_days)
+        cfg["normal_drift_threshold_pct"] = float(cfg.get("normal_drift_threshold_pct", 3.0))
+        cfg["score_change_threshold"] = int(cfg.get("score_change_threshold", 4))
+        cfg["confirmation_days"] = int(cfg.get("confirmation_days", 2))
+        cfg["cooldown_days"] = int(cfg.get("cooldown_days", 2))
         cfg["use_live_macro"] = bool(use_live_macro)
         cfg["manual_override_enabled"] = bool(manual_override_enabled)
         cfg["manual_regime"] = manual_regime
-        cfg["fred_api_key"] = fred_api_key
-        for key in EDITABLE_KEYS:
-            cfg[key] = float(st.session_state.get(key, DEFAULTS.get(key, 0.0)))
         save_config(cfg)
         st.sidebar.success("Config saved.")
         st.stop()
@@ -227,10 +210,15 @@ def main():
     if run:
         with st.spinner("Connecting to live feeds..."):
             try:
-                snapshot = get_market_snapshot(fred_api_key if use_live_macro else "")
+                snapshot = get_market_snapshot(
+                    cfg.get("fred_api_key", "") if use_live_macro else "",
+                    force_refresh=True,
+                )
                 fetched_data = snapshot["market_data"]
                 fetched_sources = snapshot["market_sources"]
-            except Exception:
+                st.success(f"Live market snapshot refreshed at {fetched_data.get('timestamp', 'unknown time')}")
+            except Exception as e:
+                st.error(f"Live market fetch failed: {e}")
                 fetched_data = {k: float(v) for k, v in DEFAULTS.items()}
                 fetched_data["pct_dist_200_sma"] = 0.0
                 fetched_data["drawdown_pct"] = 0.0
@@ -260,98 +248,33 @@ def main():
             state["month"] = today.strftime("%Y-%m")
             state["ift_count_this_month"] = 0
 
-        market_data = load_editable_market_data()
-        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
-        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
-
-        result = build_engine_result(
-            market_data,
-            override_active=manual_override_enabled,
-            override_regime=manual_regime
-        )
-
-        emergency_triggered = result["emergency_triggered"]
-        last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
-
-        use_ift, reason = should_use_tsp_ift(
-            today=today,
-            current_alloc=current_alloc,
-            target_alloc=result["allocations"],
-            recent_regimes=state["recent_regimes"],
-            recent_scores=state["recent_scores"],
-            emergency_triggered=emergency_triggered,
-            ift_count_this_month=state["ift_count_this_month"],
-            last_ift_date=last_ift_date,
-            allow_second_ift=allow_second_ift,
-            normal_drift_threshold_pct=float(normal_drift_threshold_pct),
-            score_change_threshold=int(score_change_threshold),
-            confirmation_days=int(confirmation_days),
-            cooldown_days=int(cooldown_days),
-        )
-
-        action = "SUBMIT IFT" if use_ift else "HOLD"
-        if use_ift:
-            state["ift_count_this_month"] += 1
-            state["last_ift_date"] = today.isoformat()
-
-            try:
-                append_transaction_row(
-                    today.isoformat(),
-                    current_alloc,
-                    result["allocations"],
-                    result["regime"],
-                )
-            except Exception as e:
-                st.warning(f"IFT transaction log write failed: {e}")
-
-        state["recent_regimes"].append(result["regime"])
-        state["recent_scores"].append(result["composite_score"])
-        state["recent_allocations"].append(result["allocations"])
-        state["recent_regimes"] = state["recent_regimes"][-30:]
-        state["recent_scores"] = state["recent_scores"][-30:]
-        state["recent_allocations"] = state["recent_allocations"][-30:]
-        state["last_run_date"] = today.isoformat()
-        save_state(state)
-
-        append_log_row({
-            "date": today.isoformat(),
-            "action": action,
-            "reason": reason,
-            "regime": result["regime"],
-            "total_score": result["composite_score"],
-            "ift_count_this_month": state["ift_count_this_month"],
-            "current_alloc": json.dumps(current_alloc),
-            "target_alloc": json.dumps(result["allocations"]),
-            "vix": market_data.get("vix_spot", DEFAULTS["vix_spot"]),
-            "spx_200sma_dist": market_data.get("pct_dist_200_sma", 0.0),
-            "drawdown_pct": market_data.get("drawdown_pct", 0.0),
-        })
-
     market_data = load_editable_market_data()
     market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
     market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
     result = build_engine_result(
         market_data,
-        override_active=cfg.get("manual_override_enabled", False),
-        override_regime=cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
+        override_active=manual_override_enabled,
+        override_regime=manual_regime
     )
 
+    emergency_triggered = result["emergency_triggered"]
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
+
     use_ift, reason = should_use_tsp_ift(
         today=today,
         current_alloc=current_alloc,
         target_alloc=result["allocations"],
         recent_regimes=state["recent_regimes"],
         recent_scores=state["recent_scores"],
-        emergency_triggered=result["emergency_triggered"],
+        emergency_triggered=emergency_triggered,
         ift_count_this_month=state["ift_count_this_month"],
         last_ift_date=last_ift_date,
         allow_second_ift=allow_second_ift,
-        normal_drift_threshold_pct=float(normal_drift_threshold_pct),
-        score_change_threshold=int(score_change_threshold),
-        confirmation_days=int(confirmation_days),
-        cooldown_days=int(cooldown_days),
+        normal_drift_threshold_pct=float(cfg.get("normal_drift_threshold_pct", 3.0)),
+        score_change_threshold=int(cfg.get("score_change_threshold", 4)),
+        confirmation_days=int(cfg.get("confirmation_days", 2)),
+        cooldown_days=int(cfg.get("cooldown_days", 2)),
     )
 
     action = "SUBMIT IFT" if use_ift else "HOLD"
@@ -369,70 +292,6 @@ def main():
 
         if cfg.get("manual_override_enabled", False):
             st.warning(f"🛠️ Regime Lock Active: engine is bypassed; allocations are locked to {cfg.get('manual_regime')}.")
-
-        cum_drift = cumulative_alloc_drift(current_alloc, result["allocations"])
-        st.markdown("### 🎚️ Portfolio Drift Runway")
-        c1, c2 = st.columns([1, 3])
-        with c1:
-            st.metric("Cumulative Portfolio Drift", f"{cum_drift:.2f}%", f"{cum_drift - float(normal_drift_threshold_pct):+.2f}% vs Threshold")
-        with c2:
-            st.write(f"**Rebalance Threshold Progress**: `{cum_drift:.2f}%` / `{float(normal_drift_threshold_pct):.2f}%` required.")
-            st.progress(min(cum_drift / float(normal_drift_threshold_pct), 1.0) if float(normal_drift_threshold_pct) > 0 else 1.0)
-
-        st.markdown("### Allocation Comparison")
-        alloc_df = make_alloc_chart(result["allocations"], current_alloc)
-        st.dataframe(alloc_df, use_container_width=True, hide_index=True)
-
-        st.markdown("### 🧭 Strategic Regime Directory")
-        st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
-
-        regimes_info = [
-            {
-                "name": "RISK-ON OVERRIDE",
-                "icon": "🚀",
-                "score": "Score: ≥ +5",
-                "profile": "Aggressive Profile",
-                "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
-                "desc": "Strong macro backdrop and solid upward momentum.",
-                "color": "#10b981",
-                "bg": "rgba(16, 185, 129, 0.08)"
-            },
-            {
-                "name": "OPTIMIZED NEUTRAL",
-                "icon": "⚖️",
-                "score": "Score: 0 to +4",
-                "profile": "Balanced Profile",
-                "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
-                "desc": "Default balanced state when signals are constructive but mixed.",
-                "color": "#3b82f6",
-                "bg": "rgba(59, 130, 246, 0.08)"
-            },
-            {
-                "name": "DEFENSIVE ALLOCATION",
-                "icon": "🛡️",
-                "score": "Score: < 0",
-                "profile": "Defensive Profile",
-                "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
-                "desc": "Used when risk rises or the composite turns negative.",
-                "color": "#f59e0b",
-                "bg": "rgba(245, 158, 11, 0.08)"
-            },
-            {
-                "name": "EMERGENCY DISPATCH",
-                "icon": "🚨",
-                "score": "Score: -50",
-                "profile": "Maximum Defense",
-                "alloc": "Base: G 90% / F 10% (or G 100% / F 0%)",
-                "desc": "3-day panic valve breach.",
-                "color": "#ef4444",
-                "bg": "rgba(239, 68, 68, 0.08)"
-            }
-        ]
-
-        regime_cols = st.columns(4)
-        for idx, info in enumerate(regimes_info):
-            with regime_cols[idx]:
-                render_regime_card(info, result["regime"] == info["name"])
 
     with tab2:
         st.markdown("### Factor Scores")
@@ -458,6 +317,7 @@ def main():
         render_tile_grid(factor_items, columns=4)
 
         st.markdown("### Market Snapshot")
+        st.caption(f"Last refreshed: {st.session_state.get('live_market_data', {}).get('timestamp', 'Never')}")
         st.caption("Editable market inputs with the same card aesthetic.")
 
         market_edit_items = [
@@ -495,43 +355,6 @@ def main():
                     fmt="%.2f",
                     color="#3b82f6",
                 )
-
-        st.markdown("### 🔍 Engine Decision Breakdown")
-        with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
-            pos_factors = []
-            neg_factors = []
-            neu_factors = []
-            for key, label in [
-                ("inflation", "Inflation"),
-                ("growth", "Growth"),
-                ("liquidity", "Liquidity"),
-                ("credit_spreads", "Credit Spreads"),
-                ("valuation", "Valuation"),
-                ("market_stress", "Market Stress"),
-                ("momentum", "Momentum"),
-                ("drawdown", "Drawdown"),
-            ]:
-                val = result["scores"].get(key, 0)
-                if val > 0:
-                    pos_factors.append(f"{label} (+{val} pts)")
-                elif val < 0:
-                    neg_factors.append(f"{label} ({val} pts)")
-                else:
-                    neu_factors.append(label)
-
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown("**🟢 Positive Drivers**")
-                for item in pos_factors or ["None"]:
-                    st.markdown(f"- {item}")
-            with c2:
-                st.markdown("**⚪ Neutral Factors**")
-                for item in neu_factors or ["None"]:
-                    st.markdown(f"- {item}")
-            with c3:
-                st.markdown("**🔴 Negative Drags**")
-                for item in neg_factors or ["None"]:
-                    st.markdown(f"- {item}")
 
     with tab3:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
