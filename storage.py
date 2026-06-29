@@ -60,7 +60,7 @@ def save_state(state_data: Dict[str, Any]) -> None:
 
 def default_config() -> Dict[str, Any]:
     return {
-        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
+        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 10.0, "F": 0.0},
         "allow_second_ift": False,
         "normal_drift_threshold_pct": 7.5,
         "score_change_threshold": 3,
