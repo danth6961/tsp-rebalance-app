@@ -1,8 +1,5 @@
 ---
 
-# PROJECT_HANDOFF.md
-
-```markdown
 # TSP Rebalance Engine — Project Handoff
 
 ## Purpose
