@@ -64,13 +64,6 @@ def render_tile_grid(items, columns=4):
 
 
 def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
-    """
-    Unified editable metric tile:
-    - title
-    - current value
-    - source pill
-    - editable number input
-    """
     source_text = _safe_text(source)
     source_str = source_text.upper()
 
