@@ -194,10 +194,10 @@ def main():
         fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
         st.divider()
-        save_cfg = st.button("💾 Save Config", use_container_width=True)
         confirm_ift_btn = st.button("✅ Confirm IFT Submitted", use_container_width=True)
         
         st.divider()
+        save_cfg = st.button("💾 Save Config", use_container_width=True)
         reset_state_btn = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_btn = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_btn = st.button("🗑️ Clear Audit Trail", use_container_width=True)
