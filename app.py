@@ -82,29 +82,10 @@ st.markdown(
     color: #64748b;
     margin-top: 0.15rem;
 }
-.editable-kpi-card {
-    min-height: 120px;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 0.35rem;
-}
-.editable-kpi-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-}
-.editable-kpi-header .pill {
-    margin-top: 0;
-    white-space: nowrap;
-}
 </style>
 """,
     unsafe_allow_html=True,
 )
-
 
 EDITABLE_KEYS = [
     "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
@@ -313,14 +294,15 @@ def main():
             state["ift_count_this_month"] += 1
             state["last_ift_date"] = today.isoformat()
 
-            append_transaction_row({
-                "date": today.isoformat(),
-                "action": action,
-                "reason": reason,
-                "regime": result["regime"],
-                "total_score": result["composite_score"],
-                "target_alloc": json.dumps(result["allocations"]),
-            })
+            try:
+                append_transaction_row(
+                    today.isoformat(),
+                    current_alloc,
+                    result["allocations"],
+                    result["regime"],
+                )
+            except Exception as e:
+                st.warning(f"IFT transaction log write failed: {e}")
 
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
