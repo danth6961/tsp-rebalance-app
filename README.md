@@ -1,113 +1,128 @@
 # TSP Rebalance Engine
 
-A Streamlit-based TSP (Thrift Savings Plan) allocation and rebalancing companion app that analyzes market and macro conditions, scores the current environment, recommends a target allocation, and helps decide whether to submit an IFT or hold.
+A Streamlit-based TSP (Thrift Savings Plan) tactical allocation companion app.
 
-The app is designed to work without direct account access. It uses public market and macro data, local state files, and manual inputs to support a transparent, operator-guided workflow.
+The app analyzes macro and market inputs, scores the current environment, maps it to a regime, recommends a target allocation, and helps decide whether to submit an IFT or hold. It is designed as a tactical and quantitative overlay, not as a lifecycle-fund clone.
 
-## Features
+## What it does
 
-- Fetches live market and macro data from public sources
-- Computes factor scores and a composite market regime
-- Maps the environment into one of four policy regimes:
+- Fetches live market and macro data
+- Computes factor scores and a composite regime score
+- Selects one of four policy regimes:
   - Risk-On Override
   - Optimized Neutral
   - Defensive Allocation
   - Emergency Dispatch
-- Recommends a target TSP allocation
+- Produces a target allocation for TSP funds
 - Evaluates whether an IFT should be submitted
-- Tracks monthly IFT usage manually
-- Persists config and state locally
-- Logs daily runs
-- Maintains a transaction/audit trail
-- Supports CSV and JSON exports
-- Shows historical score and allocation views
-- Supports manual override for regime locking
+- Supports manual IFT confirmation
+- Tracks monthly IFT usage locally
+- Stores logs and state on disk
+- Shows proxy fund performance and historical views
 
-## Project structure
+## Current tactical allocation model
 
-- `app.py` — Streamlit application entrypoint and UI orchestration
-- `engine.py` — factor scoring, regime selection, allocation logic, and IFT decision rules
-- `data_sources.py` — live market/macro data collection and fallback logic
-- `storage.py` — local config/state persistence and CSV logging helpers
-- `ui.py` — reusable Streamlit rendering utilities
-- `constants.py` — shared paths, defaults, and static configuration
-- `models.py` — typed data structures used by the app
-- `utils.py` — general-purpose helper functions
-- `requirements.txt` — Python dependencies
-
-## How it works
-
-1. The app loads saved config and state from local JSON files.
-2. It fetches the latest market and macro data.
-3. The engine scores the environment across several factor buckets.
-4. The composite score maps to a regime and target allocation.
-5. The app compares current allocation to the target allocation.
-6. A rule engine determines whether a TSP IFT should be submitted.
-7. The run is saved to local logs and history files.
-
-## Regimes
+The current baseline regime targets are:
 
 ### Risk-On Override
-Used when conditions are strongly constructive.
-
-Typical allocation:
-- G: 35%
-- C: 45%
-- I: 15%
-- S: 5%
+- G: 30%
+- C: 40%
+- I: 25%
+- S: 10%
 - F: 0%
 
 ### Optimized Neutral
-Used when conditions are constructive but mixed.
-
-Typical allocation:
-- G: 45%
-- C: 35%
-- I: 10%
+- G: 40%
+- C: 30%
+- I: 20%
 - S: 10%
 - F: 0%
 
 ### Defensive Allocation
-Used when the composite score turns negative.
-
-Typical allocation:
-- G: 65%
-- C: 20%
+- G: 70%
+- C: 15%
 - I: 10%
 - S: 5%
 - F: 0%
 
 ### Emergency Dispatch
-Used when panic conditions are triggered.
+- G: 100%
+- C: 0%
+- I: 0%
+- S: 0%
+- F: 0%
 
-Typical allocation:
-- G: 90% to 100%
-- F: 0% to 10%
-- C/I/S: 0%
+### Emergency Dispatch with F Fund unlocked
+- G: 90%
+- C: 0%
+- I: 0%
+- S: 0%
+- F: 10%
 
-## Data sources
+The F Fund is treated as a conditional overlay only. It is added only when the engine’s F Fund unlock rule is satisfied.
 
-The app may use:
-- FRED
-- DBnomics
-- TradingEconomics web data
-- Yahoo Finance proxy price series for TSP fund tracking
+## Project structure
 
-If a source is unavailable, the app falls back to defaults or alternate sources.
+- `app.py` — Streamlit app entrypoint and UI orchestration
+- `engine.py` — factor scoring, regime selection, allocation logic, and IFT logic
+- `data_sources.py` — market and macro data acquisition
+- `storage.py` — config, state, and CSV persistence
+- `ui.py` — reusable Streamlit display helpers
+- `constants.py` — shared defaults, paths, proxy tickers, and allocation baselines
+- `models.py` — typed data models for the app
+- `utils.py` — general helper functions
+- `requirements.txt` — Python dependencies
 
-## Local files
+## How it works
 
-The app creates or updates the following local files:
+1. The app loads config and state from local JSON files.
+2. It fetches market and macro data.
+3. The engine scores the environment across multiple factors.
+4. The engine selects a regime and target allocation.
+5. The app compares the current allocation to the target.
+6. The IFT rule engine decides whether to submit or hold.
+7. The result is logged locally.
 
-- `tsp_config.json` — saved configuration
-- `tsp_state.json` — saved run history and IFT state
-- `tsp_daily_log.csv` — daily engine run log
-- `tsp_transactions.csv` — transaction/audit trail
-- backup files such as `.json.bak`
+## Data inputs used by the engine
+
+The scoring engine uses inputs such as:
+- Core PCE YoY
+- PMI and services PMI
+- initial claims
+- breakeven inflation
+- Fed assets growth
+- real yield
+- SLOOS
+- HY spread
+- CAPE
+- forward EPS growth
+- VIX
+- 200-day distance
+- drawdown
+- STLFSI
+- 10Y yield
+- DXY
+- market breadth
+- panic flags
+
+## Manual IFT workflow
+
+The safest operating mode is manual confirmation:
+
+- the app can recommend `SUBMIT IFT`
+- but the monthly IFT count and transaction history are only updated when you click the manual submit button
+
+This keeps the recommendation separate from the actual transaction.
+
+## Live files created by the app
+
+- `tsp_config.json` — saved config
+- `tsp_state.json` — saved state
+- `tsp_daily_log.csv` — daily run log
+- `tsp_transactions.csv` — audit trail / transaction history
+- backup JSON files when applicable
 
 ## Installation
-
-Install dependencies:
 
 ```bash
 pip install -r requirements.txt
