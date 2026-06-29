@@ -500,7 +500,9 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 @st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=21) as executor:
+    
+    # Pool size updated to handle 10 concurrent stock analyses cleanly
+    with ThreadPoolExecutor(max_workers=26) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS", api_key): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2", api_key): "hy_val",
@@ -519,13 +521,18 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             executor.submit(cached_fred, "DFII10", api_key): "real_yield_10y_val",
             executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
             
-            # S&P 500 Forward EPS Growth inputs (Mega-cap Yahoo Finance proxy + Multpl)
+            # S&P 500 Forward EPS Growth inputs (Mega-cap Top-10 Yahoo Finance pool)
             executor.submit(cached_multpl_earnings_growth): "multpl_earnings_growth_val",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "MSFT"): "msft_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "AAPL"): "aapl_fwd_eps",
             executor.submit(cached_yahoo_info_fwd_eps_growth, "NVDA"): "nvda_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "AAPL"): "aapl_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "MSFT"): "msft_fwd_eps",
             executor.submit(cached_yahoo_info_fwd_eps_growth, "AMZN"): "amzn_fwd_eps",
             executor.submit(cached_yahoo_info_fwd_eps_growth, "GOOGL"): "googl_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "META"): "meta_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "AVGO"): "avgo_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "TSLA"): "tsla_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "LLY"): "lly_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "MU"): "mu_fwd_eps",
         }
         for future in as_completed(futures):
             key = futures[future]
@@ -567,17 +574,17 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     final_real_yield = results.get("real_yield_10y_val") if results.get("real_yield_10y_val") is not None else DEFAULTS["real_yield_10y"]
     final_move = move_closes[-1] if move_closes else DEFAULTS["move_index"]
 
-    # --- S&P 500 EPS Growth Proxy Pipeline (Bypassing MacroMicro scraping blocks) ---
-    # Primary: Calculate average of available Top-5 S&P 500 component forward EPS growths (via stable Yahoo Finance)
-    top5_growths = []
-    for comp in ["msft", "aapl", "nvda", "amzn", "googl"]:
+    # --- S&P 500 EPS Growth Proxy Pipeline (Dynamic Top-10 Mega-Cap Consensus Pools) ---
+    top10_tickers = ["nvda", "aapl", "msft", "amzn", "googl", "meta", "avgo", "tsla", "lly", "mu"]
+    top10_growths = []
+    for comp in top10_tickers:
         val = results.get(f"{comp}_fwd_eps")
         if val is not None:
-            top5_growths.append(val)
+            top10_growths.append(val)
 
-    if top5_growths:
-        final_fwd_eps = round(sum(top5_growths) / len(top5_growths), 2)
-        fwd_eps_source = "LIVE (S&P 500 Top-5 Holdings Forward EPS Growth Proxy)"
+    if top10_growths:
+        final_fwd_eps = round(sum(top10_growths) / len(top10_growths), 2)
+        fwd_eps_source = "LIVE (S&P 500 Top-10 Holdings Forward EPS Growth Proxy)"
     else:
         # Fallback 1: Multpl S&P 500 Trailing Earnings Growth Rate
         multpl_growth = results.get("multpl_earnings_growth_val")
