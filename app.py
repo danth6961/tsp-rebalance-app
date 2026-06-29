@@ -203,7 +203,22 @@ def main():
             )
 
         st.divider()
-        fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
+        # Safely check Streamlit Secrets first, falling back to config file defaults
+        secrets_key = ""
+        try:
+            if "FRED_API_KEY" in st.secrets:
+                secrets_key = st.secrets["FRED_API_KEY"]
+            elif "fred_api_key" in st.secrets:
+                secrets_key = st.secrets["fred_api_key"]
+        except Exception:
+            # Safe catch if st.secrets is uninitialized (e.g., local development)
+            pass
+
+        # Use the secret key if found, otherwise fall back to local config
+        initial_fred_key = secrets_key if secrets_key else str(cfg.get("fred_api_key", ""))
+
+        st.divider()
+        fred_api_key = st.text_input("FRED API Key", value=initial_fred_key, type="password")
 
         st.divider()
         confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True)
