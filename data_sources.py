@@ -238,11 +238,9 @@ def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True)
 
-        # If values were not found in tables, try searching for nearby patterns
         if results["ism_pmi"] is None:
             for label in ["ISM Manufacturing PMI", "Manufacturing PMI"]:
                 if label in text:
-                    # Try a nearby row/table extraction
                     match = re.search(rf"{re.escape(label)}.*?([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
                     if match:
                         results["ism_pmi"] = clean_and_parse_float(match.group(1))
@@ -290,6 +288,79 @@ def fetch_shiller_cape_live() -> Optional[float]:
         match_alt = re.search(r'Current Shiller PE Ratio is\s+([0-9\.]+)', html, re.IGNORECASE)
         if match_alt:
             return float(match_alt.group(1))
+        return None
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return None
+
+
+def fetch_multpl_earnings_growth() -> Optional[float]:
+    def _load():
+        url = "https://www.multpl.com/s-p-500-earnings-growth"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html = response.read().decode("utf-8")
+        match = re.search(r'class=["\']num["\']>\s*([0-9\-\.\%]+)\s*<', html)
+        if match:
+            val_str = match.group(1).replace("%", "").strip()
+            return float(val_str)
+        match_alt = re.search(r'Current S&P 500 Earnings Growth Rate is\s+([0-9\-\.\%]+)', html, re.IGNORECASE)
+        if match_alt:
+            val_str = match_alt.group(1).replace("%", "").strip()
+            return float(val_str)
+        return None
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return None
+
+
+def fetch_macromicro_spx_eps_growth() -> Optional[float]:
+    """
+    Scrapes the S&P 500 EPS page on MacroMicro to find the S&P 500 EPS (YoY) rate.
+    """
+    def _load():
+        url = "https://en.macromicro.me/charts/25/sp500-eps"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html = response.read().decode("utf-8")
+            
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(" ", strip=True)
+        
+        # Matches patterns like "S&P 500 EPS (YoY, R) 26.44%" or "S&P 500 EPS (YoY) -5.68%"
+        match = re.search(r"S&P\s*500\s*EPS\s*\(YoY[^\)]*\)\s*([\-0-9\.\%]+)", text, re.IGNORECASE)
+        if match:
+            val_str = match.group(1).replace("%", "").strip()
+            return float(val_str)
+            
+        # Alt fallback regex scanning the raw HTML directly
+        match_alt = re.search(r"S&P\s*500\s*EPS\s*\(YoY[^\)]*\).*?([0-9\-\.]+)\%", html, re.IGNORECASE | re.DOTALL)
+        if match_alt:
+            return float(match_alt.group(1))
+            
+        return None
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return None
+
+
+def fetch_ticker_fwd_eps_growth(ticker_symbol: str) -> Optional[float]:
+    def _load():
+        ticker = yf.Ticker(ticker_symbol)
+        info = ticker.info
+        fwd = info.get("forwardEps")
+        trailing = info.get("trailingEps")
+        if fwd is not None and trailing is not None and trailing != 0:
+            val = ((fwd - trailing) / abs(trailing)) * 100.0
+            if -50.0 <= val <= 200.0:
+                return round(val, 2)
         return None
 
     try:
@@ -421,6 +492,21 @@ def cached_shiller_cape_live() -> Optional[float]:
 
 
 @st.cache_data(ttl=3600)
+def cached_multpl_earnings_growth() -> Optional[float]:
+    return fetch_multpl_earnings_growth()
+
+
+@st.cache_data(ttl=3600)
+def cached_macromicro_spx_eps_growth() -> Optional[float]:
+    return fetch_macromicro_spx_eps_growth()
+
+
+@st.cache_data(ttl=3600)
+def cached_yahoo_info_fwd_eps_growth(ticker_symbol: str) -> Optional[float]:
+    return fetch_ticker_fwd_eps_growth(ticker_symbol)
+
+
+@st.cache_data(ttl=3600)
 def cached_barchart_s5th() -> Optional[float]:
     return fetch_barchart_s5th_fallback()
 
@@ -452,7 +538,7 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 @st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=15) as executor:
+    with ThreadPoolExecutor(max_workers=22) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS", api_key): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2", api_key): "hy_val",
@@ -470,6 +556,15 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             executor.submit(cached_fred_fed_assets_yoy, api_key): "fed_assets_growth_val",
             executor.submit(cached_fred, "DFII10", api_key): "real_yield_10y_val",
             executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
+            
+            # S&P 500 EPS Growth inputs
+            executor.submit(cached_macromicro_spx_eps_growth): "macromicro_eps_growth_val",
+            executor.submit(cached_multpl_earnings_growth): "multpl_earnings_growth_val",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "MSFT"): "msft_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "AAPL"): "aapl_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "NVDA"): "nvda_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "AMZN"): "amzn_fwd_eps",
+            executor.submit(cached_yahoo_info_fwd_eps_growth, "GOOGL"): "googl_fwd_eps",
         }
         for future in as_completed(futures):
             key = futures[future]
@@ -511,6 +606,33 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     final_real_yield = results.get("real_yield_10y_val") if results.get("real_yield_10y_val") is not None else DEFAULTS["real_yield_10y"]
     final_move = move_closes[-1] if move_closes else DEFAULTS["move_index"]
 
+    # --- Priority Ladder for S&P 500 EPS Growth ---
+    macromicro_growth = results.get("macromicro_eps_growth_val")
+    if macromicro_growth is not None:
+        final_fwd_eps = macromicro_growth
+        fwd_eps_source = "LIVE (MacroMicro S&P 500 EPS YoY)"
+    else:
+        # Fallback 1: Calculate average of available Top-5 S&P 500 component forward EPS growths
+        top5_growths = []
+        for comp in ["msft", "aapl", "nvda", "amzn", "googl"]:
+            val = results.get(f"{comp}_fwd_eps")
+            if val is not None:
+                top5_growths.append(val)
+
+        if top5_growths:
+            final_fwd_eps = round(sum(top5_growths) / len(top5_growths), 2)
+            fwd_eps_source = "LIVE (S&P 500 Top-5 Holdings Proxy)"
+        else:
+            # Fallback 2: Multpl S&P 500 Trailing Earnings Growth Rate
+            multpl_growth = results.get("multpl_earnings_growth_val")
+            if multpl_growth is not None:
+                final_fwd_eps = multpl_growth
+                fwd_eps_source = "LIVE (Multpl S&P 500 Trailing Earnings Growth Fallback)"
+            else:
+                # Fallback 3: Defaults configuration
+                final_fwd_eps = DEFAULTS["fwd_eps_growth_yoy"]
+                fwd_eps_source = "CONFIG/DEFAULT"
+
     if breadth_closes:
         live_breadth = breadth_closes[-1]
     else:
@@ -549,7 +671,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "sloos_net_pct": results.get("sloos_val") if results.get("sloos_val") is not None else DEFAULTS["sloos_net_pct"],
         "hy_oas": results.get("hy_val") if results.get("hy_val") is not None else DEFAULTS["hy_oas"],
         "shiller_cape": results.get("shiller_cape_val") if results.get("shiller_cape_val") is not None else DEFAULTS["shiller_cape"],
-        "fwd_eps_growth_yoy": DEFAULTS["fwd_eps_growth_yoy"],
+        "fwd_eps_growth_yoy": final_fwd_eps,
         "vix_spot": vix_closes[-1] if vix_closes else DEFAULTS["vix_spot"],
         "pct_dist_200_sma": sma_dist_live,
         "drawdown_pct": drawdown_live,
@@ -577,7 +699,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "sloos_net_pct": "LIVE" if results.get("sloos_val") is not None else "CONFIG/DEFAULT",
         "hy_oas": "LIVE" if results.get("hy_val") is not None else "CONFIG/DEFAULT",
         "shiller_cape": "LIVE (Multpl.com CAPE)" if results.get("shiller_cape_val") is not None else "CONFIG/DEFAULT",
-        "fwd_eps_growth_yoy": "CONFIG/DEFAULT",
+        "fwd_eps_growth_yoy": fwd_eps_source,
         "vix_spot": "LIVE (Yahoo Finance ^VIX)" if vix_closes else "CONFIG/DEFAULT",
         "pct_dist_200_sma": "LIVE" if spx_closes else "CONFIG/DEFAULT",
         "drawdown_pct": "LIVE" if spx_closes else "CONFIG/DEFAULT",
