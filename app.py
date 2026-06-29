@@ -109,6 +109,83 @@ def init_session(cfg):
         st.session_state["engine_ran"] = False
 
 
+def render_regime_card(info, is_active: bool):
+    # Streamlit-native safe card
+    border_color = info["color"] if is_active else "rgba(148,163,184,0.18)"
+    bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
+    badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
+    badge_color = info["color"] if is_active else "#64748b"
+
+    st.markdown(
+        f"""
+        <div class="small-kpi" style="border-left: 5px solid {border_color}; background-color: {bg}; min-height: 250px;">
+            <div style="color: {badge_color}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;">{badge}</div>
+            <div style="font-weight: 800; font-size: 0.95rem; color: {border_color};">{info['icon']} {info['name']}</div>
+            <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
+            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {border_color};">{info['alloc']}</div>
+            <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_market_snapshot_editor():
+    st.markdown("### Market Snapshot")
+    st.caption("Review or override market inputs directly below. This combines the visual cards and editable controls into one section.")
+
+    market_edit_items = [
+        ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
+        ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
+        ("ISM Services PMI", "services_pmi", st.session_state.get("services_pmi_source")),
+        ("Initial Claims (K)", "initial_claims", st.session_state.get("initial_claims_source")),
+        ("10Y Breakeven Inflation", "breakeven_inflation", st.session_state.get("breakeven_inflation_source")),
+        ("Fed Assets Growth YoY", "fed_assets_growth_yoy", st.session_state.get("fed_assets_growth_yoy_source")),
+        ("10Y Real Yield", "real_yield_10y", st.session_state.get("real_yield_10y_source")),
+        ("MOVE Volatility", "move_index", st.session_state.get("move_index_source")),
+        ("SLOOS Net %", "sloos_net_pct", st.session_state.get("sloos_net_pct_source")),
+        ("HY OAS", "hy_oas", st.session_state.get("hy_oas_source")),
+        ("Shiller CAPE", "shiller_cape", st.session_state.get("shiller_cape_source")),
+        ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy", st.session_state.get("fwd_eps_growth_yoy_source")),
+        ("VIX Spot", "vix_spot", st.session_state.get("vix_spot_source")),
+        ("SPX vs 200SMA %", "pct_dist_200_sma", "DERIVED"),
+        ("Drawdown %", "drawdown_pct", "DERIVED"),
+        ("STLFSI", "stlfsi_index", st.session_state.get("stlfsi_index_source")),
+        ("10Y Yield", "bond_yield_10y", st.session_state.get("bond_yield_10y_source")),
+        ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
+        ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
+        ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
+    ]
+
+    cols = st.columns(4)
+    for i, (label, key, source) in enumerate(market_edit_items):
+        with cols[i % 4]:
+            # Display card container
+            st.markdown(
+                f"""
+                <div class="small-kpi" style="border-left: 5px solid #3b82f6; min-height: 145px;">
+                    <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.number_input(
+                label=label,
+                value=float(st.session_state[key]),
+                step=0.1,
+                format="%.2f",
+                key=key,
+                label_visibility="collapsed"
+            )
+
+            pill_class = "pill-live" if "LIVE" in str(source).upper() else "pill-default"
+            st.markdown(
+                f"<div style='margin-top: 4px;'><span class='pill {pill_class}'>{source}</span></div>",
+                unsafe_allow_html=True
+            )
+
+
 def main():
     cfg = load_config()
     state = load_state()
@@ -406,29 +483,25 @@ def main():
         regime_cols = st.columns(4)
         for idx, info in enumerate(regimes_info):
             is_active = (result["regime"] == info["name"])
-            border_style = (
-                f"border: 2px solid {info['color']}; background-color: {info['bg']}; box-shadow: 0 8px 16px rgba(0,0,0,0.06);"
-                if is_active
-                else "border: 1px solid rgba(148, 163, 184, 0.15); background-color: rgba(248, 250, 252, 0.5);"
-            )
-            active_badge = (
-                f"<div style='color: {info['color']}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;'>★ ACTIVE ENVIRONMENT</div>"
-                if is_active else ""
-            )
-            title_color = info["color"] if is_active else "#0f172a"
-
-            card_html = f"""
-            <div class="small-kpi" style="{border_style} height: 100%; min-height: 250px;">
-                {active_badge}
-                <div style="font-weight: 800; font-size: 0.95rem; color: {title_color};">{info['icon']} {info['name']}</div>
-                <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
-                <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {title_color};">{info['alloc']}</div>
-                <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
-            </div>
-            """
-
             with regime_cols[idx]:
-                st.markdown(card_html, unsafe_allow_html=True)
+                border = info["color"] if is_active else "rgba(148,163,184,0.18)"
+                bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
+                badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
+                badge_color = info["color"] if is_active else "#64748b"
+
+                with st.container(border=True):
+                    st.markdown(
+                        f"""
+                        <div class="small-kpi" style="border-left: 5px solid {border}; background-color: {bg}; min-height: 250px;">
+                            <div style="color: {badge_color}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;">{badge}</div>
+                            <div style="font-weight: 800; font-size: 0.95rem; color: {info['color']};">{info['icon']} {info['name']}</div>
+                            <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
+                            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {info['color']};">{info['alloc']}</div>
+                            <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
     with tab2:
         st.markdown("### Factor Scores")
@@ -453,94 +526,7 @@ def main():
             })
         render_tile_grid(factor_items, columns=4)
 
-        st.markdown("### Market Snapshot")
-        snapshot_items = []
-        market_items = [
-            ("Core PCE YoY", "core_pce_yoy"),
-            ("ISM Manufacturing PMI", "ism_pmi"),
-            ("ISM Services PMI", "services_pmi"),
-            ("Initial Claims (K)", "initial_claims"),
-            ("10Y Breakeven Inflation", "breakeven_inflation"),
-            ("Fed Assets Growth YoY", "fed_assets_growth_yoy"),
-            ("10Y Real Yield", "real_yield_10y"),
-            ("MOVE Volatility", "move_index"),
-            ("SLOOS Net %", "sloos_net_pct"),
-            ("HY OAS", "hy_oas"),
-            ("Shiller CAPE", "shiller_cape"),
-            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy"),
-            ("VIX Spot", "vix_spot"),
-            ("SPX vs 200SMA %", "pct_dist_200_sma"),
-            ("Drawdown %", "drawdown_pct"),
-            ("STLFSI", "stlfsi_index"),
-            ("10Y Yield", "bond_yield_10y"),
-            ("DXY Spot", "dxy_spot"),
-            ("Breadth %", "market_breadth_pct"),
-            ("SPX Spot", "spx_spot"),
-        ]
-        for label, key in market_items:
-            source = st.session_state.get(f"{key}_source", "CONFIG/DEFAULT")
-            val = st.session_state.get(key, DEFAULTS.get(key, 0.0))
-            snapshot_items.append({
-                "label": label,
-                "value": f"{val:.2f}" if isinstance(val, (int, float)) else str(val),
-                "note": source,
-                "color": "#3b82f6" if "LIVE" in str(source).upper() else "#64748b",
-                "icon": "●",
-            })
-        render_tile_grid(snapshot_items, columns=4)
-
-        st.markdown("### Market Snapshot (Fully Editable)")
-        st.caption("Review or override values directly below.")
-
-        market_edit_items = [
-            ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
-            ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
-            ("ISM Services PMI", "services_pmi", st.session_state.get("services_pmi_source")),
-            ("Initial Claims (K)", "initial_claims", st.session_state.get("initial_claims_source")),
-            ("10Y Breakeven Inflation", "breakeven_inflation", st.session_state.get("breakeven_inflation_source")),
-            ("Fed Assets Growth YoY", "fed_assets_growth_yoy", st.session_state.get("fed_assets_growth_yoy_source")),
-            ("10Y Real Yield", "real_yield_10y", st.session_state.get("real_yield_10y_source")),
-            ("MOVE Volatility", "move_index", st.session_state.get("move_index_source")),
-            ("SLOOS Net %", "sloos_net_pct", st.session_state.get("sloos_net_pct_source")),
-            ("HY OAS", "hy_oas", st.session_state.get("hy_oas_source")),
-            ("Shiller CAPE", "shiller_cape", st.session_state.get("shiller_cape_source")),
-            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy", st.session_state.get("fwd_eps_growth_yoy_source")),
-            ("VIX Spot", "vix_spot", st.session_state.get("vix_spot_source")),
-            ("SPX vs 200SMA %", "pct_dist_200_sma", "DERIVED"),
-            ("Drawdown %", "drawdown_pct", "DERIVED"),
-            ("STLFSI", "stlfsi_index", st.session_state.get("stlfsi_index_source")),
-            ("10Y Yield", "bond_yield_10y", st.session_state.get("bond_yield_10y_source")),
-            ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
-            ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
-            ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
-        ]
-
-        cols = st.columns(4)
-        for i, (label, key, source) in enumerate(market_edit_items):
-            with cols[i % 4]:
-                st.markdown(
-                    f"""
-                    <div class="small-kpi" style="border-left: 5px solid #3b82f6; padding-bottom: 0.6rem;">
-                        <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-                st.number_input(
-                    label=label,
-                    value=float(st.session_state[key]),
-                    step=0.1,
-                    format="%.2f",
-                    key=key,
-                    label_visibility="collapsed"
-                )
-
-                pill_class = "pill-live" if "LIVE" in str(source).upper() else "pill-default"
-                st.markdown(
-                    f"<div style='margin-top: 4px;'><span class='pill {pill_class}'>{source}</span></div>",
-                    unsafe_allow_html=True
-                )
+        render_market_snapshot_editor()
 
         st.markdown("### 🔍 Engine Decision Breakdown")
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
