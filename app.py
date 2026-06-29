@@ -517,7 +517,7 @@ def main():
                     color="#3b82f6",
                 )
 
-         st.markdown("### 🔍 Engine Decision Breakdown")
+        st.markdown("### 🔍 Engine Decision Breakdown")
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
             # ============================================================
             # 1) DECISION SUMMARY
