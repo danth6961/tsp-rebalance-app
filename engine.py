@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 from constants import DEFAULTS, BASELINE_ALLOCATIONS
 from utils import safe_float
@@ -23,7 +23,6 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     breakeven_inflation = safe_float(data.get("breakeven_inflation"), DEFAULTS["breakeven_inflation"])
     fed_assets_growth_yoy = safe_float(data.get("fed_assets_growth_yoy"), DEFAULTS["fed_assets_growth_yoy"])
     real_yield_10y = safe_float(data.get("real_yield_10y"), DEFAULTS["real_yield_10y"])
-    move_index = safe_float(data.get("move_index"), DEFAULTS["move_index"])
     sloos = safe_float(data.get("sloos_net_pct"), DEFAULTS["sloos_net_pct"])
     hy_spread = safe_float(data.get("hy_oas"), DEFAULTS["hy_oas"])
     cape = safe_float(data.get("shiller_cape"), DEFAULTS["shiller_cape"])
@@ -32,9 +31,6 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     sma_dist = safe_float(data.get("pct_dist_200_sma"), 0.0)
     drawdown = safe_float(data.get("drawdown_pct"), 0.0)
     stlfsi = safe_float(data.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
-    bond_yield = safe_float(data.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
-    dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
-    market_breadth = safe_float(data.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
 
     if pce < 1.8: scores["inflation"] = 3
     elif pce < 2.0: scores["inflation"] = 1
@@ -120,12 +116,16 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
 def determine_allocation(data: Dict[str, Any], scores: Dict[str, int], override_active: bool = False, override_regime: str = "OPTIMIZED NEUTRAL"):
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
-            return {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}, 5, "RISK-ON OVERRIDE", False, False
+            base_alloc = {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}
+            return base_alloc, 5, "RISK-ON OVERRIDE", False, False
         if override_regime == "OPTIMIZED NEUTRAL":
-            return {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}, 0, "OPTIMIZED NEUTRAL", False, False
+            base_alloc = {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}
+            return base_alloc, 0, "OPTIMIZED NEUTRAL", False, False
         if override_regime == "DEFENSIVE ALLOCATION":
-            return {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}, -5, "DEFENSIVE ALLOCATION", False, False
-        return {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}, -50, "EMERGENCY DISPATCH", False, False
+            base_alloc = {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}
+            return base_alloc, -5, "DEFENSIVE ALLOCATION", False, False
+        base_alloc = {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
+        return base_alloc, -50, "EMERGENCY DISPATCH", False, False
 
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
     cape = safe_float(data.get("shiller_cape"), DEFAULTS["shiller_cape"])
@@ -139,18 +139,17 @@ def determine_allocation(data: Dict[str, Any], scores: Dict[str, int], override_
     composite_score = sum(scores.values())
     momentum_breaker = scores.get("momentum", 0) <= -3
     asymmetric_vol_trigger = scores.get("market_stress", 0) <= -3 or scores.get("momentum", 0) <= -3
-
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
     dxy_strong = dxy_spot >= 103.5
-
     panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth is not None and market_breadth <= 60.0)
 
     if panic_valve_triggered:
         regime_name = "EMERGENCY DISPATCH"
         composite_score = -50
         alloc = {"G": 90, "C": 0, "I": 0, "S": 0, "F": 10} if f_fund_unlocked else {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
-        total = sum(alloc.values())
-        return {k: round(v / total * 100, 1) for k, v in alloc.items()}, scores, composite_score, regime_name, alloc, asymmetric_vol_trigger, dxy_strong
+        total = sum(alloc.values()) or 100
+        final_alloc = {k: round(v / total * 100, 1) for k, v in alloc.items()}
+        return final_alloc, scores, composite_score, regime_name, alloc, asymmetric_vol_trigger, dxy_strong
 
     if composite_score >= 5 and pce < 2.0 and cape < 26.0 and not momentum_breaker:
         regime_name = "RISK-ON OVERRIDE"
@@ -231,17 +230,10 @@ def should_use_tsp_ift(
         return False, f"Cumulative portfolio drift too small ({cum_drift:.1f}% vs {normal_drift_threshold_pct}%)"
 
     score_change = abs(recent_scores[-1] - recent_scores[-confirmation_days - 1]) if len(recent_scores) >= confirmation_days + 1 else score_change_threshold
-
-    baselines = BASELINE_ALLOCATIONS
-    implied_regime = min(
-        baselines.keys(),
-        key=lambda name: max_alloc_drift(current_alloc, baselines[name])
-    )
-    implied_norm = "EMERGENCY DISPATCH" if "EMERGENCY" in implied_regime else (
-        "DEFENSIVE ALLOCATION" if "DEFENSIVE" in implied_regime else implied_regime
-    )
-
+    implied_regime = min(BASELINE_ALLOCATIONS.keys(), key=lambda name: max_alloc_drift(current_alloc, BASELINE_ALLOCATIONS[name]))
+    implied_norm = "EMERGENCY DISPATCH" if "EMERGENCY" in implied_regime else ("DEFENSIVE ALLOCATION" if "DEFENSIVE" in implied_regime else implied_regime)
     regime_mismatch = implied_norm != current_confirmed_regime
+
     if score_change < score_change_threshold and not regime_mismatch:
         return False, f"Score change not strong enough ({score_change} vs {score_change_threshold})"
     if score_change < score_change_threshold and regime_mismatch:
