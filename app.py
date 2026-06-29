@@ -243,9 +243,9 @@ def main():
         st.rerun()
 
     if confirm_ift_btn:
-    confirm_ift_used(today)
-    st.sidebar.success("IFT confirmed and saved.")
-    st.rerun()
+        confirm_ift_used(today)
+        st.sidebar.success("IFT confirmed and saved.")
+        st.rerun()
 
     if run:
         with st.spinner("Connecting to live feeds..."):
