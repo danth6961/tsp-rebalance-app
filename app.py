@@ -724,7 +724,22 @@ def main():
     with tab5:
         st.markdown("### Transaction History (Audit Trail)")
         if TRANSACTION_FILE.exists():
-            st.dataframe(pd.read_csv(TRANSACTION_FILE).tail(25), use_container_width=True, hide_index=True)
+            tx_df = pd.read_csv(TRANSACTION_FILE).tail(25)
+            tx_df = tx_df.rename(columns={
+                "date": "Date",
+                "regime": "Regime",
+                "from_G": "From G",
+                "from_C": "From C",
+                "from_I": "From I",
+                "from_S": "From S",
+                "from_F": "From F",
+                "to_G": "To G",
+                "to_C": "To C",
+                "to_I": "To I",
+                "to_S": "To S",
+                "to_F": "To F",
+            })
+            st.dataframe(tx_df, use_container_width=True, hide_index=True)
         else:
             st.info("No physical portfolio transactions recorded yet.")
 
