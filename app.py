@@ -141,6 +141,15 @@ def load_editable_market_data():
     return {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]}
 
 
+def get_market_snapshot_value(key, default=None):
+    live_data = st.session_state.get("live_market_data", {})
+    live_sources = st.session_state.get("live_market_sources", {})
+
+    value = live_data.get(key, st.session_state.get(key, default))
+    source = live_sources.get(key, st.session_state.get(f"{key}_source", "CONFIG/DEFAULT"))
+    return value, source
+
+
 def main():
     cfg = load_config()
     state = load_state()
@@ -182,6 +191,7 @@ def main():
         reset_state_btn = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_btn = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_btn = st.button("🗑️ Clear Audit Trail", use_container_width=True)
+        update_ift_btn = st.button("📌 Update IFT Count", use_container_width=True)
         st.divider()
         run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
@@ -222,6 +232,16 @@ def main():
     if clear_tx_btn:
         if TRANSACTION_FILE.exists():
             TRANSACTION_FILE.unlink()
+        st.rerun()
+
+    if update_ift_btn:
+        state = load_state()
+        if state.get("month") != today.strftime("%Y-%m"):
+            state["month"] = today.strftime("%Y-%m")
+            state["ift_count_this_month"] = 0
+        state["ift_count_this_month"] = int(state.get("ift_count_this_month", 0)) + 1
+        save_state(state)
+        st.sidebar.success("IFT Count updated.")
         st.rerun()
 
     if run:
@@ -313,126 +333,75 @@ def main():
         state["last_run_date"] = today.isoformat()
         save_state(state)
 
-        append_log_row({
-            "date": today.isoformat(),
-            "action": action,
-            "reason": reason,
-            "regime": result["regime"],
-            "total_score": result["composite_score"],
-            "ift_count_this_month": state["ift_count_this_month"],
-            "current_alloc": json.dumps(current_alloc),
-            "target_alloc": json.dumps(result["allocations"]),
-            "vix": market_data.get("vix_spot", DEFAULTS["vix_spot"]),
-            "spx_200sma_dist": market_data.get("pct_dist_200_sma", 0.0),
-            "drawdown_pct": market_data.get("drawdown_pct", 0.0),
-        })
+        append_log_row(
+            today.isoformat(),
+            result["regime"],
+            result["composite_score"],
+            action,
+            reason,
+            current_alloc,
+            result["allocations"],
+            state["ift_count_this_month"],
+        )
 
     market_data = load_editable_market_data()
-    market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
-    market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
-    result = build_engine_result(
-        market_data,
-        override_active=cfg.get("manual_override_enabled", False),
-        override_regime=cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
-    )
-
-    last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
-    use_ift, reason = should_use_tsp_ift(
-        today=today,
-        current_alloc=current_alloc,
-        target_alloc=result["allocations"],
-        recent_regimes=state["recent_regimes"],
-        recent_scores=state["recent_scores"],
-        emergency_triggered=result["emergency_triggered"],
-        ift_count_this_month=state["ift_count_this_month"],
-        last_ift_date=last_ift_date,
-        allow_second_ift=allow_second_ift,
-        normal_drift_threshold_pct=float(normal_drift_threshold_pct),
-        score_change_threshold=int(score_change_threshold),
-        confirmation_days=int(confirmation_days),
-        cooldown_days=int(cooldown_days),
-    )
-
-    action = "SUBMIT IFT" if use_ift else "HOLD"
-
-    render_metric_cards(result["composite_score"], result["regime"], action, state["ift_count_this_month"], reason)
-
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Allocation",
+        "Factors",
+        "Fund Tracking",
+        "History",
+        "Logs & State",
+    ])
 
     with tab1:
-        est_now = get_est_now()
-        if est_now.hour >= 12:
-            st.warning(f"⚠️ Noon cutoff exceeded. Current time: {est_now.strftime('%I:%M %p')}")
-        else:
-            st.info(f"🕒 Execution window open. Current time: {est_now.strftime('%I:%M %p')}")
+        result = build_engine_result(
+            market_data,
+            override_active=manual_override_enabled,
+            override_regime=manual_regime
+        )
+        render_metric_cards(
+            result["composite_score"],
+            result["regime"],
+            "SUBMIT IFT" if result["emergency_triggered"] else "HOLD",
+            state.get("ift_count_this_month", 0),
+            "Latest engine view",
+        )
 
-        if cfg.get("manual_override_enabled", False):
-            st.warning(f"🛠️ Regime Lock Active: engine is bypassed; allocations are locked to {cfg.get('manual_regime')}.")
-
-        cum_drift = cumulative_alloc_drift(current_alloc, result["allocations"])
-        st.markdown("### 🎚️ Portfolio Drift Runway")
-        c1, c2 = st.columns([1, 3])
-        with c1:
-            st.metric("Cumulative Portfolio Drift", f"{cum_drift:.2f}%", f"{cum_drift - float(normal_drift_threshold_pct):+.2f}% vs Threshold")
-        with c2:
-            st.write(f"**Rebalance Threshold Progress**: `{cum_drift:.2f}%` / `{float(normal_drift_threshold_pct):.2f}%` required.")
-            st.progress(min(cum_drift / float(normal_drift_threshold_pct), 1.0) if float(normal_drift_threshold_pct) > 0 else 1.0)
-
-        st.markdown("### Allocation Comparison")
-        alloc_df = make_alloc_chart(result["allocations"], current_alloc)
-        st.dataframe(alloc_df, use_container_width=True, hide_index=True)
-
-        st.markdown("### 🧭 Strategic Regime Directory")
-        st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
-
-        regimes_info = [
-            {
-                "name": "RISK-ON OVERRIDE",
-                "icon": "🚀",
-                "score": "Score: ≥ +5",
-                "profile": "Aggressive Profile",
-                "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
-                "desc": "Strong macro backdrop and solid upward momentum.",
-                "color": "#10b981",
-                "bg": "rgba(16, 185, 129, 0.08)"
-            },
-            {
-                "name": "OPTIMIZED NEUTRAL",
-                "icon": "⚖️",
-                "score": "Score: 0 to +4",
-                "profile": "Balanced Profile",
-                "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
-                "desc": "Default balanced state when signals are constructive but mixed.",
-                "color": "#3b82f6",
-                "bg": "rgba(59, 130, 246, 0.08)"
-            },
-            {
-                "name": "DEFENSIVE ALLOCATION",
-                "icon": "🛡️",
-                "score": "Score: < 0",
-                "profile": "Defensive Profile",
-                "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
-                "desc": "Used when risk rises or the composite turns negative.",
-                "color": "#f59e0b",
-                "bg": "rgba(245, 158, 11, 0.08)"
-            },
-            {
-                "name": "EMERGENCY DISPATCH",
-                "icon": "🚨",
-                "score": "Score: -50",
-                "profile": "Maximum Defense",
-                "alloc": "Base: G 90% / F 10% (or G 100% / F 0%)",
-                "desc": "3-day panic valve breach.",
-                "color": "#ef4444",
-                "bg": "rgba(239, 68, 68, 0.08)"
-            }
+        st.markdown("### Strategic Regime Directory")
+        regime_rows = [
+            {"name": "Risk-On", "profile": "Growth leadership", "score": "High momentum", "alloc": "C / S tilt", "desc": "Favorable macro and breadth conditions.", "icon": "🟢", "color": "#16a34a", "bg": "rgba(220,252,231,0.55)"},
+            {"name": "Neutral", "profile": "Balanced stance", "score": "Mixed signal", "alloc": "Balanced allocation", "desc": "Conditions are neither strongly risk-on nor defensive.", "icon": "⚪", "color": "#64748b", "bg": "rgba(248,250,252,0.55)"},
+            {"name": "Defensive", "profile": "Capital preservation", "score": "Weak breadth", "alloc": "G / F tilt", "desc": "Macro stress and downside risks are elevated.", "icon": "🟠", "color": "#ea580c", "bg": "rgba(255,247,237,0.65)"},
+            {"name": "Emergency", "profile": "Preservation first", "score": "High stress", "alloc": "G heavy", "desc": "Risk controls dominate, use maximum defensiveness.", "icon": "🔴", "color": "#dc2626", "bg": "rgba(254,226,226,0.65)"},
         ]
-
         regime_cols = st.columns(4)
-        for idx, info in enumerate(regimes_info):
+        for idx, info in enumerate(regime_rows):
             with regime_cols[idx]:
-                render_regime_card(info, result["regime"] == info["name"])
+                render_regime_card(info, is_active=(idx == 0))
+
+        st.markdown("---")
+        col_chart_1, col_chart_2 = st.columns([1, 3])
+        with col_chart_1:
+            fund_selected = st.selectbox("Select TSP Fund to Plot", options=list(PROXIES.keys()))
+            timeframe_selected = st.selectbox("Select Performance Chart Timeframe", options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=3)
+
+        ticker = PROXIES[fund_selected]
+        period_map = {
+            "1 Month": "1mo",
+            "3 Months": "3mo",
+            "6 Months": "6mo",
+            "1 Year": "1y",
+            "5 Years": "5y",
+            "10 Years": "10y"
+        }
+        proxy_df = get_cached_proxy_df(ticker, period_map[timeframe_selected])
+
+        if not proxy_df.empty:
+            with col_chart_2:
+                st.line_chart(proxy_df.set_index("Date")["Price"])
+        else:
+            st.error(f"Failed to fetch market data for proxy ticker: {ticker}.")
 
     with tab2:
         st.markdown("### Factor Scores")
@@ -461,34 +430,35 @@ def main():
         st.caption("Editable market inputs with the same card aesthetic.")
 
         market_edit_items = [
-            ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
-            ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
-            ("ISM Services PMI", "services_pmi", st.session_state.get("services_pmi_source")),
-            ("Initial Claims (K)", "initial_claims", st.session_state.get("initial_claims_source")),
-            ("10Y Breakeven Inflation", "breakeven_inflation", st.session_state.get("breakeven_inflation_source")),
-            ("Fed Assets Growth YoY", "fed_assets_growth_yoy", st.session_state.get("fed_assets_growth_yoy_source")),
-            ("10Y Real Yield", "real_yield_10y", st.session_state.get("real_yield_10y_source")),
-            ("MOVE Volatility", "move_index", st.session_state.get("move_index_source")),
-            ("SLOOS Net %", "sloos_net_pct", st.session_state.get("sloos_net_pct_source")),
-            ("HY OAS", "hy_oas", st.session_state.get("hy_oas_source")),
-            ("Shiller CAPE", "shiller_cape", st.session_state.get("shiller_cape_source")),
-            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy", st.session_state.get("fwd_eps_growth_yoy_source")),
-            ("VIX Spot", "vix_spot", st.session_state.get("vix_spot_source")),
-            ("SPX vs 200SMA %", "pct_dist_200_sma", "DERIVED"),
-            ("Drawdown %", "drawdown_pct", "DERIVED"),
-            ("STLFSI", "stlfsi_index", st.session_state.get("stlfsi_index_source")),
-            ("10Y Yield", "bond_yield_10y", st.session_state.get("bond_yield_10y_source")),
-            ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
-            ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
-            ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
+            ("Core PCE YoY", "core_pce_yoy"),
+            ("ISM Manufacturing PMI", "ism_pmi"),
+            ("ISM Services PMI", "services_pmi"),
+            ("Initial Claims (K)", "initial_claims"),
+            ("10Y Breakeven Inflation", "breakeven_inflation"),
+            ("Fed Assets Growth YoY", "fed_assets_growth_yoy"),
+            ("10Y Real Yield", "real_yield_10y"),
+            ("MOVE Volatility", "move_index"),
+            ("SLOOS Net %", "sloos_net_pct"),
+            ("HY OAS", "hy_oas"),
+            ("Shiller CAPE", "shiller_cape"),
+            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy"),
+            ("VIX Spot", "vix_spot"),
+            ("SPX vs 200SMA %", "pct_dist_200_sma"),
+            ("Drawdown %", "drawdown_pct"),
+            ("STLFSI", "stlfsi_index"),
+            ("10Y Yield", "bond_yield_10y"),
+            ("DXY Spot", "dxy_spot"),
+            ("Breadth %", "market_breadth_pct"),
+            ("SPX Spot", "spx_spot"),
         ]
 
         cols = st.columns(4)
-        for i, (label, key, source) in enumerate(market_edit_items):
+        for i, (label, key) in enumerate(market_edit_items):
+            value, source = get_market_snapshot_value(key, DEFAULTS.get(key, 0.0))
             with cols[i % 4]:
                 render_editable_metric_tile(
                     label=label,
-                    value=st.session_state.get(key, 0.0),
+                    value=value,
                     source=source,
                     key=key,
                     step=0.1,
@@ -552,29 +522,6 @@ def main():
                 ytd_val = fetch_ytd_return(ticker)
                 st.metric(label=f"{fund_short_names[idx]} ({ticker})", value=f"{ytd_val:+.2f}%" if ytd_val is not None else "N/A")
 
-        st.markdown("---")
-        col_chart_1, col_chart_2 = st.columns([1, 3])
-        with col_chart_1:
-            fund_selected = st.selectbox("Select TSP Fund to Plot", options=list(PROXIES.keys()))
-            timeframe_selected = st.selectbox("Select Performance Chart Timeframe", options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=3)
-
-        ticker = PROXIES[fund_selected]
-        period_map = {
-            "1 Month": "1mo",
-            "3 Months": "3mo",
-            "6 Months": "6mo",
-            "1 Year": "1y",
-            "5 Years": "5y",
-            "10 Years": "10y"
-        }
-        proxy_df = get_cached_proxy_df(ticker, period_map[timeframe_selected])
-
-        if not proxy_df.empty:
-            with col_chart_2:
-                st.line_chart(proxy_df.set_index("Date")["Price"])
-        else:
-            st.error(f"Failed to fetch market data for proxy ticker: {ticker}.")
-
     with tab4:
         st.markdown("### Score History")
         score_df = make_score_chart(state)
@@ -617,8 +564,8 @@ def main():
                         "factor_scores": result["scores"],
                         "regime": result["regime"],
                         "total_score": result["composite_score"],
-                        "action": action,
-                        "reason": reason,
+                        "action": "SUBMIT IFT" if result["emergency_triggered"] else "HOLD",
+                        "reason": "Latest view",
                         "current_alloc": current_alloc,
                         "target_alloc": result["allocations"],
                         "state": state,
