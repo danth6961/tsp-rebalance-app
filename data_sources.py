@@ -2,7 +2,6 @@ import json
 import urllib.request
 import urllib.parse
 import re
-import http.cookiejar
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Optional, Any, List, Tuple
@@ -319,76 +318,6 @@ def fetch_multpl_earnings_growth() -> Optional[float]:
         return None
 
 
-def fetch_macromicro_spx_eps_growth() -> Optional[float]:
-    """
-    Scrapes S&P 500 Forward PE Ratio & EPS page on MacroMicro
-    using highcharts data endpoints to parse "S&P 500 - Forward EPS (YoY)".
-    """
-    def _load():
-        chart_id = "123063"
-        page_url = f"https://en.macromicro.me/charts/{chart_id}/us-s-p-500-forward-pe-ratio-eps"
-        
-        # Setup cookie jar to preserve session cookie logic
-        cookie_jar = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-        }
-        
-        # 1. Fetch main chart page to extract session details & App.stk token
-        req = urllib.request.Request(page_url, headers=headers)
-        with opener.open(req, timeout=5) as response:
-            html = response.read().decode("utf-8")
-            
-        stk_match = re.search(r'data-stk="([^"]+)"', html)
-        if not stk_match:
-            stk_match = re.search(r'App\.stk\s*=\s*[\'"]([^\'"]+)[\'"]', html)
-            
-        if not stk_match:
-            return None
-            
-        stk_token = stk_match.group(1)
-        
-        # 2. Make authorized GET request to the AJAX endpoint
-        api_url = f"https://en.macromicro.me/charts/data/{chart_id}"
-        api_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Authorization": f"Bearer {stk_token}",
-            "Docref": page_url,
-            "X-Requested-With": "XMLHttpRequest"
-        }
-        
-        api_req = urllib.request.Request(api_url, headers=api_headers)
-        with opener.open(api_req, timeout=5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            
-        # 3. Walk JSON keys to locate "S&P 500 - Forward EPS (YoY)" series
-        if data.get("success") != 1:
-            return None
-            
-        chart_data_dict = data.get("data", {})
-        for chart_key, chart_info in chart_data_dict.items():
-            series_list = chart_info.get("series", [])
-            for series in series_list:
-                name = series.get("name", "")
-                if "Forward EPS" in name and "YoY" in name:
-                    series_points = series.get("data", [])
-                    # Filter out nulls and isolate latest point
-                    valid_points = [p for p in series_points if p and len(p) >= 2 and p[1] is not None]
-                    if valid_points:
-                        return float(valid_points[-1][1])
-                        
-        return None
-
-    try:
-        return retry_call(_load)
-    except Exception:
-        return None
-
-
 def fetch_ticker_fwd_eps_growth(ticker_symbol: str) -> Optional[float]:
     def _load():
         ticker = yf.Ticker(ticker_symbol)
@@ -535,11 +464,6 @@ def cached_multpl_earnings_growth() -> Optional[float]:
 
 
 @st.cache_data(ttl=3600)
-def cached_macromicro_spx_eps_growth() -> Optional[float]:
-    return fetch_macromicro_spx_eps_growth()
-
-
-@st.cache_data(ttl=3600)
 def cached_yahoo_info_fwd_eps_growth(ticker_symbol: str) -> Optional[float]:
     return fetch_ticker_fwd_eps_growth(ticker_symbol)
 
@@ -576,7 +500,7 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 @st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=22) as executor:
+    with ThreadPoolExecutor(max_workers=21) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS", api_key): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2", api_key): "hy_val",
@@ -595,8 +519,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             executor.submit(cached_fred, "DFII10", api_key): "real_yield_10y_val",
             executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
             
-            # S&P 500 EPS Growth inputs
-            executor.submit(cached_macromicro_spx_eps_growth): "macromicro_eps_growth_val",
+            # S&P 500 Forward EPS Growth inputs (Mega-cap Yahoo Finance proxy + Multpl)
             executor.submit(cached_multpl_earnings_growth): "multpl_earnings_growth_val",
             executor.submit(cached_yahoo_info_fwd_eps_growth, "MSFT"): "msft_fwd_eps",
             executor.submit(cached_yahoo_info_fwd_eps_growth, "AAPL"): "aapl_fwd_eps",
@@ -644,32 +567,27 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     final_real_yield = results.get("real_yield_10y_val") if results.get("real_yield_10y_val") is not None else DEFAULTS["real_yield_10y"]
     final_move = move_closes[-1] if move_closes else DEFAULTS["move_index"]
 
-    # --- Priority Ladder for S&P 500 EPS Growth ---
-    macromicro_growth = results.get("macromicro_eps_growth_val")
-    if macromicro_growth is not None:
-        final_fwd_eps = macromicro_growth
-        fwd_eps_source = "LIVE (MacroMicro S&P 500 Forward EPS YoY)"
-    else:
-        # Fallback 1: Calculate average of available Top-5 S&P 500 component forward EPS growths
-        top5_growths = []
-        for comp in ["msft", "aapl", "nvda", "amzn", "googl"]:
-            val = results.get(f"{comp}_fwd_eps")
-            if val is not None:
-                top5_growths.append(val)
+    # --- S&P 500 EPS Growth Proxy Pipeline (Bypassing MacroMicro scraping blocks) ---
+    # Primary: Calculate average of available Top-5 S&P 500 component forward EPS growths (via stable Yahoo Finance)
+    top5_growths = []
+    for comp in ["msft", "aapl", "nvda", "amzn", "googl"]:
+        val = results.get(f"{comp}_fwd_eps")
+        if val is not None:
+            top5_growths.append(val)
 
-        if top5_growths:
-            final_fwd_eps = round(sum(top5_growths) / len(top5_growths), 2)
-            fwd_eps_source = "LIVE (S&P 500 Top-5 Holdings Proxy)"
+    if top5_growths:
+        final_fwd_eps = round(sum(top5_growths) / len(top5_growths), 2)
+        fwd_eps_source = "LIVE (S&P 500 Top-5 Holdings Forward EPS Growth Proxy)"
+    else:
+        # Fallback 1: Multpl S&P 500 Trailing Earnings Growth Rate
+        multpl_growth = results.get("multpl_earnings_growth_val")
+        if multpl_growth is not None:
+            final_fwd_eps = multpl_growth
+            fwd_eps_source = "LIVE (Multpl S&P 500 Trailing Earnings Growth Fallback)"
         else:
-            # Fallback 2: Multpl S&P 500 Trailing Earnings Growth Rate
-            multpl_growth = results.get("multpl_earnings_growth_val")
-            if multpl_growth is not None:
-                final_fwd_eps = multpl_growth
-                fwd_eps_source = "LIVE (Multpl S&P 500 Trailing Earnings Growth Fallback)"
-            else:
-                # Fallback 3: Defaults configuration
-                final_fwd_eps = DEFAULTS["fwd_eps_growth_yoy"]
-                fwd_eps_source = "CONFIG/DEFAULT"
+            # Fallback 2: Defaults configuration
+            final_fwd_eps = DEFAULTS["fwd_eps_growth_yoy"]
+            fwd_eps_source = "CONFIG/DEFAULT"
 
     if breadth_closes:
         live_breadth = breadth_closes[-1]
