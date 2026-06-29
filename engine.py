@@ -174,7 +174,7 @@ def determine_allocation(data: Dict[str, Any], scores: Dict[str, int], override_
     if asymmetric_vol_trigger:
         s_w = alloc["S"]
         alloc["S"] = 0
-        alloc["G" if composite_score >= 0 else "I"] += s_w
+        alloc["G"] += s_w
     if dxy_strong and alloc["I"] >= 5:
         alloc["I"] -= 5
         alloc["C"] += 5
