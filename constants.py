@@ -12,7 +12,7 @@ TRANSACTION_FILE = Path("tsp_transactions.csv")
 DEFAULTS = {
     "core_pce_yoy": 3.4,
     "ism_pmi": 54.0,
-    "services_pmi": 53.5,
+    "services_pmi": 54.5,
     "initial_claims": 215.0,
     "breakeven_inflation": 2.25,
     "fed_assets_growth_yoy": -4.5,
@@ -21,7 +21,7 @@ DEFAULTS = {
     "sloos_net_pct": 6.6,
     "hy_oas": 2.76,
     "shiller_cape": 39.66,
-    "fwd_eps_growth_yoy": 21.00,
+    "fwd_eps_growth_yoy": 30.82,
     "stlfsi_index": -0.9568,
     "bond_yield_10y": 4.50,
     "market_breadth_pct": 73.20,
