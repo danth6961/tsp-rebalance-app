@@ -244,10 +244,8 @@ def main():
             st.session_state["live_market_sources"] = fetched_sources
 
             for key in EDITABLE_KEYS:
-                if key not in st.session_state:
-                    st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
-                if f"{key}_source" not in st.session_state:
-                    st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
+                st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
+                st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
 
             st.session_state["vix_3d_panic"] = bool(fetched_data.get("vix_3d_panic", False))
             st.session_state["spx_3d_panic"] = bool(fetched_data.get("spx_3d_panic", False))
