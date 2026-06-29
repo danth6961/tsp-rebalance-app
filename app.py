@@ -326,12 +326,6 @@ def main():
 
         action = "SUBMIT IFT" if use_ift else "HOLD"
 
-        state["recent_regimes"].append(result["regime"])
-        state["recent_scores"].append(result["composite_score"])
-        state["recent_allocations"].append(result["allocations"])
-        state["recent_regimes"] = state["recent_regimes"][-30:]
-        state["recent_scores"] = state["recent_scores"][-30:]
-        state["recent_allocations"] = state["recent_allocations"][-30:]
         state["last_run_date"] = today.isoformat()
         save_state(state)
 
