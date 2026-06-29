@@ -4,10 +4,11 @@ import streamlit as st
 
 def tile_html(label: str, value: str, note: str = "", color: str = "#64748b", icon: str = "●") -> str:
     note_html = f'<div class="small-kpi-note">{note}</div>' if note else ""
+    icon_html = f"{icon} " if icon else ""
     return f"""
     <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom:0.6rem;">
         <div class="small-kpi-title">{label}</div>
-        <div class="small-kpi-value" style="color:{color};">{icon} {value}</div>
+        <div class="small-kpi-value" style="color:{color};">{icon_html}{value}</div>
         {note_html}
     </div>
     """
