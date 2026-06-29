@@ -116,13 +116,13 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
 def determine_allocation(data: Dict[str, Any], scores: Dict[str, int], override_active: bool = False, override_regime: str = "OPTIMIZED NEUTRAL"):
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
-            base_alloc = {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}
+            base_alloc = {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0}
             return base_alloc, 5, "RISK-ON OVERRIDE", False, False
         if override_regime == "OPTIMIZED NEUTRAL":
-            base_alloc = {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}
+            base_alloc = {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0}
             return base_alloc, 0, "OPTIMIZED NEUTRAL", False, False
         if override_regime == "DEFENSIVE ALLOCATION":
-            base_alloc = {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}
+            base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
             return base_alloc, -5, "DEFENSIVE ALLOCATION", False, False
         base_alloc = {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
         return base_alloc, -50, "EMERGENCY DISPATCH", False, False
@@ -153,15 +153,16 @@ def determine_allocation(data: Dict[str, Any], scores: Dict[str, int], override_
 
     if composite_score >= 5 and pce < 2.0 and cape < 26.0 and not momentum_breaker:
         regime_name = "RISK-ON OVERRIDE"
-        base_alloc = {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0}
+        base_alloc = {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0}
     elif composite_score >= 0:
         regime_name = "OPTIMIZED NEUTRAL"
-        base_alloc = {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0}
+        base_alloc = {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0}
     else:
         regime_name = "DEFENSIVE ALLOCATION"
-        base_alloc = {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0}
-        if scores.get("valuation") == -5 and safe_float(data.get("vix_spot"), 0.0) > 24.0:
-            base_alloc = {"G": 70, "C": 20, "I": 5, "S": 5, "F": 0}
+        base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
+        
+    if scores.get("valuation") == -5 and safe_float(data.get("vix_spot"), 0.0) > 24.0:
+        base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
 
     if f_fund_unlocked and base_alloc["G"] >= 10:
         base_alloc["G"] -= 10
