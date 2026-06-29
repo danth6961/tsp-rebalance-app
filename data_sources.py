@@ -320,10 +320,11 @@ def fetch_multpl_earnings_growth() -> Optional[float]:
 
 def fetch_macromicro_spx_eps_growth() -> Optional[float]:
     """
-    Scrapes the S&P 500 EPS page on MacroMicro to find the S&P 500 EPS (YoY) rate.
+    Scrapes the S&P 500 Forward PE Ratio & EPS page on MacroMicro
+    to parse the S&P 500 - Forward EPS (YoY) series.
     """
     def _load():
-        url = "https://en.macromicro.me/charts/25/sp500-eps"
+        url = "https://en.macromicro.me/charts/123063/us-s-p-500-forward-pe-ratio-eps"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -332,16 +333,22 @@ def fetch_macromicro_spx_eps_growth() -> Optional[float]:
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True)
         
-        # Matches patterns like "S&P 500 EPS (YoY, R) 26.44%" or "S&P 500 EPS (YoY) -5.68%"
-        match = re.search(r"S&P\s*500\s*EPS\s*\(YoY[^\)]*\)\s*([\-0-9\.\%]+)", text, re.IGNORECASE)
+        # Match series: "S&P 500 - Forward EPS (YoY) 30.82%"
+        match = re.search(r"Forward\s*EPS\s*\(YoY\)\s*([\-0-9\.\%]+)", text, re.IGNORECASE)
         if match:
             val_str = match.group(1).replace("%", "").strip()
             return float(val_str)
             
-        # Alt fallback regex scanning the raw HTML directly
-        match_alt = re.search(r"S&P\s*500\s*EPS\s*\(YoY[^\)]*\).*?([0-9\-\.]+)\%", html, re.IGNORECASE | re.DOTALL)
+        # Optional alternative matching the precise label
+        match_alt = re.search(r"S&P\s*500\s*-\s*Forward\s*EPS\s*\(YoY\)\s*([\-0-9\.\%]+)", text, re.IGNORECASE)
         if match_alt:
-            return float(match_alt.group(1))
+            val_str = match_alt.group(1).replace("%", "").strip()
+            return float(val_str)
+
+        # Scanner parsing the raw HTML structure directly as a tertiary fallback
+        match_raw = re.search(r"Forward\s*EPS\s*\(YoY\).*?([0-9\-\.]+)\%", html, re.IGNORECASE | re.DOTALL)
+        if match_raw:
+            return float(match_raw.group(1))
             
         return None
 
@@ -610,7 +617,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     macromicro_growth = results.get("macromicro_eps_growth_val")
     if macromicro_growth is not None:
         final_fwd_eps = macromicro_growth
-        fwd_eps_source = "LIVE (MacroMicro S&P 500 EPS YoY)"
+        fwd_eps_source = "LIVE (MacroMicro S&P 500 Forward EPS YoY)"
     else:
         # Fallback 1: Calculate average of available Top-5 S&P 500 component forward EPS growths
         top5_growths = []
