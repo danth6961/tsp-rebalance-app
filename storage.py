@@ -1,0 +1,107 @@
+import csv
+import json
+import shutil
+from pathlib import Path
+from typing import Dict, Any, Callable
+from datetime import date
+
+from constants import STATE_FILE, CONFIG_FILE, LOG_FILE, TRANSACTION_FILE
+from models import AppState, Config
+
+def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
+    if file_path.exists() and file_path.stat().st_size > 0:
+        shutil.copy(file_path, file_path.with_suffix(".json.bak"))
+    temp_file = file_path.with_suffix(".tmp")
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+    temp_file.replace(file_path)
+
+def safe_load_json(file_path: Path, default_factory: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+    if file_path.exists():
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    bak_path = file_path.with_suffix(".json.bak")
+    if bak_path.exists():
+        try:
+            with open(bak_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            shutil.copy(bak_path, file_path)
+            return data
+        except Exception:
+            pass
+
+    return default_factory()
+
+def default_state() -> Dict[str, Any]:
+    return {
+        "month": date.today().strftime("%Y-%m"),
+        "ift_count_this_month": 0,
+        "last_ift_date": None,
+        "last_run_date": None,
+        "recent_regimes": [],
+        "recent_scores": [],
+        "recent_allocations": [],
+    }
+
+def load_state() -> Dict[str, Any]:
+    return safe_load_json(STATE_FILE, default_state)
+
+def save_state(state_data: Dict[str, Any]) -> None:
+    safe_save_json(STATE_FILE, state_data)
+
+def default_config() -> Dict[str, Any]:
+    return {
+        "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 5.0, "F": 5.0},
+        "allow_second_ift": False,
+        "normal_drift_threshold_pct": 7.5,
+        "score_change_threshold": 3,
+        "confirmation_days": 3,
+        "cooldown_days": 5,
+        "use_live_macro": True,
+        "fred_api_key": "",
+        "manual_override_enabled": False,
+        "manual_regime": "OPTIMIZED NEUTRAL",
+    }
+
+def load_config() -> Dict[str, Any]:
+    base = default_config()
+    loaded = safe_load_json(CONFIG_FILE, lambda: {})
+    base.update(loaded)
+    return base
+
+def save_config(config_data: Dict[str, Any]) -> None:
+    safe_save_json(CONFIG_FILE, config_data)
+
+def append_log_row(row: Dict[str, Any]) -> None:
+    file_exists = LOG_FILE.exists()
+    with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+def append_transaction_row(date_str: str, from_alloc: Dict[str, float], to_alloc: Dict[str, float], regime: str) -> None:
+    row = {
+        "date": date_str,
+        "regime": regime,
+        "from_G": from_alloc.get("G", 0.0),
+        "from_C": from_alloc.get("C", 0.0),
+        "from_I": from_alloc.get("I", 0.0),
+        "from_S": from_alloc.get("S", 0.0),
+        "from_F": from_alloc.get("F", 0.0),
+        "to_G": to_alloc.get("G", 0.0),
+        "to_C": to_alloc.get("C", 0.0),
+        "to_I": to_alloc.get("I", 0.0),
+        "to_S": to_alloc.get("S", 0.0),
+        "to_F": to_alloc.get("F", 0.0),
+    }
+    file_exists = TRANSACTION_FILE.exists()
+    with TRANSACTION_FILE.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
