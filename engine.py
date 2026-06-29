@@ -223,12 +223,22 @@ def should_use_tsp_ift(
         return True, "Emergency trigger activated"
     if ift_count_this_month >= 1 and not allow_second_ift:
         return False, "Preserving final IFT reserve"
-    if len(recent_regimes) < confirmation_days or len(recent_scores) < confirmation_days:
-        return False, "Insufficient confirmation history"
-    if len(set(recent_regimes[-confirmation_days:])) != 1:
-        return False, "Regime not yet confirmed"
+    # Detect cold start (only the current run exists in history)
+    is_cold_start = len(recent_regimes) <= 1 or len(recent_scores) <= 1
 
-    current_confirmed_regime = recent_regimes[-1]
+    if not is_cold_start:
+        if len(recent_regimes) < confirmation_days or len(recent_scores) < confirmation_days:
+            return False, "Insufficient confirmation history"
+        if len(set(recent_regimes[-confirmation_days:])) != 1:
+            return False, "Regime not yet confirmed"
+        
+        current_confirmed_regime = recent_regimes[-1]
+        score_change = abs(recent_scores[-1] - recent_scores[-confirmation_days - 1]) if len(recent_scores) >= confirmation_days + 1 else score_change_threshold
+    else:
+        # On cold starts, bypass history constraints to allow baseline portfolio setup
+        current_confirmed_regime = recent_regimes[-1] if recent_regimes else "OPTIMIZED NEUTRAL"
+        score_change = score_change_threshold
+
     cum_drift = cumulative_alloc_drift(current_alloc, target_alloc)
     if cum_drift < normal_drift_threshold_pct:
         return False, f"Cumulative portfolio drift too small ({cum_drift:.1f}% vs {normal_drift_threshold_pct}%)"
