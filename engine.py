@@ -50,10 +50,11 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     elif composite_pmi >= 48.0: scores["growth"] = -3
     else: scores["growth"] = -5
 
-    if initial_claims > 250.0:
-        scores["growth"] -= 1
+    # Prevent the >250k penalty from executing if claims have already breached the severe >280k cap
     if initial_claims > 280.0:
         scores["growth"] = min(scores["growth"], -3) - 1
+    elif initial_claims > 250.0:
+        scores["growth"] -= 1
 
     if sloos < -15.0: scores["liquidity"] = 3
     elif sloos <= 5.0: scores["liquidity"] = 0
