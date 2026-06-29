@@ -6,7 +6,6 @@ from typing import Dict, Any, Callable
 from datetime import date
 
 from constants import STATE_FILE, CONFIG_FILE, LOG_FILE, TRANSACTION_FILE
-from models import AppState, Config
 
 def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
     if file_path.exists() and file_path.stat().st_size > 0:
