@@ -4,11 +4,19 @@ import json
 import pandas as pd
 import streamlit as st
 
-from constants import DEFAULTS, PROXIES
+from constants import DEFAULTS, PROXIES, LOG_FILE, TRANSACTION_FILE
 from data_sources import get_market_snapshot, get_cached_proxy_df, fetch_ytd_return
 from engine import build_engine_result, should_use_tsp_ift, cumulative_alloc_drift
 from storage import load_state, load_config, save_config, save_state, append_log_row, append_transaction_row
-from ui import render_metric_cards, make_score_chart, make_alloc_chart, source_pill_html, score_card_html
+from ui import (
+    render_metric_cards,
+    make_score_chart,
+    make_alloc_chart,
+    tile_html,
+    render_tile_grid,
+    recent_state_cards,
+    render_history_table,
+)
 from utils import get_est_now
 
 st.set_page_config(
@@ -48,6 +56,11 @@ st.markdown("""
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
     margin-top: 6px;
     margin-bottom: 0.6rem;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.small-kpi:hover {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.07);
+    transform: translateY(-2px);
 }
 .small-kpi-title {
     font-size: 0.75rem;
@@ -71,8 +84,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def default_market_state():
-    return {k: float(v) for k, v in DEFAULTS.items()}
 
 def init_session(cfg):
     indicators = [
@@ -96,6 +107,7 @@ def init_session(cfg):
             st.session_state[f"{key}_source"] = "CONFIG/DEFAULT"
     if "engine_ran" not in st.session_state:
         st.session_state["engine_ran"] = False
+
 
 def main():
     cfg = load_config()
@@ -133,12 +145,13 @@ def main():
 
         fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
+        st.divider()
         save_cfg = st.button("💾 Save Config", use_container_width=True)
-        run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
-        mark_ift = st.button("✅ Mark IFT Used Today", use_container_width=True)
         reset_state_btn = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_btn = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_btn = st.button("🗑️ Clear Audit Trail", use_container_width=True)
+        st.divider()
+        run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
     if save_cfg:
         cfg["current_alloc"] = current_alloc
@@ -151,13 +164,17 @@ def main():
         cfg["manual_override_enabled"] = bool(manual_override_enabled)
         cfg["manual_regime"] = manual_regime
         cfg["fred_api_key"] = fred_api_key
-        for key in ["core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims", "breakeven_inflation",
-                    "fed_assets_growth_yoy", "real_yield_10y", "move_index", "sloos_net_pct", "hy_oas",
-                    "shiller_cape", "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
-                    "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"]:
+        for key in [
+            "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
+            "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
+            "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
+            "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
+            "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"
+        ]:
             cfg[key] = float(st.session_state.get(key, DEFAULTS.get(key, 0.0)))
         save_config(cfg)
         st.sidebar.success("Config saved.")
+        st.stop()
 
     if reset_state_btn:
         save_state({
@@ -172,39 +189,14 @@ def main():
         st.rerun()
 
     if clear_logs_btn:
-        from constants import LOG_FILE
         if LOG_FILE.exists():
             LOG_FILE.unlink()
         st.rerun()
 
     if clear_tx_btn:
-        from constants import TRANSACTION_FILE
         if TRANSACTION_FILE.exists():
             TRANSACTION_FILE.unlink()
         st.rerun()
-
-    if mark_ift:
-        temp_snapshot = {k: st.session_state[k] for k in [
-            "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims", "breakeven_inflation",
-            "fed_assets_growth_yoy", "real_yield_10y", "move_index", "sloos_net_pct", "hy_oas",
-            "shiller_cape", "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
-            "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot",
-            "pct_dist_200_sma", "drawdown_pct", "vix_3d_panic", "spx_3d_panic"
-        ]}
-        temp_snapshot["vix_last_3"] = st.session_state.get("vix_last_3", [])
-        temp_snapshot["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
-        result = build_engine_result(
-            temp_snapshot,
-            override_active=cfg.get("manual_override_enabled", False),
-            override_regime=cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
-        )
-        append_transaction_row(today.isoformat(), current_alloc, result["allocations"], result["regime"])
-        st.sidebar.success("Audit entry added.")
-
-    current_sum = sum(current_alloc.values())
-    if not abs(current_sum - 100.0) < 1e-6:
-        st.error(f"Current allocation must sum to 100%. Right now it sums to {current_sum:.1f}%.")
-        return
 
     if not run and not st.session_state["engine_ran"]:
         st.info("Set inputs in the sidebar and click **Fetch & Run Engine**.")
@@ -217,7 +209,7 @@ def main():
                 fetched_data = snapshot["market_data"]
                 fetched_sources = snapshot["market_sources"]
             except Exception:
-                fetched_data = default_market_state()
+                fetched_data = {k: float(v) for k, v in DEFAULTS.items()}
                 fetched_data["pct_dist_200_sma"] = 0.0
                 fetched_data["drawdown_pct"] = 0.0
                 fetched_data["vix_3d_panic"] = False
@@ -226,10 +218,13 @@ def main():
                 fetched_data["spx_dist_last_3"] = []
                 fetched_sources = {k: "CONFIG/DEFAULT" for k in fetched_data.keys()}
 
-        for key in ["core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims", "breakeven_inflation",
-                    "fed_assets_growth_yoy", "real_yield_10y", "move_index", "sloos_net_pct", "hy_oas",
-                    "shiller_cape", "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
-                    "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"]:
+        for key in [
+            "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
+            "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
+            "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
+            "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
+            "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"
+        ]:
             st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
             st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
         st.session_state["pct_dist_200_sma"] = float(fetched_data.get("pct_dist_200_sma", 0.0))
@@ -274,12 +269,14 @@ def main():
         if use_ift:
             state["ift_count_this_month"] += 1
             state["last_ift_date"] = today.isoformat()
+
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
         state["recent_allocations"].append(result["allocations"])
         state["recent_regimes"] = state["recent_regimes"][-30:]
         state["recent_scores"] = state["recent_scores"][-30:]
         state["recent_allocations"] = state["recent_allocations"][-30:]
+        state["last_run_date"] = today.isoformat()
         save_state(state)
 
         append_log_row({
@@ -332,6 +329,7 @@ def main():
     )
 
     action = "SUBMIT IFT" if use_ift else "HOLD"
+
     render_metric_cards(result["composite_score"], result["regime"], action, state["ift_count_this_month"], reason)
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
@@ -343,23 +341,85 @@ def main():
         else:
             st.info(f"🕒 Execution window open. Current time: {est_now.strftime('%I:%M %p')}")
 
+        if cfg.get("manual_override_enabled", False):
+            st.warning(f"🛠️ Regime Lock Active: engine is bypassed; allocations are locked to {cfg.get('manual_regime')}.")
+
         cum_drift = cumulative_alloc_drift(current_alloc, result["allocations"])
-        st.metric("Cumulative Portfolio Drift", f"{cum_drift:.2f}%")
-        st.progress(min(cum_drift / float(normal_drift_threshold_pct), 1.0) if normal_drift_threshold_pct > 0 else 1.0)
+        st.markdown("### 🎚️ Portfolio Drift Runway")
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.metric("Cumulative Portfolio Drift", f"{cum_drift:.2f}%", f"{cum_drift - float(normal_drift_threshold_pct):+.2f}% vs Threshold")
+        with c2:
+            st.write(f"**Rebalance Threshold Progress**: `{cum_drift:.2f}%` / `{float(normal_drift_threshold_pct):.2f}%` required.")
+            st.progress(min(cum_drift / float(normal_drift_threshold_pct), 1.0) if float(normal_drift_threshold_pct) > 0 else 1.0)
 
         st.markdown("### Allocation Comparison")
         alloc_df = make_alloc_chart(result["allocations"], current_alloc)
         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
 
-        if action == "SUBMIT IFT":
-            st.success("IFT should be submitted based on current rules.")
-
-        st.markdown("### Strategic Regime")
-        st.write(result["regime"])
-        st.write("Composite score:", result["composite_score"])
+        st.markdown("### 🧭 Strategic Regime Directory")
+        regimes_info = [
+            {
+                "name": "RISK-ON OVERRIDE",
+                "icon": "🚀",
+                "score": "Score: ≥ +5",
+                "profile": "Aggressive Profile",
+                "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
+                "desc": "Strong macro backdrop and solid upward momentum.",
+                "color": "#10b981",
+                "bg": "rgba(16, 185, 129, 0.08)"
+            },
+            {
+                "name": "OPTIMIZED NEUTRAL",
+                "icon": "⚖️",
+                "score": "Score: 0 to +4",
+                "profile": "Balanced Profile",
+                "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
+                "desc": "Default balanced state when signals are constructive but mixed.",
+                "color": "#3b82f6",
+                "bg": "rgba(59, 130, 246, 0.08)"
+            },
+            {
+                "name": "DEFENSIVE ALLOCATION",
+                "icon": "🛡️",
+                "score": "Score: < 0",
+                "profile": "Defensive Profile",
+                "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
+                "desc": "Used when risk rises or the composite turns negative.",
+                "color": "#f59e0b",
+                "bg": "rgba(245, 158, 11, 0.08)"
+            },
+            {
+                "name": "EMERGENCY DISPATCH",
+                "icon": "🚨",
+                "score": "Score: -50",
+                "profile": "Maximum Defense",
+                "alloc": "Base: G 90% / F 10% (or G 100% / F 0%)",
+                "desc": "3-day panic valve breach.",
+                "color": "#ef4444",
+                "bg": "rgba(239, 68, 68, 0.08)"
+            }
+        ]
+        regime_cols = st.columns(4)
+        for idx, info in enumerate(regimes_info):
+            is_active = (result["regime"] == info["name"])
+            border_css = f"border: 2px solid {info['color']}; background-color: {info['bg']}; box-shadow: 0 8px 16px rgba(0,0,0,0.06);" if is_active else "border: 1px solid rgba(148, 163, 184, 0.15);"
+            active_badge = f"<div style='color: {info['color']}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;'>★ ACTIVE ENVIRONMENT</div>" if is_active else ""
+            color_val = info["color"] if is_active else "#0f172a"
+            with regime_cols[idx]:
+                st.markdown(f"""
+                <div class="small-kpi" style="{border_css} height: 100%; min-height: 250px;">
+                    {active_badge}
+                    <div style="font-weight: 800; font-size: 0.95rem; color: {color_val};">{info['icon']} {info['name']}</div>
+                    <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
+                    <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {color_val};">{info['alloc']}</div>
+                    <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
     with tab2:
         st.markdown("### Factor Scores")
+        factor_items = []
         for key, label in [
             ("inflation", "Inflation"),
             ("growth", "Growth"),
@@ -371,58 +431,225 @@ def main():
             ("drawdown", "Drawdown"),
         ]:
             val = result["scores"].get(key, 0)
-            color = "#16a34a" if val > 0 else "#dc2626" if val < 0 else "#64748b"
-            icon = "▲" if val > 0 else "▼" if val < 0 else "●"
-            st.markdown(score_card_html(label, val, "Factor contribution", color, icon), unsafe_allow_html=True)
+            factor_items.append({
+                "label": label,
+                "value": str(val),
+                "note": "Factor contribution",
+                "color": "#16a34a" if val > 0 else "#dc2626" if val < 0 else "#64748b",
+                "icon": "▲" if val > 0 else "▼" if val < 0 else "●",
+            })
+        render_tile_grid(factor_items, columns=4)
 
         st.markdown("### Market Snapshot")
-        for key in ["core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims", "breakeven_inflation", "fed_assets_growth_yoy",
-                    "real_yield_10y", "move_index", "sloos_net_pct", "hy_oas", "shiller_cape", "fwd_eps_growth_yoy",
-                    "vix_spot", "pct_dist_200_sma", "drawdown_pct", "stlfsi_index", "bond_yield_10y", "dxy_spot", "market_breadth_pct", "spx_spot"]:
-            st.write(f"**{key}**:", st.session_state[key], "| source:", st.session_state.get(f"{key}_source", "N/A"))
+        snapshot_items = []
+        market_items = [
+            ("Core PCE YoY", "core_pce_yoy"),
+            ("ISM Manufacturing PMI", "ism_pmi"),
+            ("ISM Services PMI", "services_pmi"),
+            ("Initial Claims (K)", "initial_claims"),
+            ("10Y Breakeven Inflation", "breakeven_inflation"),
+            ("Fed Assets Growth YoY", "fed_assets_growth_yoy"),
+            ("10Y Real Yield", "real_yield_10y"),
+            ("MOVE Volatility", "move_index"),
+            ("SLOOS Net %", "sloos_net_pct"),
+            ("HY OAS", "hy_oas"),
+            ("Shiller CAPE", "shiller_cape"),
+            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy"),
+            ("VIX Spot", "vix_spot"),
+            ("SPX vs 200SMA %", "pct_dist_200_sma"),
+            ("Drawdown %", "drawdown_pct"),
+            ("STLFSI", "stlfsi_index"),
+            ("10Y Yield", "bond_yield_10y"),
+            ("DXY Spot", "dxy_spot"),
+            ("Breadth %", "market_breadth_pct"),
+            ("SPX Spot", "spx_spot"),
+        ]
+        for label, key in market_items:
+            source = st.session_state.get(f"{key}_source", "CONFIG/DEFAULT")
+            val = st.session_state.get(key, DEFAULTS.get(key, 0.0))
+            snapshot_items.append({
+                "label": label,
+                "value": f"{val:.2f}" if isinstance(val, (int, float)) else str(val),
+                "note": source,
+                "color": "#3b82f6" if "LIVE" in str(source).upper() else "#64748b",
+                "icon": "●",
+            })
+        render_tile_grid(snapshot_items, columns=4)
+
+        st.markdown("### Market Snapshot (Fully Editable)")
+        st.caption("Review or override values directly below.")
+        market_edit_items = [
+            ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
+            ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
+            ("ISM Services PMI", "services_pmi", st.session_state.get("services_pmi_source")),
+            ("Initial Claims (K)", "initial_claims", st.session_state.get("initial_claims_source")),
+            ("10Y Breakeven Inflation", "breakeven_inflation", st.session_state.get("breakeven_inflation_source")),
+            ("Fed Assets Growth YoY", "fed_assets_growth_yoy", st.session_state.get("fed_assets_growth_yoy_source")),
+            ("10Y Real Yield", "real_yield_10y", st.session_state.get("real_yield_10y_source")),
+            ("MOVE Volatility", "move_index", st.session_state.get("move_index_source")),
+            ("SLOOS Net %", "sloos_net_pct", st.session_state.get("sloos_net_pct_source")),
+            ("HY OAS", "hy_oas", st.session_state.get("hy_oas_source")),
+            ("Shiller CAPE", "shiller_cape", st.session_state.get("shiller_cape_source")),
+            ("Fwd EPS Growth YoY", "fwd_eps_growth_yoy", st.session_state.get("fwd_eps_growth_yoy_source")),
+            ("VIX Spot", "vix_spot", st.session_state.get("vix_spot_source")),
+            ("SPX vs 200SMA %", "pct_dist_200_sma", "DERIVED"),
+            ("Drawdown %", "drawdown_pct", "DERIVED"),
+            ("STLFSI", "stlfsi_index", st.session_state.get("stlfsi_index_source")),
+            ("10Y Yield", "bond_yield_10y", st.session_state.get("bond_yield_10y_source")),
+            ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
+            ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
+            ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
+        ]
+
+        cols = st.columns(4)
+        for i, (label, key, source) in enumerate(market_edit_items):
+            with cols[i % 4]:
+                st.markdown(f"""
+                <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
+                """, unsafe_allow_html=True)
+                st.number_input(
+                    label=label,
+                    value=float(st.session_state[key]),
+                    step=0.1,
+                    format="%.2f",
+                    key=key,
+                    label_visibility="collapsed"
+                )
+                st.markdown(
+                    f"<div style='margin-top: 4px;'>{tile_html('Source', str(source), '', '#64748b', '')}</div>",
+                    unsafe_allow_html=True
+                )
+
+        st.markdown("### 🔍 Engine Decision Breakdown")
+        with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
+            pos_factors = []
+            neg_factors = []
+            neu_factors = []
+            for key, label in [
+                ("inflation", "Inflation"),
+                ("growth", "Growth"),
+                ("liquidity", "Liquidity"),
+                ("credit_spreads", "Credit Spreads"),
+                ("valuation", "Valuation"),
+                ("market_stress", "Market Stress"),
+                ("momentum", "Momentum"),
+                ("drawdown", "Drawdown"),
+            ]:
+                val = result["scores"].get(key, 0)
+                if val > 0:
+                    pos_factors.append(f"{label} (+{val} pts)")
+                elif val < 0:
+                    neg_factors.append(f"{label} ({val} pts)")
+                else:
+                    neu_factors.append(label)
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("**🟢 Positive Drivers**")
+                for item in pos_factors or ["None"]:
+                    st.markdown(f"- {item}")
+            with c2:
+                st.markdown("**⚪ Neutral Factors**")
+                for item in neu_factors or ["None"]:
+                    st.markdown(f"- {item}")
+            with c3:
+                st.markdown("**🔴 Negative Drags**")
+                for item in neg_factors or ["None"]:
+                    st.markdown(f"- {item}")
 
     with tab3:
-        st.markdown("### Proxy Fund YTD Performance")
-        cols = st.columns(5)
+        st.markdown("### Live TSP Fund Proxy Price Tracking")
+        st.write("Proxy ETFs are used because TSP funds do not have direct tickers.")
+
+        st.markdown("#### YTD Performance Overview")
+        ytd_cols = st.columns(5)
+        fund_short_names = [
+            "C Fund (S&P 500)",
+            "S Fund (Mid/Small)",
+            "I Fund (Intl ACWX)",
+            "F Fund (Bonds)",
+            "G Fund (T-Bills)"
+        ]
+
         for idx, (fund_label, ticker) in enumerate(PROXIES.items()):
-            with cols[idx]:
+            with ytd_cols[idx]:
                 ytd_val = fetch_ytd_return(ticker)
-                if ytd_val is not None:
-                    st.metric(label=f"{fund_label} ({ticker})", value=f"{ytd_val:+.2f}%")
-                else:
-                    st.metric(label=f"{fund_label} ({ticker})", value="N/A")
+                st.metric(label=f"{fund_short_names[idx]} ({ticker})", value=f"{ytd_val:+.2f}%" if ytd_val is not None else "N/A")
 
         st.markdown("---")
-        fund_selected = st.selectbox("Select TSP Fund to Plot", options=list(PROXIES.keys()))
-        timeframe_selected = st.selectbox("Select Timeframe", ["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=3)
-        period_map = {"1 Month": "1mo", "3 Months": "3mo", "6 Months": "6mo", "1 Year": "1y", "5 Years": "5y", "10 Years": "10y"}
+        col_chart_1, col_chart_2 = st.columns([1, 3])
+        with col_chart_1:
+            fund_selected = st.selectbox("Select TSP Fund to Plot", options=list(PROXIES.keys()))
+            timeframe_selected = st.selectbox("Select Performance Chart Timeframe", options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=3)
+
         ticker = PROXIES[fund_selected]
+        period_map = {
+            "1 Month": "1mo",
+            "3 Months": "3mo",
+            "6 Months": "6mo",
+            "1 Year": "1y",
+            "5 Years": "5y",
+            "10 Years": "10y"
+        }
         proxy_df = get_cached_proxy_df(ticker, period_map[timeframe_selected])
 
         if not proxy_df.empty:
-            st.line_chart(proxy_df.set_index("Date")["Price"])
+            with col_chart_2:
+                st.line_chart(proxy_df.set_index("Date")["Price"])
         else:
-            st.error(f"Failed to fetch {ticker} data.")
+            st.error(f"Failed to fetch market data for proxy ticker: {ticker}.")
 
     with tab4:
+        st.markdown("### Score History")
         score_df = make_score_chart(state)
         if score_df is not None:
             st.line_chart(score_df)
         else:
             st.info("No score history yet.")
-        st.markdown("### Recent State")
-        st.json(state)
+
+        st.markdown("---")
+        st.markdown("### Recent State Overview")
+        recent_state_cards(state)
+
+        st.markdown("### Run History Log")
+        render_history_table(state)
 
     with tab5:
-        from constants import TRANSACTION_FILE, LOG_FILE
-        st.markdown("### Transaction History")
+        st.markdown("### Transaction History (Audit Trail)")
         if TRANSACTION_FILE.exists():
             st.dataframe(pd.read_csv(TRANSACTION_FILE).tail(25), use_container_width=True, hide_index=True)
         else:
-            st.info("No transaction file yet.")
-        st.markdown("### Daily Log")
+            st.info("No physical portfolio transactions recorded yet.")
+
+        st.markdown("---")
+        st.markdown("### Daily Run Log Viewer")
         if LOG_FILE.exists():
-            st.dataframe(pd.read_csv(LOG_FILE).tail(25), use_container_width=True, hide_index=True)
+            log_df = pd.read_csv(LOG_FILE)
+            st.dataframe(log_df.tail(25), use_container_width=True, hide_index=True)
+
+            export_col1, export_col2, export_col3 = st.columns(3)
+            with export_col1:
+                st.download_button("Download Log CSV", data=log_df.to_csv(index=False).encode("utf-8"), file_name="tsp_daily_log.csv", mime="text/csv")
+            with export_col2:
+                st.download_button("Download Log JSON", data=log_df.to_json(orient="records", indent=2).encode("utf-8"), file_name="tsp_daily_log.json", mime="application/json")
+            with export_col3:
+                st.download_button(
+                    "Download Latest Snapshot JSON",
+                    data=json.dumps({
+                        "market_data": market_data,
+                        "market_sources": {k: st.session_state.get(f"{k}_source") for k in market_data.keys()},
+                        "factor_scores": result["scores"],
+                        "regime": result["regime"],
+                        "total_score": result["composite_score"],
+                        "action": action,
+                        "reason": reason,
+                        "current_alloc": current_alloc,
+                        "target_alloc": result["allocations"],
+                        "state": state,
+                    }, indent=2).encode("utf-8"),
+                    file_name="tsp_snapshot.json",
+                    mime="application/json",
+                )
         else:
             st.info("No log file yet.")
 
