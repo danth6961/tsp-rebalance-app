@@ -2,6 +2,7 @@ import json
 import urllib.request
 import urllib.parse
 import re
+import http.cookiejar
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Optional, Any, List, Tuple
@@ -320,36 +321,66 @@ def fetch_multpl_earnings_growth() -> Optional[float]:
 
 def fetch_macromicro_spx_eps_growth() -> Optional[float]:
     """
-    Scrapes the S&P 500 Forward PE Ratio & EPS page on MacroMicro
-    to parse the S&P 500 - Forward EPS (YoY) series.
+    Scrapes S&P 500 Forward PE Ratio & EPS page on MacroMicro
+    using highcharts data endpoints to parse "S&P 500 - Forward EPS (YoY)".
     """
     def _load():
-        url = "https://en.macromicro.me/charts/123063/us-s-p-500-forward-pe-ratio-eps"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
+        chart_id = "123063"
+        page_url = f"https://en.macromicro.me/charts/{chart_id}/us-s-p-500-forward-pe-ratio-eps"
+        
+        # Setup cookie jar to preserve session cookie logic
+        cookie_jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        }
+        
+        # 1. Fetch main chart page to extract session details & App.stk token
+        req = urllib.request.Request(page_url, headers=headers)
+        with opener.open(req, timeout=5) as response:
             html = response.read().decode("utf-8")
             
-        soup = BeautifulSoup(html, "html.parser")
-        text = soup.get_text(" ", strip=True)
+        stk_match = re.search(r'data-stk="([^"]+)"', html)
+        if not stk_match:
+            stk_match = re.search(r'App\.stk\s*=\s*[\'"]([^\'"]+)[\'"]', html)
+            
+        if not stk_match:
+            return None
+            
+        stk_token = stk_match.group(1)
         
-        # Match series: "S&P 500 - Forward EPS (YoY) 30.82%"
-        match = re.search(r"Forward\s*EPS\s*\(YoY\)\s*([\-0-9\.\%]+)", text, re.IGNORECASE)
-        if match:
-            val_str = match.group(1).replace("%", "").strip()
-            return float(val_str)
+        # 2. Make authorized GET request to the AJAX endpoint
+        api_url = f"https://en.macromicro.me/charts/data/{chart_id}"
+        api_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Authorization": f"Bearer {stk_token}",
+            "Docref": page_url,
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        
+        api_req = urllib.request.Request(api_url, headers=api_headers)
+        with opener.open(api_req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
             
-        # Optional alternative matching the precise label
-        match_alt = re.search(r"S&P\s*500\s*-\s*Forward\s*EPS\s*\(YoY\)\s*([\-0-9\.\%]+)", text, re.IGNORECASE)
-        if match_alt:
-            val_str = match_alt.group(1).replace("%", "").strip()
-            return float(val_str)
-
-        # Scanner parsing the raw HTML structure directly as a tertiary fallback
-        match_raw = re.search(r"Forward\s*EPS\s*\(YoY\).*?([0-9\-\.]+)\%", html, re.IGNORECASE | re.DOTALL)
-        if match_raw:
-            return float(match_raw.group(1))
+        # 3. Walk JSON keys to locate "S&P 500 - Forward EPS (YoY)" series
+        if data.get("success") != 1:
+            return None
             
+        chart_data_dict = data.get("data", {})
+        for chart_key, chart_info in chart_data_dict.items():
+            series_list = chart_info.get("series", [])
+            for series in series_list:
+                name = series.get("name", "")
+                if "Forward EPS" in name and "YoY" in name:
+                    series_points = series.get("data", [])
+                    # Filter out nulls and isolate latest point
+                    valid_points = [p for p in series_points if p and len(p) >= 2 and p[1] is not None]
+                    if valid_points:
+                        return float(valid_points[-1][1])
+                        
         return None
 
     try:
