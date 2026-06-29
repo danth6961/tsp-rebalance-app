@@ -523,17 +523,17 @@ def main():
             # 1) DECISION SUMMARY
             # ============================================================
             st.markdown("#### 1) Decision Summary")
+
             sum_cols = st.columns(4)
-        
             with sum_cols[0]:
-                st.metric("Regime", result["regime"])
+                st.markdown(f"**Regime**  \n{result['regime']}")
             with sum_cols[1]:
-                st.metric("Composite Score", f"{result['composite_score']:+d}")
+                st.markdown(f"**Composite Score**  \n{result['composite_score']:+d}")
             with sum_cols[2]:
-                st.metric("Action", action)
+                st.markdown(f"**Action**  \n{action}")
             with sum_cols[3]:
-                st.metric("Emergency Trigger", "Yes" if result["emergency_triggered"] else "No")
-        
+                st.markdown(f"**Emergency Trigger**  \n{'Yes' if result['emergency_triggered'] else 'No'}")
+            
             st.caption(f"IFT Decision Reason: {reason}")
         
             # ============================================================
