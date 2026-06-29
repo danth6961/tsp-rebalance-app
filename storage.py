@@ -7,6 +7,7 @@ from datetime import date
 
 from constants import STATE_FILE, CONFIG_FILE, LOG_FILE, TRANSACTION_FILE
 
+
 def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
     if file_path.exists() and file_path.stat().st_size > 0:
         shutil.copy(file_path, file_path.with_suffix(".json.bak"))
@@ -14,6 +15,7 @@ def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
     with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
     temp_file.replace(file_path)
+
 
 def safe_load_json(file_path: Path, default_factory: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
     if file_path.exists():
@@ -35,6 +37,7 @@ def safe_load_json(file_path: Path, default_factory: Callable[[], Dict[str, Any]
 
     return default_factory()
 
+
 def default_state() -> Dict[str, Any]:
     return {
         "month": date.today().strftime("%Y-%m"),
@@ -46,11 +49,14 @@ def default_state() -> Dict[str, Any]:
         "recent_allocations": [],
     }
 
+
 def load_state() -> Dict[str, Any]:
     return safe_load_json(STATE_FILE, default_state)
 
+
 def save_state(state_data: Dict[str, Any]) -> None:
     safe_save_json(STATE_FILE, state_data)
+
 
 def default_config() -> Dict[str, Any]:
     return {
@@ -66,14 +72,17 @@ def default_config() -> Dict[str, Any]:
         "manual_regime": "OPTIMIZED NEUTRAL",
     }
 
+
 def load_config() -> Dict[str, Any]:
     base = default_config()
     loaded = safe_load_json(CONFIG_FILE, lambda: {})
     base.update(loaded)
     return base
 
+
 def save_config(config_data: Dict[str, Any]) -> None:
     safe_save_json(CONFIG_FILE, config_data)
+
 
 def append_log_row(row: Dict[str, Any]) -> None:
     file_exists = LOG_FILE.exists()
@@ -82,6 +91,7 @@ def append_log_row(row: Dict[str, Any]) -> None:
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
+
 
 def append_transaction_row(date_str: str, from_alloc: Dict[str, float], to_alloc: Dict[str, float], regime: str) -> None:
     row = {
