@@ -1,5 +1,5 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 
 def _safe_text(value):
@@ -65,14 +65,15 @@ def render_tile_grid(items, columns=4):
 
 def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
     """
-    Unified editable tile:
+    Unified editable metric tile:
     - title
     - current value
     - source pill
     - editable number input
     """
+    source_text = _safe_text(source)
+    source_str = source_text.upper()
 
-    source_str = str(source).upper()
     pill_class = (
         "pill-live" if "LIVE" in source_str
         else "pill-failed" if ("FAILED" in source_str or "DEFAULT" in source_str or "OFFLINE" in source_str)
@@ -89,8 +90,8 @@ def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f",
             f"""
             <div class="editable-kpi-card" style="border-left: 5px solid {color};">
                 <div class="editable-kpi-header">
-                    <div class="small-kpi-title">{label}</div>
-                    <span class="pill {pill_class}">{_safe_text(source)}</span>
+                    <div class="small-kpi-title">{_safe_text(label)}</div>
+                    <span class="pill {pill_class}">{source_text}</span>
                 </div>
 
                 <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.35rem;">
