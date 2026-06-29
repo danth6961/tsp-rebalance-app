@@ -194,7 +194,7 @@ def build_engine_result(data: Dict[str, Any], override_active: bool = False, ove
         "base_alloc": base_alloc,
         "asymmetric_vol_trigger": vol_t,
         "dxy_strong": dxy_t,
-        "emergency_triggered": composite_score == -50,
+        "emergency_triggered": regime_name == "EMERGENCY DISPATCH",
     }
 
 def should_use_tsp_ift(
