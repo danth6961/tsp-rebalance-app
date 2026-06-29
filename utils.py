@@ -1,7 +1,7 @@
 import math
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Any
+from typing import Optional
 
 def is_finite_number(x) -> bool:
     try:
