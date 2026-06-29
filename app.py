@@ -413,7 +413,7 @@ def main():
                 "icon": "🚀",
                 "score": "Score: ≥ +5",
                 "profile": "Aggressive Profile",
-                "alloc": "Base: G 35% / C 45% / I 15% / S 5% / F 0%",
+                "alloc": "Base: G 30% / C 40% / I 25% / S 10% / F 0%",
                 "desc": "Strong macro backdrop and solid upward momentum.",
                 "color": "#10b981",
                 "bg": "rgba(16, 185, 129, 0.08)"
@@ -423,7 +423,7 @@ def main():
                 "icon": "⚖️",
                 "score": "Score: 0 to +4",
                 "profile": "Balanced Profile",
-                "alloc": "Base: G 45% / C 35% / I 10% / S 10% / F 0%",
+                "alloc": "Base: G 40% / C 30% / I 20% / S 10% / F 0%",
                 "desc": "Default balanced state when signals are constructive but mixed.",
                 "color": "#3b82f6",
                 "bg": "rgba(59, 130, 246, 0.08)"
@@ -433,7 +433,7 @@ def main():
                 "icon": "🛡️",
                 "score": "Score: < 0",
                 "profile": "Defensive Profile",
-                "alloc": "Base: G 65% / C 20% / I 10% / S 5% / F 0%",
+                "alloc": "Base: G 70% / C 15% / I 10% / S 5% / F 0%",
                 "desc": "Used when risk rises or the composite turns negative.",
                 "color": "#f59e0b",
                 "bg": "rgba(245, 158, 11, 0.08)"
