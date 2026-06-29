@@ -110,19 +110,18 @@ def init_session(cfg):
 
 
 def render_regime_card(info, is_active: bool):
-    # Streamlit-native safe card
-    border_color = info["color"] if is_active else "rgba(148,163,184,0.18)"
+    border = info["color"] if is_active else "rgba(148,163,184,0.18)"
     bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
     badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
     badge_color = info["color"] if is_active else "#64748b"
 
     st.markdown(
         f"""
-        <div class="small-kpi" style="border-left: 5px solid {border_color}; background-color: {bg}; min-height: 250px;">
+        <div class="small-kpi" style="border-left: 5px solid {border}; background-color: {bg}; min-height: 250px;">
             <div style="color: {badge_color}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;">{badge}</div>
-            <div style="font-weight: 800; font-size: 0.95rem; color: {border_color};">{info['icon']} {info['name']}</div>
+            <div style="font-weight: 800; font-size: 0.95rem; color: {info['color']};">{info['icon']} {info['name']}</div>
             <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
-            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {border_color};">{info['alloc']}</div>
+            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {info['color']};">{info['alloc']}</div>
             <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
         </div>
         """,
@@ -132,7 +131,7 @@ def render_regime_card(info, is_active: bool):
 
 def render_market_snapshot_editor():
     st.markdown("### Market Snapshot")
-    st.caption("Review or override market inputs directly below. This combines the visual cards and editable controls into one section.")
+    st.caption("Review or override market inputs directly below. Each tile shows the current value, source, and an editable control.")
 
     market_edit_items = [
         ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
@@ -158,32 +157,47 @@ def render_market_snapshot_editor():
     ]
 
     cols = st.columns(4)
+
     for i, (label, key, source) in enumerate(market_edit_items):
         with cols[i % 4]:
-            # Display card container
-            st.markdown(
-                f"""
-                <div class="small-kpi" style="border-left: 5px solid #3b82f6; min-height: 145px;">
-                    <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
+            current_val = st.session_state.get(key, 0.0)
+            source_str = str(source).upper()
+            pill_class = (
+                "pill-live" if "LIVE" in source_str
+                else "pill-failed" if ("FAILED" in source_str or "DEFAULT" in source_str or "OFFLINE" in source_str)
+                else "pill-default"
             )
 
-            st.number_input(
-                label=label,
-                value=float(st.session_state[key]),
-                step=0.1,
-                format="%.2f",
-                key=key,
-                label_visibility="collapsed"
-            )
+            with st.container(border=True):
+                st.markdown(
+                    f"""
+                    <div class="small-kpi" style="border-left: 5px solid #3b82f6; min-height: 175px;">
+                        <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
+                        <div class="small-kpi-value" style="color:#0f172a; margin-bottom: 0.35rem;">
+                            {current_val:.2f}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
-            pill_class = "pill-live" if "LIVE" in str(source).upper() else "pill-default"
-            st.markdown(
-                f"<div style='margin-top: 4px;'><span class='pill {pill_class}'>{source}</span></div>",
-                unsafe_allow_html=True
-            )
+                st.number_input(
+                    label=label,
+                    value=float(current_val),
+                    step=0.1,
+                    format="%.2f",
+                    key=key,
+                    label_visibility="collapsed"
+                )
+
+                st.markdown(
+                    f"""
+                    <div style="margin-top: 0.35rem;">
+                        <span class="pill {pill_class}">{source}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
 
 def main():
@@ -484,24 +498,7 @@ def main():
         for idx, info in enumerate(regimes_info):
             is_active = (result["regime"] == info["name"])
             with regime_cols[idx]:
-                border = info["color"] if is_active else "rgba(148,163,184,0.18)"
-                bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
-                badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
-                badge_color = info["color"] if is_active else "#64748b"
-
-                with st.container(border=True):
-                    st.markdown(
-                        f"""
-                        <div class="small-kpi" style="border-left: 5px solid {border}; background-color: {bg}; min-height: 250px;">
-                            <div style="color: {badge_color}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;">{badge}</div>
-                            <div style="font-weight: 800; font-size: 0.95rem; color: {info['color']};">{info['icon']} {info['name']}</div>
-                            <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
-                            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {info['color']};">{info['alloc']}</div>
-                            <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+                render_regime_card(info, is_active)
 
     with tab2:
         st.markdown("### Factor Scores")
