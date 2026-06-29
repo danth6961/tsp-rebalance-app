@@ -358,6 +358,8 @@ def main():
         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
 
         st.markdown("### 🧭 Strategic Regime Directory")
+        st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
+
         regimes_info = [
             {
                 "name": "RISK-ON OVERRIDE",
@@ -400,22 +402,33 @@ def main():
                 "bg": "rgba(239, 68, 68, 0.08)"
             }
         ]
+
         regime_cols = st.columns(4)
         for idx, info in enumerate(regimes_info):
             is_active = (result["regime"] == info["name"])
-            border_css = f"border: 2px solid {info['color']}; background-color: {info['bg']}; box-shadow: 0 8px 16px rgba(0,0,0,0.06);" if is_active else "border: 1px solid rgba(148, 163, 184, 0.15);"
-            active_badge = f"<div style='color: {info['color']}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;'>★ ACTIVE ENVIRONMENT</div>" if is_active else ""
-            color_val = info["color"] if is_active else "#0f172a"
+            border_style = (
+                f"border: 2px solid {info['color']}; background-color: {info['bg']}; box-shadow: 0 8px 16px rgba(0,0,0,0.06);"
+                if is_active
+                else "border: 1px solid rgba(148, 163, 184, 0.15); background-color: rgba(248, 250, 252, 0.5);"
+            )
+            active_badge = (
+                f"<div style='color: {info['color']}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;'>★ ACTIVE ENVIRONMENT</div>"
+                if is_active else ""
+            )
+            title_color = info["color"] if is_active else "#0f172a"
+
+            card_html = f"""
+            <div class="small-kpi" style="{border_style} height: 100%; min-height: 250px;">
+                {active_badge}
+                <div style="font-weight: 800; font-size: 0.95rem; color: {title_color};">{info['icon']} {info['name']}</div>
+                <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
+                <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {title_color};">{info['alloc']}</div>
+                <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
+            </div>
+            """
+
             with regime_cols[idx]:
-                st.markdown(f"""
-                <div class="small-kpi" style="{border_css} height: 100%; min-height: 250px;">
-                    {active_badge}
-                    <div style="font-weight: 800; font-size: 0.95rem; color: {color_val};">{info['icon']} {info['name']}</div>
-                    <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score']}</div>
-                    <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {color_val};">{info['alloc']}</div>
-                    <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['desc']}</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(card_html, unsafe_allow_html=True)
 
     with tab2:
         st.markdown("### Factor Scores")
@@ -478,6 +491,7 @@ def main():
 
         st.markdown("### Market Snapshot (Fully Editable)")
         st.caption("Review or override values directly below.")
+
         market_edit_items = [
             ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
             ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
@@ -504,9 +518,15 @@ def main():
         cols = st.columns(4)
         for i, (label, key, source) in enumerate(market_edit_items):
             with cols[i % 4]:
-                st.markdown(f"""
-                <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
-                """, unsafe_allow_html=True)
+                st.markdown(
+                    f"""
+                    <div class="small-kpi" style="border-left: 5px solid #3b82f6; padding-bottom: 0.6rem;">
+                        <div class="small-kpi-title" style="margin-bottom: 2px;">{label}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
                 st.number_input(
                     label=label,
                     value=float(st.session_state[key]),
@@ -515,8 +535,10 @@ def main():
                     key=key,
                     label_visibility="collapsed"
                 )
+
+                pill_class = "pill-live" if "LIVE" in str(source).upper() else "pill-default"
                 st.markdown(
-                    f"<div style='margin-top: 4px;'>{tile_html('Source', str(source), '', '#64748b', '')}</div>",
+                    f"<div style='margin-top: 4px;'><span class='pill {pill_class}'>{source}</span></div>",
                     unsafe_allow_html=True
                 )
 
