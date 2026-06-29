@@ -232,7 +232,7 @@ def main():
             cfg[key] = float(st.session_state.get(key, DEFAULTS.get(key, 0.0)))
         save_config(cfg)
         st.sidebar.success("Config saved.")
-        st.stop()
+        st.rerun()
 
     if reset_state_btn:
         save_state({
