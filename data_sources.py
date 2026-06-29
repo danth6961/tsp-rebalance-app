@@ -9,9 +9,11 @@ from typing import Dict, Optional, Any, List, Tuple
 import pandas as pd
 import yfinance as yf
 import streamlit as st
+from bs4 import BeautifulSoup
 
 from constants import DEFAULTS, MAX_RETRIES, RETRY_SLEEP_SEC
 from utils import clean_and_parse_float
+
 
 def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kwargs):
     last_err = None
@@ -24,6 +26,7 @@ def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kw
                 import time
                 time.sleep(sleep_sec)
     raise last_err
+
 
 def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tuple[str, float]]:
     if not api_key:
@@ -44,6 +47,7 @@ def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tup
         return result
     except Exception:
         return []
+
 
 def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
     url = f"https://api.db.nomics.world/v22/series/FRED/FRED/{urllib.parse.quote(series_id)}"
@@ -66,6 +70,7 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
         return result
     except Exception:
         return []
+
 
 def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
     if api_key:
@@ -101,6 +106,7 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
         return retry_call(_load_fred)
     except Exception:
         return None
+
 
 def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     def calc_yoy(points: List[Tuple[str, float]]) -> Optional[float]:
@@ -148,6 +154,7 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     except Exception:
         return None
 
+
 def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float]:
     def calc_yoy(points: List[Tuple[str, float]]) -> Optional[float]:
         if len(points) < 53:
@@ -194,36 +201,82 @@ def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float
     except Exception:
         return None
 
-def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
-    url = "https://tradingeconomics.com/united-states/indicators"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
+
+def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
     results = {"core_pce_yoy": None, "ism_pmi": None, "services_pmi": None}
+
+    # First try: pandas HTML table parsing
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
-            html = response.read().decode("utf-8")
         dfs = pd.read_html(html)
         for df in dfs:
             if df.empty or len(df.columns) < 2:
                 continue
+
             col_name = df.columns[0]
             for _, row in df.iterrows():
                 indicator_text = str(row[col_name]).strip()
+
                 if "Core PCE Price Index" in indicator_text:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["core_pce_yoy"] = val
+
                 if "ISM Manufacturing PMI" in indicator_text or "Manufacturing PMI" in indicator_text:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["ism_pmi"] = val
+
                 if "ISM Services PMI" in indicator_text or "Services PMI" in indicator_text:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["services_pmi"] = val
     except Exception:
         pass
+
+    # Second try: BeautifulSoup text/table fallback
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # If values were not found in tables, try searching for nearby patterns
+        if results["ism_pmi"] is None:
+            for label in ["ISM Manufacturing PMI", "Manufacturing PMI"]:
+                if label in text:
+                    # Try a nearby row/table extraction
+                    match = re.search(rf"{re.escape(label)}.*?([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
+                    if match:
+                        results["ism_pmi"] = clean_and_parse_float(match.group(1))
+                        break
+
+        if results["services_pmi"] is None:
+            for label in ["ISM Services PMI", "Services PMI"]:
+                if label in text:
+                    match = re.search(rf"{re.escape(label)}.*?([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
+                    if match:
+                        results["services_pmi"] = clean_and_parse_float(match.group(1))
+                        break
+
+        if results["core_pce_yoy"] is None and "Core PCE Price Index" in text:
+            match = re.search(r"Core PCE Price Index.*?([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
+            if match:
+                results["core_pce_yoy"] = clean_and_parse_float(match.group(1))
+    except Exception:
+        pass
+
     return results
+
+
+def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
+    url = "https://tradingeconomics.com/united-states/indicators"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html = response.read().decode("utf-8")
+        return _extract_te_indicator_from_html(html)
+    except Exception:
+        return {"core_pce_yoy": None, "ism_pmi": None, "services_pmi": None}
+
 
 def fetch_shiller_cape_live() -> Optional[float]:
     def _load():
@@ -238,10 +291,12 @@ def fetch_shiller_cape_live() -> Optional[float]:
         if match_alt:
             return float(match_alt.group(1))
         return None
+
     try:
         return retry_call(_load)
     except Exception:
         return None
+
 
 def fetch_barchart_s5th_fallback() -> Optional[float]:
     url = "https://www.barchart.com/stocks/quotes/$S5TH"
@@ -263,6 +318,7 @@ def fetch_barchart_s5th_fallback() -> Optional[float]:
     except Exception:
         pass
     return None
+
 
 def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d") -> List[float]:
     def _load():
@@ -286,10 +342,12 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
             close = df.get("Close", pd.Series(dtype=float))
         closes_list = pd.to_numeric(close, errors="coerce").dropna().astype(float).tolist()
         return closes_list
+
     try:
         return retry_call(_load)
     except Exception:
         return []
+
 
 def fetch_yfinance_dataframe(ticker: str, period: str = "1y") -> pd.DataFrame:
     def _load():
@@ -319,10 +377,12 @@ def fetch_yfinance_dataframe(ticker: str, period: str = "1y") -> pd.DataFrame:
             "Date": close_series.index,
             "Price": pd.to_numeric(close_series.values, errors="coerce")
         }).dropna()
+
     try:
         return retry_call(_load)
     except Exception:
         return pd.DataFrame()
+
 
 def calc_spx_metrics_from_closes(closes: List[float]):
     if len(closes) < 200:
@@ -334,37 +394,46 @@ def calc_spx_metrics_from_closes(closes: List[float]):
     dist_200sma = ((current_spot - sma_200) / sma_200) * 100.0
     return round(dist_200sma, 2), round(drawdown_pct, 2), round(current_spot, 2)
 
+
 @st.cache_data(ttl=3600)
 def cached_fred(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fred_latest(series_id, api_key)
+
 
 @st.cache_data(ttl=3600)
 def cached_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fred_core_pce_yoy(api_key)
 
+
 @st.cache_data(ttl=3600)
 def cached_fred_fed_assets_yoy(api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fed_assets_yoy_growth(api_key)
+
 
 @st.cache_data(ttl=3600)
 def get_te_live_data() -> Dict[str, Optional[float]]:
     return fetch_indicators_from_te_indicators_page()
 
+
 @st.cache_data(ttl=3600)
 def cached_shiller_cape_live() -> Optional[float]:
     return fetch_shiller_cape_live()
+
 
 @st.cache_data(ttl=3600)
 def cached_barchart_s5th() -> Optional[float]:
     return fetch_barchart_s5th_fallback()
 
+
 @st.cache_data(ttl=3600)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
+
 @st.cache_data(ttl=3600)
 def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
     return fetch_yfinance_dataframe(ticker, period)
+
 
 @st.cache_data(ttl=3600)
 def fetch_ytd_return(ticker: str) -> Optional[float]:
@@ -378,6 +447,7 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
     start_price = ytd_df["Price"].iloc[0]
     end_price = ytd_df["Price"].iloc[-1]
     return round(((end_price - start_price) / start_price) * 100.0, 2)
+
 
 @st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
