@@ -314,9 +314,7 @@ def main():
 
         action = "SUBMIT IFT" if use_ift else "HOLD"
         if use_ift:
-            state["ift_count_this_month"] += 1
-            state["last_ift_date"] = today.isoformat()
-
+            
             try:
                 append_transaction_row(
                     today.isoformat(),
