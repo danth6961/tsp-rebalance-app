@@ -8,6 +8,15 @@ def _safe_text(value):
     return str(value)
 
 
+def _source_pill_class(source):
+    source_str = _safe_text(source).upper()
+    if "LIVE" in source_str:
+        return "pill-live"
+    if "FAILED" in source_str or "DEFAULT" in source_str or "OFFLINE" in source_str:
+        return "pill-failed"
+    return "pill-default"
+
+
 def tile_html(title, value, note=None, icon=None, color="#3b82f6", bg=None):
     title = _safe_text(title)
     value = _safe_text(value)
@@ -15,7 +24,6 @@ def tile_html(title, value, note=None, icon=None, color="#3b82f6", bg=None):
 
     bg_style = f"background-color: {bg};" if bg else ""
     icon_html = f"{icon} " if icon else ""
-
     note_html = f"<div class='small-kpi-note'>{note}</div>" if note else ""
 
     return f"""
@@ -48,8 +56,7 @@ def render_tile_grid(items, columns=4):
 
     cols = st.columns(columns)
     for idx, item in enumerate(items):
-        col = cols[idx % columns]
-        with col:
+        with cols[idx % columns]:
             st.markdown(
                 tile_html(
                     item.get("label", ""),
@@ -64,39 +71,43 @@ def render_tile_grid(items, columns=4):
 
 
 def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
-    source_text = _safe_text(source)
-    source_str = source_text.upper()
+    """
+    Streamlit-safe editable tile:
+    - renders summary in HTML
+    - renders input in native Streamlit widget below
+    - prevents HTML leakage by not relying on nested/raw markup for the input
+    """
 
-    pill_class = (
-        "pill-live" if "LIVE" in source_str
-        else "pill-failed" if ("FAILED" in source_str or "DEFAULT" in source_str or "OFFLINE" in source_str)
-        else "pill-default"
-    )
+    pill_class = _source_pill_class(source)
 
     try:
         display_value = float(value)
     except Exception:
         display_value = 0.0
 
+    label_text = _safe_text(label)
+    source_text = _safe_text(source)
+
     with st.container(border=True):
+        # Summary card
         st.markdown(
             f"""
-            <div class="editable-kpi-card" style="border-left: 5px solid {color};">
-                <div class="editable-kpi-header">
-                    <div class="small-kpi-title">{_safe_text(label)}</div>
-                    <span class="pill {pill_class}">{source_text}</span>
-                </div>
-
-                <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.35rem;">
+            <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
+                <div class="small-kpi-title">{label_text}</div>
+                <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.15rem;">
                     {display_value:.2f}
+                </div>
+                <div style="margin-top: 0.35rem;">
+                    <span class="pill {pill_class}">{source_text}</span>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
+        # Editable input
         st.number_input(
-            label,
+            label_text,
             value=display_value,
             step=step,
             format=fmt,
