@@ -140,6 +140,22 @@ def render_regime_card(info, is_active: bool):
 def load_editable_market_data():
     return {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]}
 
+def confirm_ift_used(today):
+    state = load_state()
+
+    # Reset month if needed
+    if state.get("month") != today.strftime("%Y-%m"):
+        state["month"] = today.strftime("%Y-%m")
+        state["ift_count_this_month"] = 0
+        state["recent_regimes"] = []
+        state["recent_scores"] = []
+        state["recent_allocations"] = []
+
+    state["ift_count_this_month"] = int(state.get("ift_count_this_month", 0)) + 1
+    state["last_ift_date"] = today.isoformat()
+    state["last_run_date"] = today.isoformat()
+
+    save_state(state)
 
 def main():
     cfg = load_config()
@@ -225,6 +241,11 @@ def main():
         if TRANSACTION_FILE.exists():
             TRANSACTION_FILE.unlink()
         st.rerun()
+
+    if confirm_ift_btn:
+    confirm_ift_used(today)
+    st.sidebar.success("IFT confirmed and saved.")
+    st.rerun()
 
     if run:
         with st.spinner("Connecting to live feeds..."):
