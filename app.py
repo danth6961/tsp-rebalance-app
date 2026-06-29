@@ -517,11 +517,73 @@ def main():
                     color="#3b82f6",
                 )
 
-        st.markdown("### 🔍 Engine Decision Breakdown")
+         st.markdown("### 🔍 Engine Decision Breakdown")
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
+            # ============================================================
+            # 1) DECISION SUMMARY
+            # ============================================================
+            st.markdown("#### 1) Decision Summary")
+            sum_cols = st.columns(4)
+        
+            with sum_cols[0]:
+                st.metric("Regime", result["regime"])
+            with sum_cols[1]:
+                st.metric("Composite Score", f"{result['composite_score']:+d}")
+            with sum_cols[2]:
+                st.metric("Action", action)
+            with sum_cols[3]:
+                st.metric("Emergency Trigger", "Yes" if result["emergency_triggered"] else "No")
+        
+            st.caption(f"IFT Decision Reason: {reason}")
+        
+            # ============================================================
+            # 2) FACTOR SCORE DETAIL
+            # ============================================================
+            st.markdown("#### 2) Factor Score Detail")
+        
+            factor_rules = [
+                ("Inflation", "inflation", "Core PCE / Breakevens"),
+                ("Growth", "growth", "PMI / Services PMI / Claims"),
+                ("Liquidity", "liquidity", "SLOOS / Fed Assets Growth"),
+                ("Credit Spreads", "credit_spreads", "HY OAS"),
+                ("Valuation", "valuation", "Shiller CAPE / Real Yield"),
+                ("Market Stress", "market_stress", "VIX / STLFSI"),
+                ("Momentum", "momentum", "200SMA distance / STLFSI"),
+                ("Drawdown", "drawdown", "Peak-to-trough decline"),
+            ]
+        
+            factor_rows = []
+            for display_name, score_key, source_text in factor_rules:
+                raw_score = int(result["scores"].get(score_key, 0))
+                if raw_score >= 3:
+                    strength = "Strong Positive"
+                elif raw_score > 0:
+                    strength = "Mild Positive"
+                elif raw_score == 0:
+                    strength = "Neutral"
+                elif raw_score <= -5:
+                    strength = "Strong Negative"
+                else:
+                    strength = "Negative"
+        
+                factor_rows.append({
+                    "Factor": display_name,
+                    "Raw Score": raw_score,
+                    "Interpretation": strength,
+                    "Source / Logic": source_text,
+                })
+        
+            st.dataframe(pd.DataFrame(factor_rows), use_container_width=True, hide_index=True)
+        
+            # ============================================================
+            # 3) POSITIVE / NEUTRAL / NEGATIVE GROUPING
+            # ============================================================
+            st.markdown("#### 3) Factor Interpretation")
+        
             pos_factors = []
             neg_factors = []
             neu_factors = []
+        
             for key, label in [
                 ("inflation", "Inflation"),
                 ("growth", "Growth"),
@@ -539,7 +601,7 @@ def main():
                     neg_factors.append(f"{label} ({val} pts)")
                 else:
                     neu_factors.append(label)
-
+        
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("**🟢 Positive Drivers**")
@@ -553,6 +615,54 @@ def main():
                 st.markdown("**🔴 Negative Drags**")
                 for item in neg_factors or ["None"]:
                     st.markdown(f"- {item}")
+        
+            # ============================================================
+            # 4) REGIME AND ALLOCATION BUILD
+            # ============================================================
+            st.markdown("#### 4) Regime and Allocation Build")
+        
+            build_cols = st.columns(2)
+            with build_cols[0]:
+                st.markdown("**Regime Selection**")
+                st.write(f"- Selected regime: `{result['regime']}`")
+                st.write(f"- Composite score: `{result['composite_score']:+d}`")
+                st.write(f"- Emergency trigger: `{'Yes' if result['emergency_triggered'] else 'No'}`")
+                st.write(f"- Base allocation: `{result['base_alloc']}`")
+        
+            with build_cols[1]:
+                st.markdown("**Adjustment Flags**")
+                st.write(f"- F Fund unlocked: `{'Yes' if result['base_alloc'].get('F', 0) > 0 else 'No'}`")
+                st.write(f"- Asymmetric volatility trigger: `{'Yes' if result['asymmetric_vol_trigger'] else 'No'}`")
+                st.write(f"- Strong DXY adjustment: `{'Yes' if result['dxy_strong'] else 'No'}`")
+        
+            st.markdown("**Final Target Allocation**")
+            st.dataframe(
+                make_alloc_chart(result["allocations"], current_alloc),
+                use_container_width=True,
+                hide_index=True
+            )
+        
+            # ============================================================
+            # 5) IFT DECISION LOGIC
+            # ============================================================
+            st.markdown("#### 5) IFT Decision Logic")
+        
+            ift_cols = st.columns(4)
+            with ift_cols[0]:
+                st.metric("Monthly IFT Count", str(state["ift_count_this_month"]))
+            with ift_cols[1]:
+                st.metric("Cooldown", f"{cooldown_days} days")
+            with ift_cols[2]:
+                st.metric("Confirmation Days", str(confirmation_days))
+            with ift_cols[3]:
+                st.metric("Allow 2nd IFT", "Yes" if allow_second_ift else "No")
+        
+            st.write(f"- Normal drift threshold: `{float(normal_drift_threshold_pct):.2f}%`")
+            st.write(f"- Score change threshold: `{int(score_change_threshold)}`")
+            st.write(f"- Recent regime history: `{state['recent_regimes'][-confirmation_days:] if state['recent_regimes'] else []}`")
+            st.write(f"- Recent score history: `{state['recent_scores'][-confirmation_days:] if state['recent_scores'] else []}`")
+            st.write(f"- Final IFT recommendation: **{action}**")
+            st.write(f"- Reason: {reason}")
 
     with tab3:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
