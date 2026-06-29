@@ -174,7 +174,7 @@ def main():
                 ["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"],
                 index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(cfg["manual_regime"])
             )
-        
+        confirm_ift_btn = st.button("✅ Confirm IFT Submitted", use_container_width=True)
         st.divider()
         fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
