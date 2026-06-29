@@ -140,10 +140,10 @@ def render_regime_card(info, is_active: bool):
 def load_editable_market_data():
     return {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]}
 
-def confirm_ift_used(today):
+
+def confirm_ift_used(today, current_alloc, target_alloc, regime):
     state = load_state()
 
-    # Reset month if needed
     if state.get("month") != today.strftime("%Y-%m"):
         state["month"] = today.strftime("%Y-%m")
         state["ift_count_this_month"] = 0
@@ -155,7 +155,18 @@ def confirm_ift_used(today):
     state["last_ift_date"] = today.isoformat()
     state["last_run_date"] = today.isoformat()
 
+    try:
+        append_transaction_row(
+            today.isoformat(),
+            current_alloc,
+            target_alloc,
+            regime,
+        )
+    except Exception as e:
+        st.warning(f"IFT transaction log write failed: {e}")
+
     save_state(state)
+
 
 def main():
     cfg = load_config()
@@ -190,18 +201,19 @@ def main():
                 ["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"],
                 index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(cfg["manual_regime"])
             )
+
         st.divider()
         fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
         st.divider()
         confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True)
-        
+
         st.divider()
         save_cfg = st.button("💾 Save Config", use_container_width=True)
         reset_state_btn = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_btn = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_btn = st.button("🗑️ Clear Audit Trail", use_container_width=True)
-                
+
         st.divider()
         run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
@@ -245,7 +257,7 @@ def main():
         st.rerun()
 
     if confirm_ift_btn:
-        confirm_ift_used(today)
+        confirm_ift_used(today, current_alloc, {"G": current_alloc["G"], "C": current_alloc["C"], "I": current_alloc["I"], "S": current_alloc["S"], "F": current_alloc["F"]}, "MANUAL IFT")
         st.sidebar.success("IFT confirmed and saved.")
         st.rerun()
 
@@ -313,17 +325,6 @@ def main():
         )
 
         action = "SUBMIT IFT" if use_ift else "HOLD"
-        if use_ift:
-            
-            try:
-                append_transaction_row(
-                    today.isoformat(),
-                    current_alloc,
-                    result["allocations"],
-                    result["regime"],
-                )
-            except Exception as e:
-                st.warning(f"IFT transaction log write failed: {e}")
 
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
@@ -519,9 +520,6 @@ def main():
 
         st.markdown("### 🔍 Engine Decision Breakdown")
         with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
-            # ============================================================
-            # 1) DECISION SUMMARY
-            # ============================================================
             st.markdown("#### 1) Decision Summary")
 
             sum_cols = st.columns(4)
@@ -533,14 +531,10 @@ def main():
                 st.markdown(f"**Action**  \n{action}")
             with sum_cols[3]:
                 st.markdown(f"**Emergency Trigger**  \n{'Yes' if result['emergency_triggered'] else 'No'}")
-            
+
             st.caption(f"IFT Decision Reason: {reason}")
-        
-            # ============================================================
-            # 2) FACTOR SCORE DETAIL
-            # ============================================================
+
             st.markdown("#### 2) Factor Score Detail")
-        
             factor_rules = [
                 ("Inflation", "inflation", "Core PCE / Breakevens"),
                 ("Growth", "growth", "PMI / Services PMI / Claims"),
@@ -551,7 +545,7 @@ def main():
                 ("Momentum", "momentum", "200SMA distance / STLFSI"),
                 ("Drawdown", "drawdown", "Peak-to-trough decline"),
             ]
-        
+
             factor_rows = []
             for display_name, score_key, source_text in factor_rules:
                 raw_score = int(result["scores"].get(score_key, 0))
@@ -565,25 +559,21 @@ def main():
                     strength = "Strong Negative"
                 else:
                     strength = "Negative"
-        
+
                 factor_rows.append({
                     "Factor": display_name,
                     "Raw Score": raw_score,
                     "Interpretation": strength,
                     "Source / Logic": source_text,
                 })
-        
+
             st.dataframe(pd.DataFrame(factor_rows), use_container_width=True, hide_index=True)
-        
-            # ============================================================
-            # 3) POSITIVE / NEUTRAL / NEGATIVE GROUPING
-            # ============================================================
+
             st.markdown("#### 3) Factor Interpretation")
-        
             pos_factors = []
             neg_factors = []
             neu_factors = []
-        
+
             for key, label in [
                 ("inflation", "Inflation"),
                 ("growth", "Growth"),
@@ -601,7 +591,7 @@ def main():
                     neg_factors.append(f"{label} ({val} pts)")
                 else:
                     neu_factors.append(label)
-        
+
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("**🟢 Positive Drivers**")
@@ -615,12 +605,9 @@ def main():
                 st.markdown("**🔴 Negative Drags**")
                 for item in neg_factors or ["None"]:
                     st.markdown(f"- {item}")
-        
-            # ============================================================
-            # 4) REGIME AND ALLOCATION BUILD
-            # ============================================================
+
             st.markdown("#### 4) Regime and Allocation Build")
-        
+
             build_cols = st.columns(2)
             with build_cols[0]:
                 st.markdown("**Regime Selection**")
@@ -628,25 +615,21 @@ def main():
                 st.write(f"- Composite score: `{result['composite_score']:+d}`")
                 st.write(f"- Emergency trigger: `{'Yes' if result['emergency_triggered'] else 'No'}`")
                 st.write(f"- Base allocation: `{result['base_alloc']}`")
-        
+
             with build_cols[1]:
                 st.markdown("**Adjustment Flags**")
                 st.write(f"- F Fund unlocked: `{'Yes' if result['base_alloc'].get('F', 0) > 0 else 'No'}`")
                 st.write(f"- Asymmetric volatility trigger: `{'Yes' if result['asymmetric_vol_trigger'] else 'No'}`")
                 st.write(f"- Strong DXY adjustment: `{'Yes' if result['dxy_strong'] else 'No'}`")
-        
+
             st.markdown("**Final Target Allocation**")
             st.dataframe(
                 make_alloc_chart(result["allocations"], current_alloc),
                 use_container_width=True,
                 hide_index=True
             )
-        
-            # ============================================================
-            # 5) IFT DECISION LOGIC
-            # ============================================================
+
             st.markdown("#### 5) IFT Decision Logic")
-        
             ift_cols = st.columns(4)
             with ift_cols[0]:
                 st.metric("Monthly IFT Count", str(state["ift_count_this_month"]))
@@ -656,7 +639,7 @@ def main():
                 st.metric("Confirmation Days", str(confirmation_days))
             with ift_cols[3]:
                 st.metric("Allow 2nd IFT", "Yes" if allow_second_ift else "No")
-        
+
             st.write(f"- Normal drift threshold: `{float(normal_drift_threshold_pct):.2f}%`")
             st.write(f"- Score change threshold: `{int(score_change_threshold)}`")
             st.write(f"- Recent regime history: `{state['recent_regimes'][-confirmation_days:] if state['recent_regimes'] else []}`")
@@ -687,7 +670,11 @@ def main():
         col_chart_1, col_chart_2 = st.columns([1, 3])
         with col_chart_1:
             fund_selected = st.selectbox("Select TSP Fund to Plot", options=list(PROXIES.keys()))
-            timeframe_selected = st.selectbox("Select Performance Chart Timeframe", options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=5)
+            timeframe_selected = st.selectbox(
+                "Select Performance Chart Timeframe",
+                options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"],
+                index=5
+            )
 
         ticker = PROXIES[fund_selected]
         period_map = {
