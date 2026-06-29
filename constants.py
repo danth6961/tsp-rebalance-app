@@ -39,9 +39,9 @@ PROXIES = {
 }
 
 BASELINE_ALLOCATIONS = {
-    "RISK-ON OVERRIDE": {"G": 35, "C": 45, "I": 15, "S": 5, "F": 0},
-    "OPTIMIZED NEUTRAL": {"G": 45, "C": 35, "I": 10, "S": 10, "F": 0},
-    "DEFENSIVE ALLOCATION": {"G": 65, "C": 20, "I": 10, "S": 5, "F": 0},
+    "RISK-ON OVERRIDE": {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0},
+    "OPTIMIZED NEUTRAL": {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0},
+    "DEFENSIVE ALLOCATION": {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0},
     "EMERGENCY DISPATCH": {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0},
     "EMERGENCY DISPATCH (F-Unlocked)": {"G": 90, "C": 0, "I": 0, "S": 0, "F": 10},
     "DEFENSIVE ALLOCATION (High Risk)": {"G": 70, "C": 20, "I": 5, "S": 5, "F": 0},
