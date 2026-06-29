@@ -174,7 +174,16 @@ def main():
                 ["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"],
                 index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(cfg["manual_regime"])
             )
-
+        
+        ift_count_input = st.number_input(
+            "IFT Count This Month",
+            min_value=0,
+            max_value=2,
+            value=int(state.get("ift_count_this_month", 0)),
+            step=1,
+        )
+        update_ift_btn = st.button("📝 Update IFT Count", use_container_width=True)
+        
         fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
         st.divider()
