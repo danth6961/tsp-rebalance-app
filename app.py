@@ -577,7 +577,7 @@ def main():
         col_chart_1, col_chart_2 = st.columns([1, 3])
         with col_chart_1:
             fund_selected = st.selectbox("Select TSP Fund to Plot", options=list(PROXIES.keys()))
-            timeframe_selected = st.selectbox("Select Performance Chart Timeframe", options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=3)
+            timeframe_selected = st.selectbox("Select Performance Chart Timeframe", options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"], index=5)
 
         ticker = PROXIES[fund_selected]
         period_map = {
