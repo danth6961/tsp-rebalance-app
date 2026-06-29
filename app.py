@@ -106,16 +106,18 @@ st.markdown(
 )
 
 
+EDITABLE_KEYS = [
+    "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
+    "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
+    "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
+    "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
+    "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot",
+    "pct_dist_200_sma", "drawdown_pct"
+]
+
+
 def init_session(cfg):
-    indicators = [
-        "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
-        "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
-        "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
-        "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
-        "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot",
-        "pct_dist_200_sma", "drawdown_pct", "vix_3d_panic", "spx_3d_panic",
-        "vix_last_3", "spx_dist_last_3"
-    ]
+    indicators = EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic", "vix_last_3", "spx_dist_last_3"]
     for key in indicators:
         if key not in st.session_state:
             if key in ["vix_3d_panic", "spx_3d_panic"]:
@@ -128,6 +130,10 @@ def init_session(cfg):
             st.session_state[f"{key}_source"] = "CONFIG/DEFAULT"
     if "engine_ran" not in st.session_state:
         st.session_state["engine_ran"] = False
+    if "live_market_data" not in st.session_state:
+        st.session_state["live_market_data"] = {}
+    if "live_market_sources" not in st.session_state:
+        st.session_state["live_market_sources"] = {}
 
 
 def render_regime_card(info, is_active: bool):
@@ -148,6 +154,10 @@ def render_regime_card(info, is_active: bool):
         """,
         unsafe_allow_html=True,
     )
+
+
+def load_editable_market_data():
+    return {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]}
 
 
 def main():
@@ -205,13 +215,7 @@ def main():
         cfg["manual_override_enabled"] = bool(manual_override_enabled)
         cfg["manual_regime"] = manual_regime
         cfg["fred_api_key"] = fred_api_key
-        for key in [
-            "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
-            "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
-            "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
-            "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
-            "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"
-        ]:
+        for key in EDITABLE_KEYS:
             cfg[key] = float(st.session_state.get(key, DEFAULTS.get(key, 0.0)))
         save_config(cfg)
         st.sidebar.success("Config saved.")
@@ -239,10 +243,6 @@ def main():
             TRANSACTION_FILE.unlink()
         st.rerun()
 
-    if not run and not st.session_state["engine_ran"]:
-        st.info("Set inputs in the sidebar and click **Fetch & Run Engine**.")
-        return
-
     if run:
         with st.spinner("Connecting to live feeds..."):
             try:
@@ -259,30 +259,32 @@ def main():
                 fetched_data["spx_dist_last_3"] = []
                 fetched_sources = {k: "CONFIG/DEFAULT" for k in fetched_data.keys()}
 
-        for key in [
-            "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
-            "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
-            "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
-            "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
-            "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot"
-        ]:
-            st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
-            st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
-        st.session_state["pct_dist_200_sma"] = float(fetched_data.get("pct_dist_200_sma", 0.0))
-        st.session_state["drawdown_pct"] = float(fetched_data.get("drawdown_pct", 0.0))
-        st.session_state["vix_3d_panic"] = bool(fetched_data.get("vix_3d_panic", False))
-        st.session_state["spx_3d_panic"] = bool(fetched_data.get("spx_3d_panic", False))
-        st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
-        st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
-        st.session_state["engine_ran"] = True
+            st.session_state["live_market_data"] = fetched_data
+            st.session_state["live_market_sources"] = fetched_sources
+
+            for key in EDITABLE_KEYS:
+                if key not in st.session_state:
+                    st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
+                if f"{key}_source" not in st.session_state:
+                    st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
+
+            st.session_state["vix_3d_panic"] = bool(fetched_data.get("vix_3d_panic", False))
+            st.session_state["spx_3d_panic"] = bool(fetched_data.get("spx_3d_panic", False))
+            st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
+            st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
+            st.session_state["engine_ran"] = True
 
         state = load_state()
         if state.get("month") != today.strftime("%Y-%m"):
             state["month"] = today.strftime("%Y-%m")
             state["ift_count_this_month"] = 0
 
+        market_data = load_editable_market_data()
+        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
+        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
+
         result = build_engine_result(
-            fetched_data,
+            market_data,
             override_active=manual_override_enabled,
             override_regime=manual_regime
         )
@@ -311,6 +313,15 @@ def main():
             state["ift_count_this_month"] += 1
             state["last_ift_date"] = today.isoformat()
 
+            append_transaction_row({
+                "date": today.isoformat(),
+                "action": action,
+                "reason": reason,
+                "regime": result["regime"],
+                "total_score": result["composite_score"],
+                "target_alloc": json.dumps(result["allocations"]),
+            })
+
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
         state["recent_allocations"].append(result["allocations"])
@@ -329,20 +340,12 @@ def main():
             "ift_count_this_month": state["ift_count_this_month"],
             "current_alloc": json.dumps(current_alloc),
             "target_alloc": json.dumps(result["allocations"]),
-            "vix": fetched_data.get("vix_spot", DEFAULTS["vix_spot"]),
-            "spx_200sma_dist": fetched_data.get("pct_dist_200_sma", 0.0),
-            "drawdown_pct": fetched_data.get("drawdown_pct", 0.0),
+            "vix": market_data.get("vix_spot", DEFAULTS["vix_spot"]),
+            "spx_200sma_dist": market_data.get("pct_dist_200_sma", 0.0),
+            "drawdown_pct": market_data.get("drawdown_pct", 0.0),
         })
 
-        st.session_state["engine_ran"] = True
-
-    market_data = {k: st.session_state[k] for k in [
-        "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims", "breakeven_inflation",
-        "fed_assets_growth_yoy", "real_yield_10y", "move_index", "sloos_net_pct", "hy_oas",
-        "shiller_cape", "fwd_eps_growth_yoy", "vix_spot", "pct_dist_200_sma", "drawdown_pct",
-        "stlfsi_index", "bond_yield_10y", "dxy_spot", "market_breadth_pct", "spx_spot",
-        "vix_3d_panic", "spx_3d_panic"
-    ]}
+    market_data = load_editable_market_data()
     market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
     market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
