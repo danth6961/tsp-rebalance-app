@@ -1,6 +1,4 @@
----
-
-# TSP Rebalance Engine — Project Handoff
+# PROJECT_HANDOFF.md
 
 ## Purpose
 
