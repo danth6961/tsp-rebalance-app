@@ -117,15 +117,17 @@ def determine_allocation(data: Dict[str, Any], scores: Dict[str, int], override_
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
             base_alloc = {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0}
-            return base_alloc, 5, "RISK-ON OVERRIDE", False, False
+            return base_alloc, scores, 5, "RISK-ON OVERRIDE", base_alloc, False, False
         if override_regime == "OPTIMIZED NEUTRAL":
             base_alloc = {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0}
-            return base_alloc, 0, "OPTIMIZED NEUTRAL", False, False
+            return base_alloc, scores, 0, "OPTIMIZED NEUTRAL", base_alloc, False, False
         if override_regime == "DEFENSIVE ALLOCATION":
             base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
-            return base_alloc, -5, "DEFENSIVE ALLOCATION", False, False
+            return base_alloc, scores, -5, "DEFENSIVE ALLOCATION", base_alloc, False, False
+        
+        # Default fallback is Emergency Dispatch Override
         base_alloc = {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
-        return base_alloc, -50, "EMERGENCY DISPATCH", False, False
+        return base_alloc, scores, -50, "EMERGENCY DISPATCH", base_alloc, False, False
 
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
     cape = safe_float(data.get("shiller_cape"), DEFAULTS["shiller_cape"])
