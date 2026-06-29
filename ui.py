@@ -73,11 +73,11 @@ def render_tile_grid(items, columns=4):
 def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
     """
     Streamlit-safe editable tile:
-    - renders summary in HTML
-    - renders input in native Streamlit widget below
-    - prevents HTML leakage by not relying on nested/raw markup for the input
+    - title
+    - current value
+    - source pill
+    - editable number_input
     """
-
     pill_class = _source_pill_class(source)
 
     try:
@@ -89,7 +89,6 @@ def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f",
     source_text = _safe_text(source)
 
     with st.container(border=True):
-        # Summary card
         st.markdown(
             f"""
             <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
@@ -105,7 +104,6 @@ def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f",
             unsafe_allow_html=True,
         )
 
-        # Editable input
         st.number_input(
             label_text,
             value=display_value,
