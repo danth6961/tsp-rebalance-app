@@ -728,16 +728,16 @@ def main():
             tx_df = tx_df.rename(columns={
                 "date": "Date",
                 "regime": "Regime",
-                "from_G": "From G",
-                "from_C": "From C",
-                "from_I": "From I",
-                "from_S": "From S",
-                "from_F": "From F",
-                "to_G": "To G",
-                "to_C": "To C",
-                "to_I": "To I",
-                "to_S": "To S",
-                "to_F": "To F",
+                "from_G": "From G Fund",
+                "from_C": "From C Fund",
+                "from_I": "From I Fund",
+                "from_S": "From S Fund",
+                "from_F": "From F Fund",
+                "to_G": "To G Fund",
+                "to_C": "To C Fund",
+                "to_I": "To I Fund",
+                "to_S": "To S Fund",
+                "to_F": "To F Fund",
             })
             st.dataframe(tx_df, use_container_width=True, hide_index=True)
         else:
