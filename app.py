@@ -198,7 +198,7 @@ def main():
         reset_state_btn = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_btn = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_btn = st.button("🗑️ Clear Audit Trail", use_container_width=True)
-        onfirm_ift_btn = st.button("✅ Confirm IFT Submitted", use_container_width=True)
+        confirm_ift_btn = st.button("✅ Confirm IFT Submitted", use_container_width=True)
         
         st.divider()
         run = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
