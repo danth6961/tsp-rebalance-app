@@ -72,29 +72,41 @@ def render_tile_grid(items, columns=4):
 
 def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
     """
-    Streamlit-safe editable tile:
-    - title
-    - current value
-    - source pill
-    - editable number_input
+    Streamlit-safe metric tile that supports numeric, boolean, and text values.
+    - numeric values: editable via number_input
+    - booleans: editable via checkbox
+    - strings: editable via text_input only when non-numeric
     """
     pill_class = _source_pill_class(source)
-
-    try:
-        display_value = float(value)
-    except Exception:
-        display_value = 0.0
-
     label_text = _safe_text(label)
     source_text = _safe_text(source)
 
+    # Determine value type
+    is_bool = isinstance(value, bool)
+    is_numeric = False
+    display_value = value
+
+    if not is_bool:
+        try:
+            display_value = float(value)
+            is_numeric = True
+        except Exception:
+            is_numeric = False
+
     with st.container(border=True):
+        if is_bool:
+            shown = "Yes" if value else "No"
+        elif is_numeric:
+            shown = f"{float(display_value):.2f}"
+        else:
+            shown = _safe_text(value)
+
         st.markdown(
             f"""
             <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
                 <div class="small-kpi-title">{label_text}</div>
                 <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.15rem;">
-                    {display_value:.2f}
+                    {shown}
                 </div>
                 <div style="margin-top: 0.35rem;">
                     <span class="pill {pill_class}">{source_text}</span>
@@ -104,14 +116,29 @@ def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f",
             unsafe_allow_html=True,
         )
 
-        st.number_input(
-            label_text,
-            value=display_value,
-            step=step,
-            format=fmt,
-            key=key,
-            label_visibility="collapsed",
-        )
+        if is_bool:
+            st.checkbox(
+                label_text,
+                value=bool(value),
+                key=key,
+                label_visibility="collapsed",
+            )
+        elif is_numeric:
+            st.number_input(
+                label_text,
+                value=float(display_value),
+                step=step,
+                format=fmt,
+                key=key,
+                label_visibility="collapsed",
+            )
+        else:
+            st.text_input(
+                label_text,
+                value=_safe_text(value),
+                key=key,
+                label_visibility="collapsed",
+            )
 
 
 def recent_state_cards(state):
