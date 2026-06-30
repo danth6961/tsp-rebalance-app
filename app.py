@@ -220,7 +220,10 @@ def main():
         fred_api_key = st.text_input("FRED API Key", value=initial_fred_key, type="password")
 
         st.divider()
-        confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True)
+        ift_limit_reached = int(state.get("ift_count_this_month", 0)) >= 2
+        confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True,disabled=ift_limit_reached)
+        if ift_limit_reached:
+            st.sidebar.error("Monthly IFT limit reached. Manual submit is disabled.")
 
         st.divider()
         save_cfg = st.button("💾 Save Config", use_container_width=True)
