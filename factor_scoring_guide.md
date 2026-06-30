@@ -4,14 +4,14 @@ This document explains the scoring logic used by the engine in plain English.
 
 ## Overview
 
-The engine now evaluates two layers of signals:
+The engine evaluates two layers of signals:
 
 1. Core factor scores
 2. Macro overlay scores
 
 The core factor scores are the main inputs to the composite score. The macro overlay scores add additional regime context and act as guards against overly aggressive positioning during hostile macro conditions.
 
-The app shows these factors in the “Factor Score Detail” and “Factor Interpretation” sections, and the engine uses them to select the final regime and allocation  
+The app shows these factors in the “Factor Score Detail” and “Factor Interpretation” sections, and the engine uses them to select the final regime and allocation.
 
 ---
 
@@ -32,7 +32,7 @@ The inflation score is based on Core PCE YoY and is adjusted by breakeven inflat
 - If breakeven inflation > 2.6%, inflation is made worse
 - If breakeven inflation < 1.8%, inflation is not allowed to stay too negative
 
-This logic is implemented directly in `score_market_data()` in `engine.py` 
+This logic is implemented directly in `score_market_data()` in `engine.py`.
 
 ---
 
@@ -58,7 +58,7 @@ Then it scores the result:
 - If initial claims > 250K → subtract 1
 - If initial claims > 280K → stronger negative penalty
 
-These rules are part of the growth scoring block in `engine.py` 
+These rules are part of the growth scoring block in `engine.py`.
 
 ---
 
@@ -75,7 +75,7 @@ Liquidity is based on SLOOS and Fed assets growth.
 - Fed assets growth > 0.0 → add `+2`
 - Fed assets growth <= 0.0 → subtract `2`
 
-This is the engine’s existing liquidity logic and remains part of the core score set 
+This is the engine’s existing liquidity logic and remains part of the core score set.
 
 ---
 
@@ -90,7 +90,7 @@ Credit spreads are scored using HY OAS.
 - > 5.0 to 6.0 → `-3`
 - > 6.0 → `-5`
 
-These thresholds are implemented directly in `engine.py` 
+These thresholds are implemented directly in `engine.py`.
 
 ---
 
@@ -113,7 +113,7 @@ Valuation uses Shiller CAPE, with an adjustment based on forward EPS growth and 
 - Above 25.0 but below the active ceiling → `-3`
 - Above the active ceiling → `-5`
 
-This logic is implemented in `engine.py` and is one of the more important parts of the model 
+This logic is implemented in `engine.py` and is one of the more important parts of the model.
 
 ---
 
@@ -133,7 +133,7 @@ Market stress is based on VIX, then adjusted by STLFSI.
 - STLFSI between 1.0 and 2.0 → subtract 3 from market stress and momentum
 - STLFSI > 2.0 → force market stress = `-10`, momentum = `-10`, and valuation cannot be better than `-5`
 
-These rules are part of the engine’s stress logic 
+These rules are part of the engine’s stress logic.
 
 ---
 
@@ -147,7 +147,7 @@ Momentum is based on SPX distance from its 200-day moving average.
 - -5.0% to < 0.0% → `-3`
 - Below -5.0% → `-5`
 
-This is the `pct_dist_200_sma` logic in the engine 
+This is the `pct_dist_200_sma` logic in the engine.
 
 ---
 
@@ -162,7 +162,7 @@ Drawdown is based on the decline from the peak close in the loaded SPX series.
 - 15.0% to 20.0% → `-3`
 - Above 20.0% → `-5`
 
-This is the `drawdown_pct` logic in the engine 
+This is the `drawdown_pct` logic in the engine.
 
 ---
 
@@ -234,7 +234,7 @@ This helps distinguish a supportive market from one that is only stable on the s
 
 ## 12) Liquidity Pressure
 
-This is a derived “tightness” measure. Higher values mean conditions are more restrictive.
+This is a derived tightness measure. Higher values mean conditions are more restrictive.
 
 ### Scoring
 - Pressure <= 0.5 → `+1`
@@ -250,6 +250,43 @@ This signal rises when multiple liquidity conditions are tight, such as:
 - STLFSI is elevated
 - real yields are high
 - MOVE is elevated
+
+---
+
+## 13) DXY Overlay
+
+The dollar overlay is trend-confirmed and level-aware.
+
+### Derived fields
+- `dxy_sma_5`
+- `dxy_sma_20`
+- `dxy_trend_up`
+- `dxy_range_regime`
+
+### DXY range regime bands
+- below 95 → `WEAK`
+- 95 to < 101 → `NORMAL`
+- 101 to < 105 → `STRONG`
+- 105 to < 110 → `VERY STRONG`
+- 110 and above → `EXTREME`
+
+### Policy rule
+Apply a DXY tilt only when all of the following are true:
+- DXY spot is above `103.5`
+- DXY trend is up
+- regime is either `RISK-ON OVERRIDE` or `OPTIMIZED NEUTRAL`
+
+### Allocation effect
+- shift `5%` from `I` to `C`
+- whole-number style, tactical, and transparent
+- do **not** apply in:
+  - `DEFENSIVE ALLOCATION`
+  - `EMERGENCY DISPATCH`
+
+### Interpretation
+- A strong and rising dollar is typically a mild headwind to the I Fund
+- The engine uses confirmation from the short-term trend, not just the level
+- This is intentionally narrower than the old level-only dollar rule
 
 ---
 
@@ -290,7 +327,7 @@ Triggered by panic conditions or override logic.
 
 The existing panic valve logic remains intact and can force maximum defense when short-term market stress is severe.
 
-These regime rules are defined in `determine_allocation()` in `engine.py` and reflected in the app’s regime cards and decision breakdown  
+These regime rules are defined in `determine_allocation()` in `engine.py` and reflected in the app’s regime cards and decision breakdown.
 
 ---
 
@@ -311,17 +348,12 @@ These regime rules are defined in `determine_allocation()` in `engine.py` and re
 - Inflation shock: did inflation surprise the market?
 - Central bank stance: is policy supportive or restrictive?
 - Liquidity pressure: are conditions tightening across multiple channels?
+- DXY overlay: is the dollar strong, rising, and a mild headwind to I Fund exposure?
 
 ---
 
 # Important note
 
-The app’s factor tables and decision breakdown currently show the original 8 factor categories, so if you want the UI to display the new macro overlay scores explicitly, the app should be updated to include those rows too  
+The app’s factor tables and decision breakdown should now show the macro overlay scores explicitly, including the DXY context fields, so the UI remains transparent and aligned with the engine.
 
-If you want, I can do the next step and generate the updated `app.py` changes so the UI shows:
-- yield curve
-- inflation shock
-- central bank stance
-- liquidity pressure
-
-in the factor score table, interpretation panel, and market snapshot.
+If you want, the next step can be a full updated `app.py` pass to ensure the UI labels and source display match this guide exactly.
