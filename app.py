@@ -666,8 +666,11 @@ def main():
 
             st.write(f"- Normal drift threshold: `{float(normal_drift_threshold_pct):.2f}%`")
             st.write(f"- Score change threshold: `{int(score_change_threshold)}`")
-            st.write(f"- Recent regime history: `{state['recent_regimes'][-confirmation_days:] if state['recent_regimes'] else []}`")
-            st.write(f"- Recent score history: `{state['recent_scores'][-confirmation_days:] if state['recent_scores'] else []}`")
+            st.write(
+                f"- Confirmation rule: requires {confirmation_days} stable days plus 1 prior point for score-change comparison."
+            )
+            st.write(f"- Recent regime history: `{state['recent_regimes'][-(confirmation_days + 1):] if state['recent_regimes'] else []}`")
+            st.write(f"- Recent score history: `{state['recent_scores'][-(confirmation_days + 1):] if state['recent_scores'] else []}`")
             st.write(f"- Final IFT recommendation: **{action}**")
             st.write(f"- Reason: {reason}")
 
