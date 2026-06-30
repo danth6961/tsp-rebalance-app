@@ -465,7 +465,7 @@ def derive_macro_overlays(market: Dict[str, Any]) -> Dict[str, float]:
     bond_yield_3m = clean_and_parse_float(market.get("bond_yield_3m"))
 
     if bond_yield_3m is None:
-        bond_yield_3m = fetch_fred_latest("DGS3MO", market.get("fred_api_key"))  # safe fallback if available
+        bond_yield_3m = fetch_fred_latest("DGS3MO", market.get("fred_api_key"))
 
     if bond_yield_3m is not None:
         treasury_10y_3m_spread = round(bond_yield_10y - bond_yield_3m, 3)
@@ -502,6 +502,39 @@ def derive_macro_overlays(market: Dict[str, Any]) -> Dict[str, float]:
         "inflation_shock": inflation_shock,
         "central_bank_stance": central_bank_stance,
         "liquidity_pressure": min(liquidity_pressure, 5.0),
+    }
+
+
+def derive_dxy_overlay(dxy_closes: List[float]) -> Dict[str, Any]:
+    if not dxy_closes:
+        return {
+            "dxy_sma_5": 0.0,
+            "dxy_sma_20": 0.0,
+            "dxy_trend_up": False,
+            "dxy_range_regime": "UNKNOWN",
+        }
+
+    latest = float(dxy_closes[-1])
+    sma_5 = sum(dxy_closes[-5:]) / min(len(dxy_closes), 5)
+    sma_20 = sum(dxy_closes[-20:]) / min(len(dxy_closes), 20)
+    trend_up = sma_5 > sma_20
+
+    if latest < 95:
+        regime = "WEAK"
+    elif latest < 101:
+        regime = "NORMAL"
+    elif latest < 105:
+        regime = "STRONG"
+    elif latest < 110:
+        regime = "VERY STRONG"
+    else:
+        regime = "EXTREME"
+
+    return {
+        "dxy_sma_5": round(sma_5, 2),
+        "dxy_sma_20": round(sma_20, 2),
+        "dxy_trend_up": trend_up,
+        "dxy_range_regime": regime,
     }
 
 
@@ -694,6 +727,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     }
 
     market_data.update(derive_macro_overlays(market_data))
+    market_data.update(derive_dxy_overlay(dxy_closes))
 
     market_sources = {
         "core_pce_yoy": pce_source,
@@ -721,6 +755,10 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "inflation_shock": "DERIVED",
         "central_bank_stance": "DERIVED",
         "liquidity_pressure": "DERIVED",
+        "dxy_sma_5": "DERIVED",
+        "dxy_sma_20": "DERIVED",
+        "dxy_trend_up": "DERIVED",
+        "dxy_range_regime": "DERIVED",
     }
 
     return {"market_data": market_data, "market_sources": market_sources}
