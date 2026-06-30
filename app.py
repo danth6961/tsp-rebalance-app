@@ -234,13 +234,46 @@ def main():
         with st.expander("💼 Current Allocation", expanded=True):
             st.caption("Startup allocation is set to the tactical neutral baseline: G 40 / C 30 / I 20 / S 10 / F 0.")
             current_alloc = {
-                "G": st.number_input("G Fund %", value=float(cfg["current_alloc"]["G"]), step=1.0),
-                "C": st.number_input("C Fund %", value=float(cfg["current_alloc"]["C"]), step=1.0),
-                "I": st.number_input("I Fund %", value=float(cfg["current_alloc"]["I"]), step=1.0),
-                "S": st.number_input("S Fund %", value=float(cfg["current_alloc"]["S"]), step=1.0),
-                "F": st.number_input("F Fund %", value=float(cfg["current_alloc"]["F"]), step=1.0),
+                "G": st.number_input(
+                    "G Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["G"]),
+                    step=1.0,
+                ),
+                "C": st.number_input(
+                    "C Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["C"]),
+                    step=1.0,
+                ),
+                "I": st.number_input(
+                    "I Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["I"]),
+                    step=1.0,
+                ),
+                "S": st.number_input(
+                    "S Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["S"]),
+                    step=1.0,
+                ),
+                "F": st.number_input(
+                    "F Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["F"]),
+                    step=1.0,
+                ),
             }
-
+        total_alloc = sum(current_alloc.values())
+        if abs(total_alloc - 100.0) > 0.5:
+            st.warning(f"Current allocation totals {total_alloc:.1f}%. Expected 100.0%.")
+    
         with st.expander("🛡️ Rules", expanded=False):
             allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg["allow_second_ift"]))
             normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg["normal_drift_threshold_pct"]), step=0.5)
