@@ -221,11 +221,22 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     return scores
 
 
+def _regime_rank(name: str) -> int:
+    order = {
+        "EMERGENCY DISPATCH": 3,
+        "DEFENSIVE ALLOCATION": 2,
+        "OPTIMIZED NEUTRAL": 1,
+        "RISK-ON OVERRIDE": 0,
+    }
+    return order.get(name, 1)
+
+
 def determine_allocation(
     data: Dict[str, Any],
     scores: Dict[str, int],
     override_active: bool = False,
     override_regime: str = "OPTIMIZED NEUTRAL",
+    previous_regime: Optional[str] = None,
 ):
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
@@ -304,8 +315,9 @@ def determine_allocation(
         composite_score = min(composite_score, -5)
         return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
+    candidate_regime = "DEFENSIVE ALLOCATION"
     if (
-        composite_score >= 5
+        composite_score >= 7
         and pce < 2.0
         and cape < 26.0
         and not momentum_breaker
@@ -314,17 +326,38 @@ def determine_allocation(
         and not policy_restrictive
         and not liquidity_tight
     ):
-        regime_name = "RISK-ON OVERRIDE"
-        base_alloc = {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0}
+        candidate_regime = "RISK-ON OVERRIDE"
     elif composite_score >= 0 and not curve_deeply_inverted and not policy_aggressive:
-        regime_name = "OPTIMIZED NEUTRAL"
+        candidate_regime = "OPTIMIZED NEUTRAL"
+
+    if previous_regime == "RISK-ON OVERRIDE" and candidate_regime == "OPTIMIZED NEUTRAL":
+        if composite_score >= 4 and not curve_inverted and not policy_restrictive and not liquidity_tight:
+            candidate_regime = "RISK-ON OVERRIDE"
+
+    if previous_regime == "OPTIMIZED NEUTRAL" and candidate_regime == "DEFENSIVE ALLOCATION":
+        if composite_score >= -1 and not curve_deeply_inverted and not policy_aggressive:
+            candidate_regime = "OPTIMIZED NEUTRAL"
+
+    if previous_regime == "DEFENSIVE ALLOCATION" and candidate_regime == "OPTIMIZED NEUTRAL":
+        if composite_score < 3 or liquidity_tight or policy_restrictive:
+            candidate_regime = "DEFENSIVE ALLOCATION"
+
+    if previous_regime == "DEFENSIVE ALLOCATION" and candidate_regime == "RISK-ON OVERRIDE":
+        if composite_score < 9 or curve_inverted or inflation_shock_up or policy_restrictive or liquidity_tight:
+            candidate_regime = "OPTIMIZED NEUTRAL"
+
+    regime_name = candidate_regime
+
+    if regime_name == "RISK-ON OVERRIDE":
+        base_alloc = {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0}
+    elif regime_name == "OPTIMIZED NEUTRAL":
         base_alloc = {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0}
     else:
-        regime_name = "DEFENSIVE ALLOCATION"
         base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
 
     if scores.get("valuation") == -5 and safe_float(data.get("vix_spot"), 0.0) > 24.0:
         base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
+        regime_name = "DEFENSIVE ALLOCATION"
 
     if f_fund_unlocked and base_alloc["G"] >= 10:
         base_alloc["G"] -= 10
@@ -348,10 +381,15 @@ def build_engine_result(
     data: Dict[str, Any],
     override_active: bool = False,
     override_regime: str = "OPTIMIZED_NEUTRAL",
+    previous_regime: Optional[str] = None,
 ):
     scores = score_market_data(data)
     allocations, scores, composite_score, regime_name, base_alloc, vol_t, dxy_t = determine_allocation(
-        data, scores, override_active=override_active, override_regime=override_regime
+        data,
+        scores,
+        override_active=override_active,
+        override_regime=override_regime,
+        previous_regime=previous_regime,
     )
     return {
         "allocations": allocations,
