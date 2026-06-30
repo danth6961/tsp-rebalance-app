@@ -28,6 +28,12 @@ DEFAULTS = {
     "vix_spot": 19.0,
     "dxy_spot": 105.80,
     "spx_spot": 5000.0,
+    "yield_curve_slope": 0.0,
+    "inflation_trend": 0.0,
+    "labor_trend": 0.0,
+    "vol_term_structure": 0.0,
+    "commodity_shock": 0.0,
+    "earnings_breadth": 0.0,
 }
 
 PROXIES = {
