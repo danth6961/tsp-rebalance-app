@@ -246,6 +246,7 @@ def determine_allocation(
     move_index = safe_float(data.get("move_index"), DEFAULTS["move_index"])
     bond_yield = safe_float(data.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
     dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
+    dxy_trend_up = bool(data.get("dxy_trend_up", False))
     market_breadth = safe_float(data.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
     vix_3d_panic = bool(data.get("vix_3d_panic", False))
     spx_3d_panic = bool(data.get("spx_3d_panic", False))
@@ -259,7 +260,7 @@ def determine_allocation(
     momentum_breaker = scores.get("momentum", 0) <= -3
     asymmetric_vol_trigger = scores.get("market_stress", 0) <= -3 or scores.get("momentum", 0) <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
-    dxy_strong = dxy_spot >= 103.5
+    dxy_strong = dxy_spot >= 103.5 and dxy_trend_up
     panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth is not None and market_breadth <= 60.0)
 
     curve_inverted = treasury_10y_3m_spread < 0.0
@@ -298,7 +299,7 @@ def determine_allocation(
             s_w = alloc["S"]
             alloc["S"] = 0
             alloc["G"] += s_w
-        if dxy_strong and alloc["I"] >= 5:
+        if dxy_strong and regime_name in ("RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL") and alloc["I"] >= 5:
             alloc["I"] -= 5
             alloc["C"] += 5
 
@@ -338,7 +339,7 @@ def determine_allocation(
         s_w = alloc["S"]
         alloc["S"] = 0
         alloc["G"] += s_w
-    if dxy_strong and alloc["I"] >= 5:
+    if dxy_strong and regime_name in ("RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL") and alloc["I"] >= 5:
         alloc["I"] -= 5
         alloc["C"] += 5
 
