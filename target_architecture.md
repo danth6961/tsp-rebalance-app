@@ -372,8 +372,3 @@ The best architecture is:
 - data acquisition only in `data_sources.py`
 - typed contracts in `models.py`
 - shared helpers in `utils.py`
-
-If you want, I can also turn this into:
-1. a shorter architecture note,
-2. a migration checklist,
-3. or a module-by-module refactor task list.
