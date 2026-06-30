@@ -92,8 +92,10 @@ EDITABLE_KEYS = [
     "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
     "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
     "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
+    "bond_yield_3m",
     "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot",
-    "pct_dist_200_sma", "drawdown_pct"
+    "pct_dist_200_sma", "drawdown_pct",
+    "treasury_10y_3m_spread", "inflation_shock", "central_bank_stance", "liquidity_pressure",
 ]
 
 
@@ -163,7 +165,6 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
 
     current_count = int(state.get("ift_count_this_month", 0))
 
-    # TSP-safe exception: a pure move to G does not consume a monthly IFT.
     if is_pure_g_move(target_alloc):
         state["last_ift_date"] = today.isoformat()
         state["last_run_date"] = today.isoformat()
@@ -171,7 +172,6 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
         st.success("G Fund safety move recorded (does not count as a monthly IFT).")
         return
 
-    # Hard stop: never allow more than 2 IFTs in a month.
     if current_count >= 2:
         st.warning("IFT not confirmed: monthly IFT limit of 2 has already been reached.")
         return
@@ -521,6 +521,10 @@ def main():
             ("market_stress", "Market Stress"),
             ("momentum", "Momentum"),
             ("drawdown", "Drawdown"),
+            ("yield_curve", "Yield Curve"),
+            ("inflation_shock", "Inflation Shock"),
+            ("central_bank", "Central Bank"),
+            ("liquidity_pressure", "Liquidity Pressure"),
         ]:
             val = result["scores"].get(key, 0)
             factor_items.append({
@@ -553,6 +557,11 @@ def main():
             ("Drawdown %", "drawdown_pct", "DERIVED"),
             ("STLFSI", "stlfsi_index", st.session_state.get("stlfsi_index_source")),
             ("10Y Yield", "bond_yield_10y", st.session_state.get("bond_yield_10y_source")),
+            ("3M Yield", "bond_yield_3m", st.session_state.get("bond_yield_3m_source")),
+            ("10Y-3M Spread", "treasury_10y_3m_spread", "DERIVED"),
+            ("Inflation Shock", "inflation_shock", "DERIVED"),
+            ("Central Bank Stance", "central_bank_stance", "DERIVED"),
+            ("Liquidity Pressure", "liquidity_pressure", "DERIVED"),
             ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
             ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
             ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
@@ -597,6 +606,10 @@ def main():
                 ("Market Stress", "market_stress", "VIX / STLFSI"),
                 ("Momentum", "momentum", "200SMA distance / STLFSI"),
                 ("Drawdown", "drawdown", "Peak-to-trough decline"),
+                ("Yield Curve", "yield_curve", "10Y - 3M Treasury Spread"),
+                ("Inflation Shock", "inflation_shock", "Inflation surprise vs anchor"),
+                ("Central Bank", "central_bank", "Fed stance / real yields / curve"),
+                ("Liquidity Pressure", "liquidity_pressure", "SLOOS / Fed assets / STLFSI / MOVE"),
             ]
 
             factor_rows = []
@@ -636,6 +649,10 @@ def main():
                 ("market_stress", "Market Stress"),
                 ("momentum", "Momentum"),
                 ("drawdown", "Drawdown"),
+                ("yield_curve", "Yield Curve"),
+                ("inflation_shock", "Inflation Shock"),
+                ("central_bank", "Central Bank"),
+                ("liquidity_pressure", "Liquidity Pressure"),
             ]:
                 val = result["scores"].get(key, 0)
                 if val > 0:
@@ -674,6 +691,7 @@ def main():
                 st.write(f"- F Fund unlocked: `{'Yes' if result['base_alloc'].get('F', 0) > 0 else 'No'}`")
                 st.write(f"- Asymmetric volatility trigger: `{'Yes' if result['asymmetric_vol_trigger'] else 'No'}`")
                 st.write(f"- Strong DXY adjustment: `{'Yes' if result['dxy_strong'] else 'No'}`")
+                st.write(f"- Macro overlays active: `{'Yes' if any(result['scores'].get(k, 0) != 0 for k in ['yield_curve', 'inflation_shock', 'central_bank', 'liquidity_pressure']) else 'No'}`")
 
             st.markdown("**Final Target Allocation**")
             st.dataframe(
