@@ -35,6 +35,11 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     drawdown = safe_float(data.get("drawdown_pct"), 0.0)
     stlfsi = safe_float(data.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
 
+    treasury_10y_3m_spread = safe_float(data.get("treasury_10y_3m_spread"), 0.0)
+    inflation_shock = safe_float(data.get("inflation_shock"), 0.0)
+    central_bank_stance = safe_float(data.get("central_bank_stance"), 0.0)
+    liquidity_pressure = safe_float(data.get("liquidity_pressure"), 0.0)
+
     if pce < 1.8:
         scores["inflation"] = 3
     elif pce < 2.0:
@@ -63,7 +68,6 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["growth"] = -5
 
-    # Prevent the >250k penalty from executing if claims have already breached the severe >280k cap
     if initial_claims > 280.0:
         scores["growth"] = min(scores["growth"], -3) - 1
     elif initial_claims > 250.0:
@@ -140,6 +144,52 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["drawdown"] = -5
 
+    if treasury_10y_3m_spread > 1.0:
+        scores["yield_curve"] = 2
+    elif treasury_10y_3m_spread > 0.5:
+        scores["yield_curve"] = 1
+    elif treasury_10y_3m_spread >= 0.0:
+        scores["yield_curve"] = 0
+    elif treasury_10y_3m_spread >= -0.5:
+        scores["yield_curve"] = -2
+    else:
+        scores["yield_curve"] = -4
+
+    if inflation_shock <= -0.2:
+        scores["inflation_shock"] = 2
+    elif inflation_shock <= 0.0:
+        scores["inflation_shock"] = 0
+    elif inflation_shock <= 0.2:
+        scores["inflation_shock"] = -1
+    elif inflation_shock <= 0.3:
+        scores["inflation_shock"] = -3
+    else:
+        scores["inflation_shock"] = -4
+
+    if central_bank_stance >= 2.0:
+        scores["central_bank"] = 2
+    elif central_bank_stance >= 1.0:
+        scores["central_bank"] = 1
+    elif central_bank_stance <= -3.0:
+        scores["central_bank"] = -4
+    elif central_bank_stance <= -2.0:
+        scores["central_bank"] = -3
+    elif central_bank_stance < 0.0:
+        scores["central_bank"] = -1
+    else:
+        scores["central_bank"] = 0
+
+    if liquidity_pressure <= 0.5:
+        scores["liquidity_pressure"] = 1
+    elif liquidity_pressure <= 1.5:
+        scores["liquidity_pressure"] = 0
+    elif liquidity_pressure <= 2.5:
+        scores["liquidity_pressure"] = -1
+    elif liquidity_pressure <= 3.5:
+        scores["liquidity_pressure"] = -3
+    else:
+        scores["liquidity_pressure"] = -5
+
     if 0.0 <= stlfsi <= 1.0:
         scores["market_stress"] -= 1
         scores["momentum"] -= 1
@@ -150,6 +200,23 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
         scores["market_stress"] = -10
         scores["momentum"] = -10
         scores["valuation"] = min(scores["valuation"], -5)
+
+    if treasury_10y_3m_spread < 0.0 and inflation_shock > 0.2:
+        scores["growth"] -= 1
+        scores["market_stress"] -= 1
+        scores["momentum"] -= 1
+
+    if central_bank_stance <= -2.0 and liquidity_pressure >= 3.0:
+        scores["market_stress"] -= 2
+        scores["liquidity"] -= 2
+        scores["valuation"] -= 1
+
+    if treasury_10y_3m_spread < -0.5:
+        scores["growth"] -= 1
+        scores["valuation"] -= 1
+
+    if inflation_shock > 0.3:
+        scores["inflation"] -= 1
 
     return scores
 
@@ -171,7 +238,6 @@ def determine_allocation(
             base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
             return base_alloc, scores, -5, "DEFENSIVE ALLOCATION", base_alloc, False, False
 
-        # Default fallback is Emergency Dispatch Override
         base_alloc = {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0}
         return base_alloc, scores, -50, "EMERGENCY DISPATCH", base_alloc, False, False
 
@@ -184,12 +250,26 @@ def determine_allocation(
     vix_3d_panic = bool(data.get("vix_3d_panic", False))
     spx_3d_panic = bool(data.get("spx_3d_panic", False))
 
+    treasury_10y_3m_spread = safe_float(data.get("treasury_10y_3m_spread"), 0.0)
+    inflation_shock = safe_float(data.get("inflation_shock"), 0.0)
+    central_bank_stance = safe_float(data.get("central_bank_stance"), 0.0)
+    liquidity_pressure = safe_float(data.get("liquidity_pressure"), 0.0)
+
     composite_score = sum(scores.values())
     momentum_breaker = scores.get("momentum", 0) <= -3
     asymmetric_vol_trigger = scores.get("market_stress", 0) <= -3 or scores.get("momentum", 0) <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
     dxy_strong = dxy_spot >= 103.5
     panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth is not None and market_breadth <= 60.0)
+
+    curve_inverted = treasury_10y_3m_spread < 0.0
+    curve_deeply_inverted = treasury_10y_3m_spread < -0.5
+    inflation_shock_up = inflation_shock > 0.2
+    inflation_shock_severe = inflation_shock > 0.3
+    policy_restrictive = central_bank_stance <= -2.0
+    policy_aggressive = central_bank_stance <= -3.0
+    liquidity_tight = liquidity_pressure >= 3.0
+    liquidity_very_tight = liquidity_pressure >= 4.0
 
     if panic_valve_triggered:
         regime_name = "EMERGENCY DISPATCH"
@@ -199,10 +279,47 @@ def determine_allocation(
         final_alloc = {k: round(v / total * 100, 1) for k, v in alloc.items()}
         return final_alloc, scores, composite_score, regime_name, alloc, asymmetric_vol_trigger, dxy_strong
 
-    if composite_score >= 5 and pce < 2.0 and cape < 26.0 and not momentum_breaker:
+    macro_defensive_trigger = (
+        (curve_deeply_inverted and inflation_shock_up)
+        or (policy_aggressive and liquidity_very_tight)
+        or (curve_inverted and policy_restrictive and liquidity_tight)
+    )
+
+    if macro_defensive_trigger:
+        regime_name = "DEFENSIVE ALLOCATION"
+        base_alloc = {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0}
+
+        if f_fund_unlocked and base_alloc["G"] >= 10:
+            base_alloc["G"] -= 10
+            base_alloc["F"] += 10
+
+        alloc = base_alloc.copy()
+        if asymmetric_vol_trigger:
+            s_w = alloc["S"]
+            alloc["S"] = 0
+            alloc["G"] += s_w
+        if dxy_strong and alloc["I"] >= 5:
+            alloc["I"] -= 5
+            alloc["C"] += 5
+
+        total = sum(alloc.values()) or 100
+        final_alloc = {k: round((v / total) * 100, 1) for k, v in alloc.items()}
+        composite_score = min(composite_score, -5)
+        return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
+
+    if (
+        composite_score >= 5
+        and pce < 2.0
+        and cape < 26.0
+        and not momentum_breaker
+        and not curve_inverted
+        and not inflation_shock_up
+        and not policy_restrictive
+        and not liquidity_tight
+    ):
         regime_name = "RISK-ON OVERRIDE"
         base_alloc = {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0}
-    elif composite_score >= 0:
+    elif composite_score >= 0 and not curve_deeply_inverted and not policy_aggressive:
         regime_name = "OPTIMIZED NEUTRAL"
         base_alloc = {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0}
     else:
@@ -282,19 +399,15 @@ def should_use_tsp_ift(
     if last_ift_date is not None and (today - last_ift_date).days < cooldown_days:
         return False, f"Cooldown active ({cooldown_days} days)"
 
-    # Emergency override is the only fast path.
     if emergency_triggered:
         return True, "Emergency trigger activated"
 
-    # Preserve final IFT reserve unless the user explicitly allows a second IFT.
     if ift_count_this_month >= 1 and not allow_second_ift:
         return False, "Preserving final IFT reserve"
 
-    # Require a full confirmation window plus one prior point for score-change comparison.
     if len(recent_regimes) < confirmation_days + 1 or len(recent_scores) < confirmation_days + 1:
         return False, "Insufficient confirmation history"
 
-    # The most recent confirmation window must be stable.
     if len(set(recent_regimes[-confirmation_days:])) != 1:
         return False, "Regime not yet confirmed"
 
