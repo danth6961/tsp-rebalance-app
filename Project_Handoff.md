@@ -1,4 +1,4 @@
-# PROJECT_HANDOFF.md
+# Project Handoff
 
 ## Purpose
 
@@ -75,7 +75,26 @@ These are the current tactical baselines:
 - S 0
 - F 10
 
-The current baseline allocations are stored in `constants.py`, and `engine.py` should match them exactly. `app.py` also displays the same regime cards in the UI.   
+The current baseline allocations are stored in `constants.py`, and `engine.py` should match them exactly. `app.py` also displays the same regime cards in the UI.
+
+---
+
+## Manual IFT and G Fund behavior
+
+### Normal IFTs
+Normal IFT confirmations:
+- are manual
+- increment the monthly IFT counter
+- write to the transaction audit trail
+- must respect the 2-IFT monthly limit
+
+### Pure G Fund safety move
+A pure 100% G allocation is treated as a TSP-safe safety move:
+- it does not consume a monthly IFT
+- it does not count toward the normal 2-IFT cap
+- it is still recorded by the app as a safety action
+
+This is meant to support the TSP rule that moving to G can be handled as a special safety path.
 
 ---
 
@@ -93,8 +112,9 @@ Current responsibilities:
 - transaction history display
 - daily log export
 - manual IFT submit button
+- G Fund safety move handling
 
-The app also contains the detailed “Engine Decision Breakdown” section and the regime summary cards.  
+The app also contains the detailed “Engine Decision Breakdown” section and the regime summary cards.
 
 ### `engine.py`
 Core decision logic.
@@ -108,7 +128,10 @@ It:
 - applies asymmetric volatility and strong DXY adjustments
 - determines IFT eligibility
 
-Important: `engine.py` should use the same baseline regime allocations as `constants.py`. Its emergency and F Fund overlay logic are still important and should remain intact.  
+Important:
+- `engine.py` should use the same baseline regime allocations as `constants.py`
+- emergency and F Fund overlay logic should remain intact
+- the current IFT gating logic still needs review if you want it stricter and more conservative
 
 ### `data_sources.py`
 External data acquisition.
@@ -123,8 +146,6 @@ It stores:
 - state
 - daily run log
 - transaction audit trail
-
-Important note: the default config still has an older starting allocation of `G 40 / C 30 / I 20 / S 5 / F 5`, so if you want startup defaults to match the new regime philosophy, update that later. 
 
 ### `ui.py`
 Reusable UI helpers.
@@ -145,7 +166,7 @@ Current important values:
 - default market inputs
 - baseline allocations
 
-`BASELINE_ALLOCATIONS` is already updated to the new tactical regime set. 
+`BASELINE_ALLOCATIONS` includes the tactical regime set and may still contain leftover experimental entries that should be reviewed if you want the cleanest setup.
 
 ### `models.py`
 Typed dataclasses for:
@@ -228,8 +249,8 @@ Make sure these stay aligned:
 ### 2) Transaction history should reflect actual confirmations
 Only confirmed IFTs should be written to `tsp_transactions.csv`.
 
-### 3) Default config still needs review
-If you want startup allocation to reflect the new tactical framework, update the default current allocation in `storage.py`.
+### 3) IFT gate could still be tightened further
+The current app now supports a G-only safety move path, but the underlying engine eligibility logic may still be more permissive than desired if you want stricter turnover control.
 
 ---
 
@@ -237,9 +258,9 @@ If you want startup allocation to reflect the new tactical framework, update the
 
 1. Verify `engine.py` allocations match `constants.py`.
 2. Verify `app.py` regime card labels match `constants.py`.
-3. Decide whether to update `storage.py` default current allocation.
-4. Remove any remaining automatic IFT count / auto-transaction logging if it still exists.
-5. Consider making the detailed decision breakdown a little more compact or more visual.
+3. Decide whether to remove any leftover experimental entries from `constants.py`.
+4. Consider tightening `should_use_tsp_ift()` further if the user wants even less turnover.
+5. Consider adding a clearer visual cue in the sidebar for the G-only safety move.
 6. Consider adding a “data source health” section so the app clearly shows when it is using fallback/default values.
 
 ---
@@ -257,10 +278,9 @@ The user prefers:
   - Defensive 70/15/10/5
 
 The user also wants:
-- a more detailed engine reasoning section
-- cleaner transaction history display
 - safer IFT handling
 - beginner-friendly guidance
+- clear separation between recommendation and confirmation
 
 ---
 
@@ -277,9 +297,9 @@ Keep all of them synchronized.
 If you change the IFT workflow:
 - ensure only one path updates count/history
 - recommendation should remain separate from confirmation
+- G-only safety moves should be visually obvious
 
 ---
 
 ## Short summary for the next AI
-
-This is a tactical TSP engine with updated allocations, manual IFT confirmation, and a detailed decision UI. The main remaining risk is file mismatch between `engine.py`, `app.py`, `constants.py`, and `storage.py`. Keep the baseline regime allocations synchronized and preserve the manual confirmation workflow.
+This is a tactical TSP engine with updated allocations, manual IFT confirmation, a pure G Fund safety move path, and a detailed decision UI. The main remaining risk is file mismatch between `engine.py`, `app.py`, `constants.py`, and `storage.py`. Keep the baseline regime allocations synchronized and preserve the manual confirmation workflow.
