@@ -229,7 +229,6 @@ def main():
             )
 
         st.divider()
-        # Safely check Streamlit Secrets first, falling back to config file defaults
         secrets_key = ""
         try:
             if "FRED_API_KEY" in st.secrets:
@@ -239,16 +238,14 @@ def main():
         except Exception:
             pass
 
-        # Use the secret key if found, otherwise fall back to local config
         initial_fred_key = secrets_key if secrets_key else str(cfg.get("fred_api_key", ""))
 
         st.divider()
         fred_api_key = st.text_input("FRED API Key", value=initial_fred_key, type="password")
 
         st.divider()
-
-        # Button label will be updated after the engine runs; keep a safe default here.
         confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True)
+        st.caption("After a run, this becomes a G-only safety move when the target is 100% G.")
 
         st.divider()
         save_cfg = st.button("💾 Save Config", use_container_width=True)
@@ -298,15 +295,17 @@ def main():
             TRANSACTION_FILE.unlink()
         st.rerun()
 
-    # Handle the sidebar button using the latest result if available.
     if confirm_ift_btn:
         target_alloc = result["allocations"] if "result" in locals() else current_alloc
         if is_pure_g_move(target_alloc):
             confirm_ift_used(today, current_alloc, target_alloc, "G FUND SAFETY MOVE")
             st.sidebar.success("G Fund safety move recorded.")
         else:
-            confirm_ift_used(today, current_alloc, target_alloc, "MANUAL IFT")
-            st.sidebar.success("IFT confirmed and saved.")
+            if int(state.get("ift_count_this_month", 0)) >= 2:
+                st.sidebar.warning("Monthly IFT limit reached. Normal IFT submission blocked.")
+            else:
+                confirm_ift_used(today, current_alloc, target_alloc, "MANUAL IFT")
+                st.sidebar.success("IFT confirmed and saved.")
         st.rerun()
 
     if run:
@@ -377,23 +376,6 @@ def main():
 
         action = "SUBMIT IFT" if use_ift else "HOLD"
 
-        # Update button label after the engine has run so the user sees the correct action.
-        if is_pure_g_move(result["allocations"]):
-            st.sidebar.caption("Engine result is a pure G safety move.")
-            confirm_btn_label = "✅ Move to G Only"
-        else:
-            confirm_btn_label = "✅ Submit IFT"
-
-        # Show a reminder when normal IFT limit has been reached.
-        if int(state.get("ift_count_this_month", 0)) >= 2 and not is_pure_g_move(result["allocations"]):
-            st.sidebar.error("Monthly IFT limit reached. Normal IFTs are blocked.")
-
-        # Re-rendering the sidebar button dynamically inside the main area is not practical,
-        # so we rely on the generic button above and use the click handler logic below.
-        # The caption below tells the user what the current action is.
-        st.sidebar.caption(f"Current confirmation action: {confirm_btn_label}")
-
-        # Initialize tracking lists in state if they do not exist
         if "recent_regimes" not in state:
             state["recent_regimes"] = []
         if "recent_scores" not in state:
@@ -401,7 +383,6 @@ def main():
         if "recent_allocations" not in state:
             state["recent_allocations"] = []
 
-        # Commit current run's metrics to persistent history
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
         state["recent_allocations"].append(result["allocations"])
