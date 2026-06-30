@@ -469,7 +469,7 @@ def main():
                 "score": "Score: -50",
                 "profile": "Maximum Defense",
                 "alloc": "Base: G 90% / F 10% (or G 100% / F 0%)",
-                "desc": "3-day panic valve breach.",
+                "desc": "Triggered by the panic valve; F Fund is added only if the unlock rule is satisfied.",
                 "color": "#ef4444",
                 "bg": "rgba(239, 68, 68, 0.08)"
             }
