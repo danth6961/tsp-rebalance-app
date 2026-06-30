@@ -179,7 +179,6 @@ def main():
 
         with st.expander("💼 Current Allocation", expanded=True):
             st.caption("Startup allocation is set to the tactical neutral baseline: G 40 / C 30 / I 20 / S 10 / F 0.")
-            st.caption("The engine may recommend a different regime after it scores the current market environment.")
             current_alloc = {
                 "G": st.number_input("G Fund %", value=float(cfg["current_alloc"]["G"]), step=1.0),
                 "C": st.number_input("C Fund %", value=float(cfg["current_alloc"]["C"]), step=1.0),
