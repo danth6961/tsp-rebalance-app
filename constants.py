@@ -23,6 +23,7 @@ DEFAULTS = {
     "shiller_cape": 39.66,
     "fwd_eps_growth_yoy": 30.82,
     "stlfsi_index": -0.9568,
+    "bond_yield_3m": 4.20,
     "bond_yield_10y": 4.50,
     "market_breadth_pct": 73.20,
     "vix_spot": 19.0,
