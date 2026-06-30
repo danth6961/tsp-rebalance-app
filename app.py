@@ -141,6 +141,16 @@ def load_editable_market_data():
     return {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]}
 
 
+def is_pure_g_move(target_alloc: dict) -> bool:
+    return (
+        float(target_alloc.get("G", 0.0)) == 100.0
+        and float(target_alloc.get("C", 0.0)) == 0.0
+        and float(target_alloc.get("I", 0.0)) == 0.0
+        and float(target_alloc.get("S", 0.0)) == 0.0
+        and float(target_alloc.get("F", 0.0)) == 0.0
+    )
+
+
 def confirm_ift_used(today, current_alloc, target_alloc, regime):
     state = load_state()
 
@@ -152,6 +162,14 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
         state["recent_allocations"] = []
 
     current_count = int(state.get("ift_count_this_month", 0))
+
+    # TSP-safe exception: a pure move to G does not consume a monthly IFT.
+    if is_pure_g_move(target_alloc):
+        state["last_ift_date"] = today.isoformat()
+        state["last_run_date"] = today.isoformat()
+        save_state(state)
+        st.success("G Fund safety move recorded (does not count as a monthly IFT).")
+        return
 
     # Hard stop: never allow more than 2 IFTs in a month.
     if current_count >= 2:
@@ -173,6 +191,7 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
         st.warning(f"IFT transaction log write failed: {e}")
 
     save_state(state)
+
 
 def main():
     cfg = load_config()
@@ -223,13 +242,15 @@ def main():
 
         # Use the secret key if found, otherwise fall back to local config
         initial_fred_key = secrets_key if secrets_key else str(cfg.get("fred_api_key", ""))
+
+        st.divider()
         fred_api_key = st.text_input("FRED API Key", value=initial_fred_key, type="password")
 
         st.divider()
         ift_limit_reached = int(state.get("ift_count_this_month", 0)) >= 2
-        confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True,disabled=ift_limit_reached)
+        confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True, disabled=ift_limit_reached)
         if ift_limit_reached:
-            st.sidebar.error("Monthly IFT limit reached. Manual submit is disabled.")
+            st.sidebar.error("Monthly IFT limit reached. Manual submit is disabled unless it is a pure G safety move.")
 
         st.divider()
         save_cfg = st.button("💾 Save Config", use_container_width=True)
@@ -280,8 +301,14 @@ def main():
         st.rerun()
 
     if confirm_ift_btn:
-        confirm_ift_used(today, current_alloc, {"G": current_alloc["G"], "C": current_alloc["C"], "I": current_alloc["I"], "S": current_alloc["S"], "F": current_alloc["F"]}, "MANUAL IFT")
-        st.sidebar.success("IFT confirmed and saved.")
+        target_alloc = result["allocations"] if "result" in locals() else {"G": current_alloc["G"], "C": current_alloc["C"], "I": current_alloc["I"], "S": current_alloc["S"], "F": current_alloc["F"]}
+
+        if is_pure_g_move(target_alloc):
+            confirm_ift_used(today, current_alloc, target_alloc, "G FUND SAFETY MOVE")
+        else:
+            confirm_ift_used(today, current_alloc, target_alloc, "MANUAL IFT")
+
+        st.sidebar.success("Action recorded and saved.")
         st.rerun()
 
     if run:
@@ -389,7 +416,7 @@ def main():
     result = build_engine_result(
         market_data,
         override_active=cfg.get("manual_override_enabled", False),
-        override_regime=cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
+        override_regime=cfg.get("manual_regime", "OPTIMIZED_NEUTRAL")
     )
 
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
@@ -675,9 +702,7 @@ def main():
 
             st.write(f"- Normal drift threshold: `{float(normal_drift_threshold_pct):.2f}%`")
             st.write(f"- Score change threshold: `{int(score_change_threshold)}`")
-            st.write(
-                f"- Confirmation rule: requires {confirmation_days} stable days plus 1 prior point for score-change comparison."
-            )
+            st.write(f"- Confirmation rule: requires {confirmation_days} stable days plus 1 prior point for score-change comparison.")
             st.write(f"- Recent regime history: `{state['recent_regimes'][-(confirmation_days + 1):] if state['recent_regimes'] else []}`")
             st.write(f"- Recent score history: `{state['recent_scores'][-(confirmation_days + 1):] if state['recent_scores'] else []}`")
             st.write(f"- Final IFT recommendation: **{action}**")
