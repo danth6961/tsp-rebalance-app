@@ -257,28 +257,32 @@ The current app now supports a G-only safety move path, but the underlying engin
 ## Suggested next steps for the next AI
 
 Help incorporate macro context such as:
-- Yield curve dynamics
-- Inflation shocks
-- Central bank policy and liquidity
-- Global growth trends
-- Risk-on / risk-off regimes
-- Ensure logic respects the TSP rule of only two Interfund Transfers (IFTs) per calendar month. Actively guard against:
-- Look-ahead bias
-- Data leakage
-- Excessive turnover
-- Overconcentration
-- Fragile backtests
+- yield curve dynamics
+- inflation shocks
+- central bank policy and liquidity
+- global growth trends
+- risk-on / risk-off regimes
+
+Ensure logic respects the TSP rule of only two Interfund Transfers (IFTs) per calendar month. Actively guard against:
+- look-ahead bias
+- data leakage
+- excessive turnover
+- overconcentration
+- fragile backtests
 
 ---
+
 ## Quantitative Scoring and Portfolio Logic
 
 Help review, design, and improve:
-- Momentum
-- Volatility-adjusted momentum
-- Risk parity / risk budgeting
-- Trend following
-- Defensive allocation
-- Hysteresis / buffer-zone logic
+- momentum
+- volatility-adjusted momentum
+- risk parity / risk budgeting
+- trend following
+- defensive allocation
+- hysteresis / buffer-zone logic
+
+---
 
 ## Conversation context to preserve
 
