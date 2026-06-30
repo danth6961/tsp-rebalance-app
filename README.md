@@ -1,6 +1,6 @@
 # TSP Rebalance Engine
 
-A Streamlit-based TSP (Thrift Savings Plan) tactical allocation companion app.
+A Streamlit-based TSP tactical allocation assistant.
 
 The app analyzes macro and market inputs, scores the current environment, maps it to a regime, recommends a target allocation, and helps decide whether to submit an IFT or hold. It is designed as a tactical and quantitative overlay, not as a lifecycle-fund clone.
 
@@ -88,22 +88,23 @@ The F Fund is treated as a conditional overlay only. It is added only when the e
 The scoring engine uses inputs such as:
 - Core PCE YoY
 - PMI and services PMI
-- initial claims
-- breakeven inflation
+- Initial claims
+- Breakeven inflation
 - Fed assets growth
-- real yield
+- Real yield
 - SLOOS
 - HY spread
 - CAPE
-- forward EPS growth
+- Forward EPS growth
 - VIX
 - 200-day distance
-- drawdown
+- Drawdown
 - STLFSI
 - 10Y yield
+- 3M yield
 - DXY
-- market breadth
-- panic flags
+- Market breadth
+- Panic flags
 
 ## Manual IFT workflow
 
@@ -120,7 +121,6 @@ This keeps the recommendation separate from the actual transaction.
 - `tsp_state.json` — saved state
 - `tsp_daily_log.csv` — daily run log
 - `tsp_transactions.csv` — audit trail / transaction history
-- backup JSON files when applicable
 
 ## Installation
 
