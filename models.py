@@ -4,8 +4,10 @@ from typing import Dict, List, Optional, Any
 FundsAlloc = Dict[str, float]
 Scores = Dict[str, int]
 
+
 @dataclass
 class MarketData:
+    # Existing core macro / market inputs
     core_pce_yoy: float
     ism_pmi: float
     services_pmi: float
@@ -26,20 +28,28 @@ class MarketData:
     dxy_spot: float
     market_breadth_pct: float
     spx_spot: float
-    vix_3d_panic: bool = False
-    spx_3d_panic: bool = False
+
+    # New macro factors added in Step 2
     yield_curve_slope: float = 0.0
     inflation_trend: float = 0.0
     labor_trend: float = 0.0
     vol_term_structure: float = 0.0
     commodity_shock: float = 0.0
     earnings_breadth: float = 0.0
+
+    # Existing panic / state flags
+    vix_3d_panic: bool = False
+    spx_3d_panic: bool = False
+    vix_last_3: List[float] = field(default_factory=list)
+    spx_dist_last_3: List[float] = field(default_factory=list)
+
+    # Optional helper fields for downstream display / debugging
     macro_regime_score: float = 0.0
     signal_confidence: float = 0.0
     data_quality_flag: str = "OK"
-    vix_last_3: List[float] = field(default_factory=list)
-    spx_dist_last_3: List[float] = field(default_factory=list)
+
     timestamp: Optional[str] = None
+
 
 @dataclass
 class EngineResult:
@@ -51,6 +61,7 @@ class EngineResult:
     asymmetric_vol_trigger: bool
     dxy_strong: bool
     emergency_triggered: bool
+
 
 @dataclass
 class Config:
@@ -65,6 +76,7 @@ class Config:
     manual_override_enabled: bool = False
     manual_regime: str = "OPTIMIZED NEUTRAL"
     overrides: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class AppState:
