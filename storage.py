@@ -51,7 +51,18 @@ def default_state() -> Dict[str, Any]:
 
 
 def load_state() -> Dict[str, Any]:
-    return safe_load_json(STATE_FILE, default_state)
+    state = safe_load_json(STATE_FILE, default_state)
+
+    # Lightweight normalization / backward compatibility
+    state.setdefault("month", date.today().strftime("%Y-%m"))
+    state.setdefault("ift_count_this_month", 0)
+    state.setdefault("last_ift_date", None)
+    state.setdefault("last_run_date", None)
+    state.setdefault("recent_regimes", [])
+    state.setdefault("recent_scores", [])
+    state.setdefault("recent_allocations", [])
+
+    return state
 
 
 def save_state(state_data: Dict[str, Any]) -> None:
