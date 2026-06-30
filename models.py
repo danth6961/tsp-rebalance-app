@@ -26,6 +26,10 @@ class MarketData:
     dxy_spot: float
     market_breadth_pct: float
     spx_spot: float
+    treasury_10y_3m_spread: float = 0.0
+    inflation_shock: float = 0.0
+    central_bank_stance: float = 0.0
+    liquidity_pressure: float = 0.0
     vix_3d_panic: bool = False
     spx_3d_panic: bool = False
     vix_last_3: List[float] = field(default_factory=list)
