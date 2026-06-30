@@ -205,7 +205,6 @@ def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float
 def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
     results = {"core_pce_yoy": None, "ism_pmi": None, "services_pmi": None}
 
-    # First try: pandas HTML table parsing
     try:
         dfs = pd.read_html(html)
         for df in dfs:
@@ -233,7 +232,6 @@ def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
     except Exception:
         pass
 
-    # Second try: BeautifulSoup text/table fallback
     try:
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True)
@@ -310,24 +308,6 @@ def fetch_multpl_earnings_growth() -> Optional[float]:
         if match_alt:
             val_str = match_alt.group(1).replace("%", "").strip()
             return float(val_str)
-        return None
-
-    try:
-        return retry_call(_load)
-    except Exception:
-        return None
-
-
-def fetch_ticker_fwd_eps_growth(ticker_symbol: str) -> Optional[float]:
-    def _load():
-        ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
-        fwd = info.get("forwardEps")
-        trailing = info.get("trailingEps")
-        if fwd is not None and trailing is not None and trailing != 0:
-            val = ((fwd - trailing) / abs(trailing)) * 100.0
-            if -50.0 <= val <= 200.0:
-                return round(val, 2)
         return None
 
     try:
@@ -459,16 +439,6 @@ def cached_shiller_cape_live() -> Optional[float]:
 
 
 @st.cache_data(ttl=3600)
-def cached_multpl_earnings_growth() -> Optional[float]:
-    return fetch_multpl_earnings_growth()
-
-
-@st.cache_data(ttl=3600)
-def cached_yahoo_info_fwd_eps_growth(ticker_symbol: str) -> Optional[float]:
-    return fetch_ticker_fwd_eps_growth(ticker_symbol)
-
-
-@st.cache_data(ttl=3600)
 def cached_barchart_s5th() -> Optional[float]:
     return fetch_barchart_s5th_fallback()
 
@@ -500,9 +470,8 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 @st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
-    
-    # Pool size updated to handle 10 concurrent stock analyses cleanly
-    with ThreadPoolExecutor(max_workers=26) as executor:
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS", api_key): "sloos_val",
             executor.submit(cached_fred, "BAMLH0A0HYM2", api_key): "hy_val",
@@ -520,20 +489,8 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             executor.submit(cached_fred_fed_assets_yoy, api_key): "fed_assets_growth_val",
             executor.submit(cached_fred, "DFII10", api_key): "real_yield_10y_val",
             executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
-            
-            # S&P 500 Forward EPS Growth inputs (Mega-cap Top-10 Yahoo Finance pool)
-            executor.submit(cached_multpl_earnings_growth): "multpl_earnings_growth_val",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "NVDA"): "nvda_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "AAPL"): "aapl_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "MSFT"): "msft_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "AMZN"): "amzn_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "GOOGL"): "googl_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "META"): "meta_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "AVGO"): "avgo_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "TSLA"): "tsla_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "LLY"): "lly_fwd_eps",
-            executor.submit(cached_yahoo_info_fwd_eps_growth, "MU"): "mu_fwd_eps",
         }
+
         for future in as_completed(futures):
             key = futures[future]
             try:
@@ -574,27 +531,8 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     final_real_yield = results.get("real_yield_10y_val") if results.get("real_yield_10y_val") is not None else DEFAULTS["real_yield_10y"]
     final_move = move_closes[-1] if move_closes else DEFAULTS["move_index"]
 
-    # --- S&P 500 EPS Growth Proxy Pipeline (Dynamic Top-10 Mega-Cap Consensus Pools) ---
-    top10_tickers = ["nvda", "aapl", "msft", "amzn", "googl", "meta", "avgo", "tsla", "lly", "mu"]
-    top10_growths = []
-    for comp in top10_tickers:
-        val = results.get(f"{comp}_fwd_eps")
-        if val is not None:
-            top10_growths.append(val)
-
-    if top10_growths:
-        final_fwd_eps = round(sum(top10_growths) / len(top10_growths), 2)
-        fwd_eps_source = "LIVE (S&P 500 Top-10 Holdings Forward EPS Growth Proxy)"
-    else:
-        # Fallback 1: Multpl S&P 500 Trailing Earnings Growth Rate
-        multpl_growth = results.get("multpl_earnings_growth_val")
-        if multpl_growth is not None:
-            final_fwd_eps = multpl_growth
-            fwd_eps_source = "LIVE (Multpl S&P 500 Trailing Earnings Growth Fallback)"
-        else:
-            # Fallback 2: Defaults configuration
-            final_fwd_eps = DEFAULTS["fwd_eps_growth_yoy"]
-            fwd_eps_source = "CONFIG/DEFAULT"
+    final_fwd_eps = DEFAULTS["fwd_eps_growth_yoy"]
+    fwd_eps_source = "CONFIG/DEFAULT"
 
     if breadth_closes:
         live_breadth = breadth_closes[-1]
