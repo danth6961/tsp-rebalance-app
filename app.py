@@ -228,7 +228,6 @@ def main():
                 index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(cfg["manual_regime"])
             )
 
-        st.divider()
         # Safely check Streamlit Secrets first, falling back to config file defaults
         secrets_key = ""
         try:
