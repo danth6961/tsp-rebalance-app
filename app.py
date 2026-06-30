@@ -111,8 +111,11 @@ def init_session(cfg):
                 st.session_state[key] = float(cfg.get(key, DEFAULTS.get(key, 0.0)))
         if f"{key}_source" not in st.session_state:
             st.session_state[f"{key}_source"] = "CONFIG/DEFAULT"
+
     if "engine_ran" not in st.session_state:
         st.session_state["engine_ran"] = False
+    if "last_engine_result" not in st.session_state:
+        st.session_state["last_engine_result"] = None
     if "live_market_data" not in st.session_state:
         st.session_state["live_market_data"] = {}
     if "live_market_sources" not in st.session_state:
@@ -181,12 +184,7 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
     state["last_run_date"] = today.isoformat()
 
     try:
-        append_transaction_row(
-            today.isoformat(),
-            current_alloc,
-            target_alloc,
-            regime,
-        )
+        append_transaction_row(today.isoformat(), current_alloc, target_alloc, regime)
     except Exception as e:
         st.warning(f"IFT transaction log write failed: {e}")
 
@@ -242,8 +240,12 @@ def main():
         fred_api_key = st.text_input("FRED API Key", value=initial_fred_key, type="password")
 
         st.divider()
-        confirm_ift_btn = st.button("✅ Submit IFT", use_container_width=True)
-        st.caption("After a run, this becomes a G-only safety move when the target is 100% G.")
+        confirm_ift_btn = st.button(
+            "✅ Submit IFT",
+            use_container_width=True,
+            disabled=st.session_state.get("last_engine_result") is None,
+        )
+        st.caption("Submit is enabled only after an engine run. A pure G move is treated as a safety action.")
 
         st.divider()
         save_cfg = st.button("💾 Save Config", use_container_width=True)
@@ -281,6 +283,7 @@ def main():
             "recent_scores": [],
             "recent_allocations": [],
         })
+        st.session_state["last_engine_result"] = None
         st.rerun()
 
     if clear_logs_btn:
@@ -294,16 +297,20 @@ def main():
         st.rerun()
 
     if confirm_ift_btn:
-        target_alloc = result["allocations"] if "result" in locals() else current_alloc
-        if is_pure_g_move(target_alloc):
-            confirm_ift_used(today, current_alloc, target_alloc, "G FUND SAFETY MOVE")
-            st.sidebar.success("G Fund safety move recorded.")
+        latest_result = st.session_state.get("last_engine_result")
+        if latest_result is None:
+            st.sidebar.warning("Run the engine first before submitting an IFT.")
         else:
-            if int(state.get("ift_count_this_month", 0)) >= 2:
-                st.sidebar.warning("Monthly IFT limit reached. Normal IFT submission blocked.")
+            target_alloc = latest_result["allocations"]
+            if is_pure_g_move(target_alloc):
+                confirm_ift_used(today, current_alloc, target_alloc, "G FUND SAFETY MOVE")
+                st.sidebar.success("G Fund safety move recorded.")
             else:
-                confirm_ift_used(today, current_alloc, target_alloc, "MANUAL IFT")
-                st.sidebar.success("IFT confirmed and saved.")
+                if int(state.get("ift_count_this_month", 0)) >= 2:
+                    st.sidebar.warning("Monthly IFT limit reached. Normal IFT submission blocked.")
+                else:
+                    confirm_ift_used(today, current_alloc, target_alloc, latest_result["regime"])
+                    st.sidebar.success("IFT confirmed and saved.")
         st.rerun()
 
     if run:
@@ -352,6 +359,7 @@ def main():
             override_active=manual_override_enabled,
             override_regime=manual_regime
         )
+        st.session_state["last_engine_result"] = result
 
         emergency_triggered = result["emergency_triggered"]
         last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
@@ -384,7 +392,6 @@ def main():
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
         state["recent_allocations"].append(result["allocations"])
-
         state["last_run_date"] = today.isoformat()
         save_state(state)
 
