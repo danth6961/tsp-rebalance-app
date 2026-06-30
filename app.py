@@ -151,7 +151,14 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
         state["recent_scores"] = []
         state["recent_allocations"] = []
 
-    state["ift_count_this_month"] = int(state.get("ift_count_this_month", 0)) + 1
+    current_count = int(state.get("ift_count_this_month", 0))
+
+    # Hard stop: never allow more than 2 IFTs in a month.
+    if current_count >= 2:
+        st.warning("IFT not confirmed: monthly IFT limit of 2 has already been reached.")
+        return
+
+    state["ift_count_this_month"] = current_count + 1
     state["last_ift_date"] = today.isoformat()
     state["last_run_date"] = today.isoformat()
 
@@ -166,7 +173,6 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
         st.warning(f"IFT transaction log write failed: {e}")
 
     save_state(state)
-
 
 def main():
     cfg = load_config()
