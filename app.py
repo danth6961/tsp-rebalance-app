@@ -178,6 +178,7 @@ def main():
         st.markdown("## 🏛️ TSP Rebalance Engine")
 
         with st.expander("💼 Current Allocation", expanded=True):
+            st.caption("Startup allocation is set to the tactical neutral baseline: G 40 / C 30 / I 20 / S 10 / F 0.")
             current_alloc = {
                 "G": st.number_input("G Fund %", value=float(cfg["current_alloc"]["G"]), step=1.0),
                 "C": st.number_input("C Fund %", value=float(cfg["current_alloc"]["C"]), step=1.0),
