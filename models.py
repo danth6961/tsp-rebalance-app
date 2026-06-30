@@ -28,6 +28,15 @@ class MarketData:
     spx_spot: float
     vix_3d_panic: bool = False
     spx_3d_panic: bool = False
+    yield_curve_slope: float = 0.0
+    inflation_trend: float = 0.0
+    labor_trend: float = 0.0
+    vol_term_structure: float = 0.0
+    commodity_shock: float = 0.0
+    earnings_breadth: float = 0.0
+    macro_regime_score: float = 0.0
+    signal_confidence: float = 0.0
+    data_quality_flag: str = "OK"
     vix_last_3: List[float] = field(default_factory=list)
     spx_dist_last_3: List[float] = field(default_factory=list)
     timestamp: Optional[str] = None
