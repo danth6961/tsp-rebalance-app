@@ -266,7 +266,6 @@ def determine_allocation(
     curve_inverted = treasury_10y_3m_spread < 0.0
     curve_deeply_inverted = treasury_10y_3m_spread < -0.5
     inflation_shock_up = inflation_shock > 0.2
-    inflation_shock_severe = inflation_shock > 0.3
     policy_restrictive = central_bank_stance <= -2.0
     policy_aggressive = central_bank_stance <= -3.0
     liquidity_tight = liquidity_pressure >= 3.0
@@ -299,9 +298,6 @@ def determine_allocation(
             s_w = alloc["S"]
             alloc["S"] = 0
             alloc["G"] += s_w
-        if dxy_strong and regime_name in ("RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL") and alloc["I"] >= 5:
-            alloc["I"] -= 5
-            alloc["C"] += 5
 
         total = sum(alloc.values()) or 100
         final_alloc = {k: round((v / total) * 100, 1) for k, v in alloc.items()}
