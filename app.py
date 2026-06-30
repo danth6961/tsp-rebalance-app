@@ -99,6 +99,20 @@ EDITABLE_KEYS = [
     "dxy_sma_5", "dxy_sma_20", "dxy_trend_up", "dxy_range_regime",
 ]
 
+NUMERIC_KEYS = {
+    "core_pce_yoy", "ism_pmi", "services_pmi", "initial_claims",
+    "breakeven_inflation", "fed_assets_growth_yoy", "real_yield_10y",
+    "move_index", "sloos_net_pct", "hy_oas", "shiller_cape",
+    "fwd_eps_growth_yoy", "stlfsi_index", "bond_yield_10y",
+    "bond_yield_3m", "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot",
+    "pct_dist_200_sma", "drawdown_pct",
+    "treasury_10y_3m_spread", "inflation_shock", "central_bank_stance", "liquidity_pressure",
+    "dxy_sma_5", "dxy_sma_20",
+}
+
+BOOLEAN_KEYS = {"dxy_trend_up"}
+TEXT_KEYS = {"dxy_range_regime"}
+
 
 def init_session(cfg):
     indicators = EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic", "vix_last_3", "spx_dist_last_3"]
@@ -108,9 +122,9 @@ def init_session(cfg):
                 st.session_state[key] = False
             elif key in ["vix_last_3", "spx_dist_last_3"]:
                 st.session_state[key] = []
-            elif key == "dxy_trend_up":
+            elif key in BOOLEAN_KEYS:
                 st.session_state[key] = bool(cfg.get(key, False))
-            elif key == "dxy_range_regime":
+            elif key in TEXT_KEYS:
                 st.session_state[key] = str(cfg.get(key, "UNKNOWN"))
             else:
                 st.session_state[key] = float(cfg.get(key, DEFAULTS.get(key, 0.0)))
@@ -148,11 +162,18 @@ def render_regime_card(info, is_active: bool):
 
 
 def load_editable_market_data():
-    market = {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS}
-    market["dxy_trend_up"] = bool(st.session_state.get("dxy_trend_up", False))
-    market["dxy_range_regime"] = st.session_state.get("dxy_range_regime", "UNKNOWN")
+    market = {}
+    for k in EDITABLE_KEYS:
+        if k in BOOLEAN_KEYS:
+            market[k] = bool(st.session_state.get(k, False))
+        elif k in TEXT_KEYS:
+            market[k] = str(st.session_state.get(k, "UNKNOWN"))
+        else:
+            market[k] = st.session_state.get(k, DEFAULTS.get(k, 0.0))
     market["vix_3d_panic"] = bool(st.session_state.get("vix_3d_panic", False))
     market["spx_3d_panic"] = bool(st.session_state.get("spx_3d_panic", False))
+    market["vix_last_3"] = st.session_state.get("vix_last_3", [])
+    market["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
     return market
 
 
@@ -331,9 +352,7 @@ def main():
                 fetched_data = snapshot["market_data"]
                 fetched_sources = snapshot["market_sources"]
             except Exception:
-                fetched_data = {k: float(v) if not isinstance(v, bool) else v for k, v in DEFAULTS.items()}
-                fetched_data["pct_dist_200_sma"] = 0.0
-                fetched_data["drawdown_pct"] = 0.0
+                fetched_data = {k: DEFAULTS.get(k, 0.0) for k in DEFAULTS.keys()}
                 fetched_data["vix_3d_panic"] = False
                 fetched_data["spx_3d_panic"] = False
                 fetched_data["vix_last_3"] = []
@@ -344,10 +363,10 @@ def main():
             st.session_state["live_market_sources"] = fetched_sources
 
             for key in EDITABLE_KEYS:
-                if key == "dxy_range_regime":
-                    st.session_state[key] = str(fetched_data.get(key, "UNKNOWN"))
-                elif key == "dxy_trend_up":
+                if key in BOOLEAN_KEYS:
                     st.session_state[key] = bool(fetched_data.get(key, False))
+                elif key in TEXT_KEYS:
+                    st.session_state[key] = str(fetched_data.get(key, "UNKNOWN"))
                 else:
                     st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
                 st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
@@ -367,7 +386,6 @@ def main():
             state["recent_allocations"] = []
 
         market_data = load_editable_market_data()
-
         result = build_engine_result(
             market_data,
             override_active=manual_override_enabled,
@@ -426,16 +444,11 @@ def main():
     market_data = load_editable_market_data()
     result = st.session_state.get("last_engine_result")
     if result is None:
-        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
-        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
         result = build_engine_result(
             market_data,
             override_active=cfg.get("manual_override_enabled", False),
             override_regime=cfg.get("manual_regime", "OPTIMIZED_NEUTRAL")
         )
-    else:
-        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
-        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
     use_ift, reason = should_use_tsp_ift(
@@ -599,13 +612,22 @@ def main():
         cols = st.columns(4)
         for i, (label, key, source) in enumerate(market_edit_items):
             with cols[i % 4]:
+                if key in BOOLEAN_KEYS:
+                    fmt = "%s"
+                    step = 1.0
+                elif key in TEXT_KEYS:
+                    fmt = "%s"
+                    step = 0.1
+                else:
+                    fmt = "%.2f"
+                    step = 0.1
                 render_editable_metric_tile(
                     label=label,
-                    value=st.session_state.get(key, 0.0),
+                    value=st.session_state.get(key, False if key in BOOLEAN_KEYS else "UNKNOWN" if key in TEXT_KEYS else 0.0),
                     source=source,
                     key=key,
-                    step=0.1,
-                    fmt="%.2f" if key not in ["dxy_trend_up", "dxy_range_regime"] else "%s",
+                    step=step,
+                    fmt=fmt,
                     color="#3b82f6",
                 )
 
