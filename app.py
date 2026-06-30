@@ -96,6 +96,7 @@ EDITABLE_KEYS = [
     "market_breadth_pct", "vix_spot", "dxy_spot", "spx_spot",
     "pct_dist_200_sma", "drawdown_pct",
     "treasury_10y_3m_spread", "inflation_shock", "central_bank_stance", "liquidity_pressure",
+    "dxy_sma_5", "dxy_sma_20", "dxy_trend_up", "dxy_range_regime",
 ]
 
 
@@ -107,6 +108,10 @@ def init_session(cfg):
                 st.session_state[key] = False
             elif key in ["vix_last_3", "spx_dist_last_3"]:
                 st.session_state[key] = []
+            elif key == "dxy_trend_up":
+                st.session_state[key] = bool(cfg.get(key, False))
+            elif key == "dxy_range_regime":
+                st.session_state[key] = str(cfg.get(key, "UNKNOWN"))
             else:
                 st.session_state[key] = float(cfg.get(key, DEFAULTS.get(key, 0.0)))
         if f"{key}_source" not in st.session_state:
@@ -143,7 +148,12 @@ def render_regime_card(info, is_active: bool):
 
 
 def load_editable_market_data():
-    return {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]}
+    market = {k: st.session_state.get(k, DEFAULTS.get(k, 0.0)) for k in EDITABLE_KEYS}
+    market["dxy_trend_up"] = bool(st.session_state.get("dxy_trend_up", False))
+    market["dxy_range_regime"] = st.session_state.get("dxy_range_regime", "UNKNOWN")
+    market["vix_3d_panic"] = bool(st.session_state.get("vix_3d_panic", False))
+    market["spx_3d_panic"] = bool(st.session_state.get("spx_3d_panic", False))
+    return market
 
 
 def is_pure_g_move(target_alloc: dict) -> bool:
@@ -243,7 +253,7 @@ def main():
         confirm_ift_btn = st.button(
             "✅ Submit IFT",
             use_container_width=True,
-            disabled=st.session_state.get("last_engine_result") is None,
+            disabled=not st.session_state.get("engine_ran", False),
         )
         st.caption("Submit is enabled only after an engine run. A pure G move is treated as a safety action.")
 
@@ -268,7 +278,7 @@ def main():
         cfg["manual_regime"] = manual_regime
         cfg["fred_api_key"] = fred_api_key
         for key in EDITABLE_KEYS:
-            cfg[key] = float(st.session_state.get(key, DEFAULTS.get(key, 0.0)))
+            cfg[key] = st.session_state.get(key, DEFAULTS.get(key, 0.0))
         save_config(cfg)
         st.sidebar.success("Config saved.")
         st.rerun()
@@ -284,6 +294,7 @@ def main():
             "recent_allocations": [],
         })
         st.session_state["last_engine_result"] = None
+        st.session_state["engine_ran"] = False
         st.rerun()
 
     if clear_logs_btn:
@@ -320,7 +331,7 @@ def main():
                 fetched_data = snapshot["market_data"]
                 fetched_sources = snapshot["market_sources"]
             except Exception:
-                fetched_data = {k: float(v) for k, v in DEFAULTS.items()}
+                fetched_data = {k: float(v) if not isinstance(v, bool) else v for k, v in DEFAULTS.items()}
                 fetched_data["pct_dist_200_sma"] = 0.0
                 fetched_data["drawdown_pct"] = 0.0
                 fetched_data["vix_3d_panic"] = False
@@ -333,7 +344,12 @@ def main():
             st.session_state["live_market_sources"] = fetched_sources
 
             for key in EDITABLE_KEYS:
-                st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
+                if key == "dxy_range_regime":
+                    st.session_state[key] = str(fetched_data.get(key, "UNKNOWN"))
+                elif key == "dxy_trend_up":
+                    st.session_state[key] = bool(fetched_data.get(key, False))
+                else:
+                    st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
                 st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
 
             st.session_state["vix_3d_panic"] = bool(fetched_data.get("vix_3d_panic", False))
@@ -351,8 +367,6 @@ def main():
             state["recent_allocations"] = []
 
         market_data = load_editable_market_data()
-        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
-        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
         result = build_engine_result(
             market_data,
@@ -410,14 +424,18 @@ def main():
         })
 
     market_data = load_editable_market_data()
-    market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
-    market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
-
-    result = build_engine_result(
-        market_data,
-        override_active=cfg.get("manual_override_enabled", False),
-        override_regime=cfg.get("manual_regime", "OPTIMIZED_NEUTRAL")
-    )
+    result = st.session_state.get("last_engine_result")
+    if result is None:
+        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
+        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
+        result = build_engine_result(
+            market_data,
+            override_active=cfg.get("manual_override_enabled", False),
+            override_regime=cfg.get("manual_regime", "OPTIMIZED_NEUTRAL")
+        )
+    else:
+        market_data["vix_last_3"] = st.session_state.get("vix_last_3", [])
+        market_data["spx_dist_last_3"] = st.session_state.get("spx_dist_last_3", [])
 
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
     use_ift, reason = should_use_tsp_ift(
@@ -570,6 +588,10 @@ def main():
             ("Central Bank Stance", "central_bank_stance", "DERIVED"),
             ("Liquidity Pressure", "liquidity_pressure", "DERIVED"),
             ("DXY Spot", "dxy_spot", st.session_state.get("dxy_spot_source")),
+            ("DXY SMA 5", "dxy_sma_5", st.session_state.get("dxy_sma_5_source")),
+            ("DXY SMA 20", "dxy_sma_20", st.session_state.get("dxy_sma_20_source")),
+            ("DXY Trend Up", "dxy_trend_up", st.session_state.get("dxy_trend_up_source")),
+            ("DXY Range Regime", "dxy_range_regime", st.session_state.get("dxy_range_regime_source")),
             ("Breadth %", "market_breadth_pct", st.session_state.get("market_breadth_pct_source")),
             ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
         ]
@@ -583,7 +605,7 @@ def main():
                     source=source,
                     key=key,
                     step=0.1,
-                    fmt="%.2f",
+                    fmt="%.2f" if key not in ["dxy_trend_up", "dxy_range_regime"] else "%s",
                     color="#3b82f6",
                 )
 
@@ -697,6 +719,8 @@ def main():
                 st.markdown("**Adjustment Flags**")
                 st.write(f"- F Fund unlocked: `{'Yes' if result['base_alloc'].get('F', 0) > 0 else 'No'}`")
                 st.write(f"- Asymmetric volatility trigger: `{'Yes' if result['asymmetric_vol_trigger'] else 'No'}`")
+                st.write(f"- DXY regime: `{st.session_state.get('dxy_range_regime', 'UNKNOWN')}`")
+                st.write(f"- DXY trend up: `{'Yes' if st.session_state.get('dxy_trend_up', False) else 'No'}`")
                 st.write(f"- Strong DXY adjustment: `{'Yes' if result['dxy_strong'] else 'No'}`")
                 st.write(f"- Macro overlays active: `{'Yes' if any(result['scores'].get(k, 0) != 0 for k in ['yield_curve', 'inflation_shock', 'central_bank', 'liquidity_pressure']) else 'No'}`")
 
