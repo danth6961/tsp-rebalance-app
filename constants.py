@@ -44,5 +44,4 @@ BASELINE_ALLOCATIONS = {
     "DEFENSIVE ALLOCATION": {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0},
     "EMERGENCY DISPATCH": {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0},
     "EMERGENCY DISPATCH (F-Unlocked)": {"G": 90, "C": 0, "I": 0, "S": 0, "F": 10},
-    "DEFENSIVE ALLOCATION (High Risk)": {"G": 70, "C": 20, "I": 5, "S": 5, "F": 0},
 }
