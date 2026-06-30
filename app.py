@@ -218,8 +218,6 @@ def main():
 
         # Use the secret key if found, otherwise fall back to local config
         initial_fred_key = secrets_key if secrets_key else str(cfg.get("fred_api_key", ""))
-
-        st.divider()
         fred_api_key = st.text_input("FRED API Key", value=initial_fred_key, type="password")
 
         st.divider()
