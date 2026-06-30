@@ -60,6 +60,7 @@ def save_state(state_data: Dict[str, Any]) -> None:
 
 def default_config() -> Dict[str, Any]:
     return {
+        # Tactical neutral starting point: matches the engine's OPTIMIZED NEUTRAL baseline.
         "current_alloc": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 10.0, "F": 0.0},
         "allow_second_ift": False,
         "normal_drift_threshold_pct": 7.5,
