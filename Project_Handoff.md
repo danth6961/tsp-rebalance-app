@@ -256,14 +256,29 @@ The current app now supports a G-only safety move path, but the underlying engin
 
 ## Suggested next steps for the next AI
 
-1. Verify `engine.py` allocations match `constants.py`.
-2. Verify `app.py` regime card labels match `constants.py`.
-3. Decide whether to remove any leftover experimental entries from `constants.py`.
-4. Consider tightening `should_use_tsp_ift()` further if the user wants even less turnover.
-5. Consider adding a clearer visual cue in the sidebar for the G-only safety move.
-6. Consider adding a “data source health” section so the app clearly shows when it is using fallback/default values.
+Help incorporate macro context such as:
+- Yield curve dynamics
+- Inflation shocks
+- Central bank policy and liquidity
+- Global growth trends
+- Risk-on / risk-off regimes
+- Ensure logic respects the TSP rule of only two Interfund Transfers (IFTs) per calendar month. Actively guard against:
+- Look-ahead bias
+- Data leakage
+- Excessive turnover
+- Overconcentration
+- Fragile backtests
 
 ---
+## Quantitative Scoring and Portfolio Logic
+
+Help review, design, and improve:
+- Momentum
+- Volatility-adjusted momentum
+- Risk parity / risk budgeting
+- Trend following
+- Defensive allocation
+- Hysteresis / buffer-zone logic
 
 ## Conversation context to preserve
 
