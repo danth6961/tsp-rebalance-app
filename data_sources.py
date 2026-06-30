@@ -108,6 +108,46 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
         return None
 
 
+def fetch_fred_series_latest_points(series_id: str, api_key: Optional[str] = None, limit: int = 10) -> List[Tuple[str, float]]:
+    if api_key:
+        try:
+            pts = fetch_via_fred_api(series_id, api_key, limit=limit)
+            if pts:
+                return pts
+        except Exception:
+            pass
+
+    try:
+        pts = fetch_from_dbnomics(series_id)
+        if pts:
+            return pts[-limit:]
+    except Exception:
+        pass
+
+    def _load():
+        base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        url = f"{base_url}?id={urllib.parse.quote(series_id)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            df = pd.read_csv(response)
+        if df.empty or len(df.columns) < 2:
+            return []
+        value_col = df.columns[1]
+        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if series.empty:
+            return []
+        result = []
+        tail = series.tail(limit)
+        for idx, val in tail.items():
+            result.append((str(idx), float(val)))
+        return result
+
+    try:
+        return retry_call(_load)
+    except Exception:
+        return []
+
+
 def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     def calc_yoy(points: List[Tuple[str, float]]) -> Optional[float]:
         if len(points) < 13:
@@ -413,6 +453,58 @@ def calc_spx_metrics_from_closes(closes: List[float]):
     return round(dist_200sma, 2), round(drawdown_pct, 2), round(current_spot, 2)
 
 
+def derive_macro_overlays(market: Dict[str, Any]) -> Dict[str, float]:
+    pce = clean_and_parse_float(market.get("core_pce_yoy")) or DEFAULTS["core_pce_yoy"]
+    fed_assets = clean_and_parse_float(market.get("fed_assets_growth_yoy")) or DEFAULTS["fed_assets_growth_yoy"]
+    real_yield = clean_and_parse_float(market.get("real_yield_10y")) or DEFAULTS["real_yield_10y"]
+    sloos = clean_and_parse_float(market.get("sloos_net_pct")) or DEFAULTS["sloos_net_pct"]
+    move = clean_and_parse_float(market.get("move_index")) or DEFAULTS["move_index"]
+    stlfsi = clean_and_parse_float(market.get("stlfsi_index")) or DEFAULTS["stlfsi_index"]
+
+    bond_yield_10y = clean_and_parse_float(market.get("bond_yield_10y")) or DEFAULTS["bond_yield_10y"]
+    bond_yield_3m = clean_and_parse_float(market.get("bond_yield_3m"))
+
+    if bond_yield_3m is None:
+        bond_yield_3m = fetch_fred_latest("DGS3MO", market.get("fred_api_key"))  # safe fallback if available
+
+    if bond_yield_3m is not None:
+        treasury_10y_3m_spread = round(bond_yield_10y - bond_yield_3m, 3)
+    else:
+        treasury_10y_3m_spread = round(bond_yield_10y - real_yield, 3)
+
+    inflation_anchor = DEFAULTS["core_pce_yoy"]
+    inflation_shock = round(pce - inflation_anchor, 2)
+
+    central_bank_stance = 0.0
+    if fed_assets > 0 and real_yield < 1.0 and treasury_10y_3m_spread > 0.5:
+        central_bank_stance = 2.0
+    elif fed_assets > 0:
+        central_bank_stance = 1.0
+    elif real_yield > 2.0 or treasury_10y_3m_spread < 0.0:
+        central_bank_stance = -2.0
+    elif real_yield > 1.0 or stlfsi > 1.0:
+        central_bank_stance = -1.0
+
+    liquidity_pressure = 0.0
+    if sloos > 5.0:
+        liquidity_pressure += 1.0
+    if fed_assets <= 0.0:
+        liquidity_pressure += 1.0
+    if stlfsi > 1.0:
+        liquidity_pressure += 1.0
+    if real_yield > 2.0:
+        liquidity_pressure += 1.0
+    if move > 120.0:
+        liquidity_pressure += 1.0
+
+    return {
+        "treasury_10y_3m_spread": treasury_10y_3m_spread,
+        "inflation_shock": inflation_shock,
+        "central_bank_stance": central_bank_stance,
+        "liquidity_pressure": min(liquidity_pressure, 5.0),
+    }
+
+
 @st.cache_data(ttl=3600)
 def cached_fred(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
     return fetch_fred_latest(series_id, api_key)
@@ -484,10 +576,13 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
             executor.submit(cached_barchart_s5th): "barchart_breadth",
             executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
+            executor.submit(cached_yahoo_closes, "^IRX", "1mo", "1d"): "bill_yield_closes",
             executor.submit(cached_fred, "ICSA", api_key): "initial_claims_val",
             executor.submit(cached_fred, "T10YIE", api_key): "breakeven_inflation_val",
             executor.submit(cached_fred_fed_assets_yoy, api_key): "fed_assets_growth_val",
             executor.submit(cached_fred, "DFII10", api_key): "real_yield_10y_val",
+            executor.submit(cached_fred, "DGS10", api_key): "dgs10_val",
+            executor.submit(cached_fred, "DGS3MO", api_key): "dgs3mo_val",
             executor.submit(cached_yahoo_closes, "^MOVE", "1mo", "1d"): "move_closes",
         }
 
@@ -503,6 +598,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     spx_closes = results.get("spx_closes") or []
     breadth_closes = results.get("breadth_closes") or []
     bond_yield_closes = results.get("bond_yield_closes") or []
+    bill_yield_closes = results.get("bill_yield_closes") or []
     move_closes = results.get("move_closes") or []
 
     sma_dist_live, drawdown_live, spx_spot = calc_spx_metrics_from_closes(spx_closes)
@@ -542,8 +638,16 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     if bond_yield_closes:
         live_bond_yield = round(bond_yield_closes[-1] / 10.0, 3)
     else:
-        fred_dgs10 = fetch_fred_latest("DGS10", api_key)
+        fred_dgs10 = results.get("dgs10_val")
         live_bond_yield = fred_dgs10 if fred_dgs10 is not None else DEFAULTS["bond_yield_10y"]
+
+    fred_dgs3mo = results.get("dgs3mo_val")
+    if fred_dgs3mo is not None:
+        live_bond_yield_3m = fred_dgs3mo
+    elif bill_yield_closes:
+        live_bond_yield_3m = round(bill_yield_closes[-1] / 10.0, 3)
+    else:
+        live_bond_yield_3m = None
 
     vix_3d_panic = len(vix_closes) >= 3 and all(x >= 30.0 for x in vix_closes[-3:])
     vix_last_3 = [round(x, 2) for x in vix_closes[-3:]] if len(vix_closes) >= 3 else []
@@ -578,6 +682,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "drawdown_pct": drawdown_live,
         "stlfsi_index": results.get("stlfsi_val") if results.get("stlfsi_val") is not None else DEFAULTS["stlfsi_index"],
         "bond_yield_10y": live_bond_yield,
+        "bond_yield_3m": live_bond_yield_3m if live_bond_yield_3m is not None else DEFAULTS.get("bond_yield_3m", 0.0),
         "dxy_spot": dxy_closes[-1] if dxy_closes else DEFAULTS["dxy_spot"],
         "market_breadth_pct": live_breadth,
         "spx_spot": spx_spot,
@@ -587,6 +692,8 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "spx_dist_last_3": spx_dist_last_3,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
+
+    market_data.update(derive_macro_overlays(market_data))
 
     market_sources = {
         "core_pce_yoy": pce_source,
@@ -605,10 +712,15 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "pct_dist_200_sma": "LIVE" if spx_closes else "CONFIG/DEFAULT",
         "drawdown_pct": "LIVE" if spx_closes else "CONFIG/DEFAULT",
         "stlfsi_index": "LIVE" if results.get("stlfsi_val") is not None else "CONFIG/DEFAULT",
-        "bond_yield_10y": "LIVE (Yahoo Finance ^TNX)" if bond_yield_closes else "CONFIG/DEFAULT",
+        "bond_yield_10y": "LIVE (Yahoo Finance ^TNX / FRED DGS10)" if bond_yield_closes or results.get("dgs10_val") is not None else "CONFIG/DEFAULT",
+        "bond_yield_3m": "LIVE (FRED DGS3MO / Yahoo ^IRX fallback)" if results.get("dgs3mo_val") is not None or bill_yield_closes else "CONFIG/DEFAULT",
         "dxy_spot": "LIVE (Yahoo Finance DX-Y.NYB)" if dxy_closes else "CONFIG/DEFAULT",
         "market_breadth_pct": "LIVE" if breadth_closes or results.get("barchart_breadth") is not None else "CONFIG/DEFAULT",
         "spx_spot": "LIVE (Yahoo Finance ^GSPC)" if spx_closes else "CONFIG/DEFAULT",
+        "treasury_10y_3m_spread": "DERIVED",
+        "inflation_shock": "DERIVED",
+        "central_bank_stance": "DERIVED",
+        "liquidity_pressure": "DERIVED",
     }
 
     return {"market_data": market_data, "market_sources": market_sources}
