@@ -1,4 +1,4 @@
-"""
+
 tests/test_regime_consistency.py
 
 Protects the project against drift between constants.py, engine.py,
