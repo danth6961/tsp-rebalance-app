@@ -4,7 +4,6 @@ import shutil
 from pathlib import Path
 from typing import Dict, Any, Callable
 from datetime import date
-
 from constants import STATE_FILE, CONFIG_FILE, LOG_FILE, TRANSACTION_FILE, BASELINE_ALLOCATIONS
 
 """Save JSON with a simple backup copy of the previous file."""
