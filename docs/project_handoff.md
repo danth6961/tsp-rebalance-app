@@ -43,7 +43,7 @@ These are the current tactical baselines:
 ### Risk-On Override
 - G 30
 - C 40
-- I 25
+- I 20
 - S 10
 - F 0
 
@@ -292,7 +292,7 @@ The user prefers:
 - manual IFT confirmation
 - detailed reasoning in the UI
 - updated regime allocations:
-  - Risk-On 30/40/25/10
+  - Risk-On 30/40/20/10
   - Neutral 40/30/20/10
   - Defensive 70/15/10/5
 
