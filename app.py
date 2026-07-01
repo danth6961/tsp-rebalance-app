@@ -196,7 +196,11 @@ def main():
         st.markdown("## 🏛️ TSP Rebalance Engine")
 
         with st.expander("💼 Current Allocation", expanded=True):
-            st.caption("Startup allocation is set to the tactical neutral baseline: G 40 / C 30 / I 20 / S 10 / F 0.")
+            neutral = BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"]
+            st.caption(
+                f"Startup allocation is set to the tactical neutral baseline: "
+                f"G {neutral['G']} / C {neutral['C']} / I {neutral['I']} / S {neutral['S']} / F {neutral['F']}."
+            )
             current_alloc = {
                 "G": st.number_input(
                     "G Fund %",
@@ -250,8 +254,8 @@ def main():
             manual_override_enabled = st.checkbox("Enable manual override", value=bool(cfg["manual_override_enabled"]))
             manual_regime = st.selectbox(
                 "Override regime",
-                ["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"],
-                index=["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"].index(cfg["manual_regime"])
+                REGIME_ORDER,
+                index=REGIME_ORDER.index(cfg["manual_regime"]) if cfg.get("manual_regime") in REGIME_ORDER else 1,
             )
 
         st.divider()
