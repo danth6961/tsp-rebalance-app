@@ -1,6 +1,6 @@
 # TSP Rebalance Engine
 
-A Streamlit-based TSP tactical allocation assistant.
+A Streamlit-based tactical TSP allocation assistant.
 
 The app analyzes macro and market inputs, scores the current environment, maps it to a regime, recommends a target allocation, and helps decide whether to submit an IFT or hold. It is designed as a tactical and quantitative overlay, not as a lifecycle-fund clone.
 
@@ -122,7 +122,15 @@ This keeps the recommendation separate from the actual transaction.
 - `tsp_daily_log.csv` — daily run log
 - `tsp_transactions.csv` — audit trail / transaction history
 
+## Important limitations
+
+- Live market data may fall back to defaults if a source is unavailable.
+- Multiple macro indicators are lagged and may update asynchronously.
+- The engine is rule-based and can flip regimes around hard thresholds.
+- Flat-file persistence is suitable for a single-user Streamlit workflow, not multi-user concurrency.
+
 ## Installation
 
 ```bash
 pip install -r requirements.txt
+streamlit run app.py
