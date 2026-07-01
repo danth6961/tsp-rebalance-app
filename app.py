@@ -495,7 +495,6 @@ def main():
 
     render_metric_cards(result["composite_score"], result["regime"], action, state["ift_count_this_month"], reason)
     snapshot_quality = compute_snapshot_quality(get_current_market_sources())
-    render_snapshot_quality_badge(snapshot_quality, st.session_state.get("engine_ran", False))
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
 
@@ -525,6 +524,8 @@ def main():
         render_regime_cards(result["regime"])
 
     with tab2:
+        render_snapshot_quality_badge(snapshot_quality, st.session_state.get("engine_ran", False))
+
         st.markdown("### Factor Scores")
         factor_items = []
         for key, label in [
