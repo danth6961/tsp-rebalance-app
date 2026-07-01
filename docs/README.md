@@ -7,6 +7,7 @@ The app analyzes market and macro inputs, scores the current environment, maps t
 ## What It Does
 
 - Fetches live market and macro data
+- Validates the snapshot before scoring
 - Computes factor scores and a composite regime score
 - Selects one of the current tactical regimes:
   - Risk-On Override
@@ -22,7 +23,7 @@ The app analyzes market and macro inputs, scores the current environment, maps t
 
 ## Current Tactical Allocation Model
 
-The current baseline regime targets are defined in `constants.py` and should be treated as the source of truth for regime allocations.
+The current baseline regime targets are defined in `constants.py` and should be treated as the source of truth for regime allocations. This is reinforced by the consistency tests, which verify alignment across the engine, UI, validation layer, and IFT state machine  
 
 ### Risk-On Override
 - G: 30%
@@ -63,28 +64,37 @@ The F Fund is treated as a conditional overlay only. It is added only when the e
 
 ## Project Structure
 
-- `app.py` — Streamlit app entrypoint and UI orchestration
-- `engine.py` — factor scoring, regime selection, allocation logic, and IFT logic
+The codebase is split into clear modules so that decision logic, persistence, presentation, and styling do not drift into one another.
+
+### Core logic
+- `engine.py` — factor scoring, regime selection, allocation logic, and IFT recommendation logic
 - `data_sources.py` — market and macro data acquisition
+- `validation.py` — input and allocation validation
+- `ift_state_machine.py` — monthly IFT rule enforcement and pure-G safety handling
 - `storage.py` — config, state, and CSV persistence
-- `ui.py` — reusable Streamlit display helpers
-- `constants.py` — shared defaults, paths, proxy tickers, and regime baselines
-- `models.py` — typed data models for the app
+- `constants.py` — shared defaults, paths, thresholds, regime definitions
+- `models.py` — typed data models
 - `utils.py` — general helper functions
-- `validation.py` — market and allocation validation helpers
-- `ift_state_machine.py` — pure-G and monthly IFT rule enforcement
-- `requirements.txt` — Python dependencies
+
+### Presentation
+- `ui.py` — reusable Streamlit display helpers
+- `styles.py` — CSS and visual tokens
+
+### Application entrypoint
+- `app.py` — Streamlit app orchestration and UI wiring
 
 ## How It Works
 
-1. The app loads config and state from local files.
-2. It fetches market and macro data.
-3. The engine scores the environment across multiple factors.
-4. The engine selects a regime and target allocation.
-5. The app compares the current allocation to the target.
-6. The IFT rule engine decides whether to submit or hold.
-7. The result is logged locally.
-8. Manual confirmation updates the transaction state.
+1. The app loads config and state from local JSON files.
+2. It injects the shared styles.
+3. It fetches market and macro data.
+4. The snapshot is validated.
+5. The engine scores the environment across multiple factors.
+6. The engine selects a regime and target allocation.
+7. The app compares the current allocation to the target.
+8. The IFT rule engine decides whether to submit or hold.
+9. The result is logged locally.
+10. Manual confirmation updates the transaction state.
 
 ## Data Inputs Used by the Engine
 
@@ -118,7 +128,7 @@ The safest operating mode is manual confirmation:
 
 This keeps the recommendation separate from the actual transaction and reduces the risk of accidental state drift.
 
-## Live Files Created by the App
+## Current Files Created by the App
 
 - `tsp_config.json` — saved config
 - `tsp_state.json` — saved state
@@ -131,6 +141,7 @@ This keeps the recommendation separate from the actual transaction and reduces t
 - Multiple macro indicators are lagged and may update asynchronously.
 - The engine is rule-based and can flip regimes around hard thresholds.
 - Flat-file persistence is suitable for a single-user Streamlit workflow, not multi-user concurrency.
+- Snapshot quality should be interpreted alongside source provenance and freshness where available.
 
 ## Installation
 
