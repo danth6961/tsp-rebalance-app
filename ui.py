@@ -179,22 +179,19 @@ def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f",
 
 
 def recent_state_cards(state):
-    """Render the recent state summary cards."""
-    cols = st.columns(3)
-
+    """Render a compact state summary with only the last run timestamp."""
     last_run = state.get("last_run_date") or "—"
-    last_ift = state.get("last_ift_date") or "—"
-    ift_count = state.get("ift_count_this_month", 0)
 
-    items = [
-        ("Last Run", last_run, "Most recent engine execution", "🕒", "#3b82f6"),
-        ("Last IFT", last_ift, "Most recent submission", "📨", "#10b981"),
-        ("IFT Count", str(ift_count), "This month", "📌", "#f59e0b"),
-    ]
-
-    for col, (title, value, note, icon, color) in zip(cols, items):
-        with col:
-            st.markdown(tile_html(title, value, note=note, icon=icon, color=color), unsafe_allow_html=True)
+    st.markdown(
+        tile_html(
+            "Last Run",
+            last_run,
+            note="Most recent engine execution",
+            icon="🕒",
+            color="#3b82f6",
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_history_table(state):
