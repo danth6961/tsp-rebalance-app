@@ -33,7 +33,12 @@ from constants import (
     TRANSACTION_FILE,
 )
 from data_sources import fetch_ytd_return, get_cached_proxy_df, get_market_snapshot
-from engine import build_engine_result, cumulative_alloc_drift, should_use_tsp_ift
+from engine import (
+    build_engine_result,
+    cumulative_alloc_drift,
+    latest_regime_from_history,
+    should_use_tsp_ift,
+)
 from ift_state_machine import IFTStateMachine
 from storage import (
     append_log_row,
@@ -455,6 +460,7 @@ def main() -> None:
             market_data,
             override_active=bool(manual_override_enabled),
             override_regime=str(manual_regime),
+            previous_regime=latest_regime_from_history(state.get("recent_regimes")),
         )
         st.session_state["last_engine_result"] = result
 
@@ -511,7 +517,8 @@ def main() -> None:
         result = build_engine_result(
             market_data,
             override_active=bool(cfg.get("manual_override_enabled", False)),
-            override_regime=str(cfg.get("manual_regime", "OPTIMIZED_NEUTRAL")),
+            override_regime=str(cfg.get("manual_regime", "OPTIMIZED NEUTRAL")),
+            previous_regime=latest_regime_from_history(state.get("recent_regimes")),
         )
 
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
