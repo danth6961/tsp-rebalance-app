@@ -22,7 +22,7 @@ from ui import (
 )
 from utils import compute_snapshot_quality, get_est_now
 from validation import validate_market_data
-from ift_state_machine import is_pure_g_move, IFTStateMachine
+from ift_state_machine import is_pure_g_move, IFTStateMachine, MONTHLY_IFT_LIMIT
 
 st.set_page_config(
     page_title="TSP Rebalance Engine",
