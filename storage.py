@@ -118,7 +118,6 @@ def safe_load_json(
         try:
             with bak_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            # Restore the backup if it was valid.
             safe_save_json(file_path, data)
             return data
         except Exception:
@@ -142,6 +141,7 @@ def default_state() -> dict[str, Any]:
         "recent_regimes": [],
         "recent_scores": [],
         "recent_allocations": [],
+        "recent_run_dates": [],
         "last_confirmation_key": None,
     }
 
@@ -158,6 +158,7 @@ def load_state() -> dict[str, Any]:
     state.setdefault("recent_regimes", [])
     state.setdefault("recent_scores", [])
     state.setdefault("recent_allocations", [])
+    state.setdefault("recent_run_dates", [])
     state.setdefault("last_confirmation_key", None)
 
     return state
@@ -172,6 +173,7 @@ def roll_state_if_new_month(state: dict[str, Any], today: date) -> dict[str, Any
         state["recent_regimes"] = []
         state["recent_scores"] = []
         state["recent_allocations"] = []
+        state["recent_run_dates"] = []
         state["last_confirmation_key"] = None
     return state
 
@@ -183,7 +185,7 @@ def load_state_for_today(today: date) -> dict[str, Any]:
 
 def save_state(state_data: dict[str, Any]) -> None:
     """Save state after trimming bounded history lists."""
-    for key in ("recent_regimes", "recent_scores", "recent_allocations"):
+    for key in ("recent_regimes", "recent_scores", "recent_allocations", "recent_run_dates"):
         values = state_data.get(key)
         if isinstance(values, list) and len(values) > MAX_HISTORY_ENTRIES:
             state_data[key] = values[-MAX_HISTORY_ENTRIES:]
@@ -199,8 +201,8 @@ def save_state(state_data: dict[str, Any]) -> None:
 def default_config() -> dict[str, Any]:
     """Build the default config using the neutral allocation from constants."""
     neutral_alloc = {
-        fund: float(weight)
-        for fund, weight in BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"].items()
+        k: float(v)
+        for k, v in BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"].items()
     }
     return {
         "current_alloc": neutral_alloc,
@@ -240,7 +242,11 @@ def append_log_row(row: dict[str, Any]) -> None:
     file_exists = LOG_FILE.exists()
 
     with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=DAILY_LOG_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(
+            f,
+            fieldnames=DAILY_LOG_FIELDS,
+            extrasaction="ignore",
+        )
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
@@ -272,7 +278,11 @@ def append_transaction_row(
     file_exists = TRANSACTION_FILE.exists()
 
     with TRANSACTION_FILE.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=TRANSACTION_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(
+            f,
+            fieldnames=TRANSACTION_FIELDS,
+            extrasaction="ignore",
+        )
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
