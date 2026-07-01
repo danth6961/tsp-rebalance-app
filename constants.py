@@ -61,7 +61,10 @@ REGIME_DEFINITIONS = {
         "icon": "🚀",
         "score_label": "Score: ≥ +5",
         "profile": "Aggressive Profile",
-        "allocation": {"G": 30, "C": 40, "I": 25, "S": 10, "F": 0},
+        # I Fund corrected 25 -> 20 (was: G30/C40/I25/S10/F0 = 105%, a
+        # pre-existing data bug caught by tests/test_regime_consistency.py).
+        # Now G30/C40/I20/S10/F0 = 100%.
+        "allocation": {"G": 30, "C": 40, "I": 20, "S": 10, "F": 0},
         "description": "Strong macro backdrop and solid upward momentum.",
         "color": "#10b981",
         "bg": "rgba(16, 185, 129, 0.08)",
