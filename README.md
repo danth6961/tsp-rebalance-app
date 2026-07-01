@@ -27,7 +27,7 @@ The current baseline regime targets are:
 ### Risk-On Override
 - G: 30%
 - C: 40%
-- I: 25%
+- I: 20%
 - S: 10%
 - F: 0%
 
