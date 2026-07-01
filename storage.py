@@ -1,14 +1,22 @@
+"""
+storage.py — persistence and local state management.
+
+Owns config/state load-save, CSV append helpers, and monthly state rollover.
+Does not own engine logic, UI logic, regime selection, or data fetching.
+"""
+
 import csv
 import json
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Callable
 from datetime import date
+
 from constants import STATE_FILE, CONFIG_FILE, LOG_FILE, TRANSACTION_FILE, BASELINE_ALLOCATIONS
 
-"""Save JSON with a simple backup copy of the previous file."""
+
 def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
-    """Write JSON atomically-ish, keeping a .bak copy of the prior version."""
+    """Save JSON with a simple backup copy of the previous file."""
     if file_path.exists() and file_path.stat().st_size > 0:
         shutil.copy(file_path, file_path.with_suffix(".json.bak"))
     temp_file = file_path.with_suffix(".tmp")
@@ -16,9 +24,9 @@ def safe_save_json(file_path: Path, data: Dict[str, Any]) -> None:
         json.dump(data, f, indent=4)
     temp_file.replace(file_path)
 
-"""Load JSON, falling back to .bak and then to the default factory."""
+
 def safe_load_json(file_path: Path, default_factory: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
-    """Load JSON, falling back to .bak, then to a fresh default on any failure."""
+    """Load JSON, falling back to .bak and then to the default factory."""
     if file_path.exists():
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -38,6 +46,7 @@ def safe_load_json(file_path: Path, default_factory: Callable[[], Dict[str, Any]
 
     return default_factory()
 
+
 def default_state() -> Dict[str, Any]:
     return {
         "month": date.today().strftime("%Y-%m"),
@@ -49,11 +58,9 @@ def default_state() -> Dict[str, Any]:
         "recent_allocations": [],
     }
 
-"""Load persisted state without applying monthly rollover."""
+
 def load_state() -> Dict[str, Any]:
-    """Load raw state from disk. Does NOT apply month rollover — use
-    load_state_for_today() for that, unless you specifically need the
-    on-disk state as-is (e.g. for a migration script)."""
+    """Load persisted state without applying monthly rollover."""
     state = safe_load_json(STATE_FILE, default_state)
 
     state.setdefault("month", date.today().strftime("%Y-%m"))
@@ -66,11 +73,9 @@ def load_state() -> Dict[str, Any]:
 
     return state
 
-"""Reset monthly counters and recent history when the month changes."""
-def roll_state_if_new_month(state: Dict[str, Any], today: date) -> Dict[str, Any]:
 
-    # Single source of truth for month rollover. Use load_state_for_today()
-    # in app.py for any UI-facing monthly state.
+def roll_state_if_new_month(state: Dict[str, Any], today: date) -> Dict[str, Any]:
+    """Reset monthly counters and recent history when the month changes."""
     current_month = today.strftime("%Y-%m")
     if state.get("month") != current_month:
         state["month"] = current_month
@@ -80,25 +85,26 @@ def roll_state_if_new_month(state: Dict[str, Any], today: date) -> Dict[str, Any
         state["recent_allocations"] = []
     return state
 
-"""Load state and apply monthly rollover in one step."""
+
 def load_state_for_today(today: date) -> Dict[str, Any]:
+    """Load state and apply monthly rollover in one step."""
     return roll_state_if_new_month(load_state(), today)
 
-# Limit history growth; the IFT logic only uses recent entries.
+
 MAX_HISTORY_ENTRIES = 90
 
-"""Save state after trimming history lists to the configured maximum."""
+
 def save_state(state_data: Dict[str, Any]) -> None:
+    """Save state after trimming history lists to the configured maximum."""
     for key in ("recent_regimes", "recent_scores", "recent_allocations"):
         values = state_data.get(key)
         if isinstance(values, list) and len(values) > MAX_HISTORY_ENTRIES:
             state_data[key] = values[-MAX_HISTORY_ENTRIES:]
     safe_save_json(STATE_FILE, state_data)
 
-"""Build the default config using the neutral allocation from constants."""
+
 def default_config() -> Dict[str, Any]:
-    # Tactical neutral starting point, derived from constants.py so it can
-    # never drift out of sync with the engine's OPTIMIZED NEUTRAL baseline.
+    """Build the default config using the neutral allocation from constants."""
     neutral_alloc = {k: float(v) for k, v in BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"].items()}
     return {
         "current_alloc": neutral_alloc,
@@ -113,19 +119,22 @@ def default_config() -> Dict[str, Any]:
         "manual_regime": "OPTIMIZED NEUTRAL",
     }
 
-"""Load config and overlay it on top of defaults."""
+
 def load_config() -> Dict[str, Any]:
+    """Load config and overlay it on top of defaults."""
     base = default_config()
     loaded = safe_load_json(CONFIG_FILE, lambda: {})
     base.update(loaded)
     return base
 
-"""Persist config to disk."""
+
 def save_config(config_data: Dict[str, Any]) -> None:
+    """Persist config to disk."""
     safe_save_json(CONFIG_FILE, config_data)
 
-"""Append one daily log row to the CSV file."""
+
 def append_log_row(row: Dict[str, Any]) -> None:
+    """Append one daily log row to the CSV file."""
     file_exists = LOG_FILE.exists()
     with LOG_FILE.open("a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(row.keys()))
@@ -133,8 +142,9 @@ def append_log_row(row: Dict[str, Any]) -> None:
             writer.writeheader()
         writer.writerow(row)
 
-"""Append one confirmed IFT transaction row to the audit CSV."""
+
 def append_transaction_row(date_str: str, from_alloc: Dict[str, float], to_alloc: Dict[str, float], regime: str) -> None:
+    """Append one confirmed IFT transaction row to the audit CSV."""
     row = {
         "date": date_str,
         "regime": regime,
