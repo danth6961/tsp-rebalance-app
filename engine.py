@@ -1,7 +1,12 @@
 from datetime import date
 from typing import Dict, List, Optional, Any, Tuple
 
-from constants import DEFAULTS, BASELINE_ALLOCATIONS, DXY_TILT_THRESHOLD
+from constants import (
+    DEFAULTS,
+    BASELINE_ALLOCATIONS,
+    DXY_TILT_THRESHOLD,
+    REGIME_ORDER,
+)
 from utils import safe_float
 
 
@@ -232,13 +237,18 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _regime_rank(name: str) -> int:
-    order = {
-        "EMERGENCY DISPATCH": 3,
-        "DEFENSIVE ALLOCATION": 2,
-        "OPTIMIZED NEUTRAL": 1,
-        "RISK-ON OVERRIDE": 0,
-    }
-    return order.get(name, 1)
+    try:
+        return REGIME_ORDER.index(name)
+    except ValueError:
+        return len(REGIME_ORDER)
+
+
+def _apply_f_unlock(alloc: Dict[str, float], unlocked: bool) -> Dict[str, float]:
+    alloc = dict(alloc)
+    if unlocked and alloc.get("G", 0) >= 10:
+        alloc["G"] -= 10
+        alloc["F"] = alloc.get("F", 0) + 10
+    return alloc
 
 
 def determine_allocation(
@@ -281,9 +291,6 @@ def determine_allocation(
     momentum_breaker = scores.get("momentum", 0) <= -3
     asymmetric_vol_trigger = scores.get("market_stress", 0) <= -3 or scores.get("momentum", 0) <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
-    # Was hardcoded to 105.0 (the STRONG/VERY STRONG boundary from
-    # derive_dxy_overlay), which contradicted factor_scoring_guide.md's
-    # documented 103.5 trigger. Now derives from the single shared constant.
     dxy_strong = dxy_spot >= DXY_TILT_THRESHOLD and dxy_trend_up
     panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth is not None and market_breadth <= 60.0)
 
@@ -298,10 +305,11 @@ def determine_allocation(
     if panic_valve_triggered:
         regime_name = "EMERGENCY DISPATCH"
         composite_score = -50
-        alloc = _regime_alloc("EMERGENCY DISPATCH (F-Unlocked)") if f_fund_unlocked else _regime_alloc("EMERGENCY DISPATCH")
+        base_alloc = _apply_f_unlock(_regime_alloc("EMERGENCY DISPATCH"), f_fund_unlocked)
+        alloc = base_alloc.copy()
         total = sum(alloc.values()) or 100
         final_alloc = {k: round(v / total * 100, 1) for k, v in alloc.items()}
-        return final_alloc, scores, composite_score, regime_name, alloc, asymmetric_vol_trigger, dxy_strong
+        return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
     macro_defensive_trigger = (
         (curve_deeply_inverted and inflation_shock_up)
@@ -311,11 +319,7 @@ def determine_allocation(
 
     if macro_defensive_trigger:
         regime_name = "DEFENSIVE ALLOCATION"
-        base_alloc = _regime_alloc("DEFENSIVE ALLOCATION")
-
-        if f_fund_unlocked and base_alloc["G"] >= 10:
-            base_alloc["G"] -= 10
-            base_alloc["F"] += 10
+        base_alloc = _apply_f_unlock(_regime_alloc("DEFENSIVE ALLOCATION"), f_fund_unlocked)
 
         alloc = base_alloc.copy()
         if asymmetric_vol_trigger:
@@ -372,9 +376,7 @@ def determine_allocation(
         base_alloc = _regime_alloc("DEFENSIVE ALLOCATION")
         regime_name = "DEFENSIVE ALLOCATION"
 
-    if f_fund_unlocked and base_alloc["G"] >= 10:
-        base_alloc["G"] -= 10
-        base_alloc["F"] += 10
+    base_alloc = _apply_f_unlock(base_alloc, f_fund_unlocked)
 
     alloc = base_alloc.copy()
     if asymmetric_vol_trigger:
@@ -393,7 +395,7 @@ def determine_allocation(
 def build_engine_result(
     data: Dict[str, Any],
     override_active: bool = False,
-    override_regime: str = "OPTIMIZED_NEUTRAL",
+    override_regime: str = "OPTIMIZED NEUTRAL",
     previous_regime: Optional[str] = None,
 ):
     scores = score_market_data(data)
