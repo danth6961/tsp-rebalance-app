@@ -96,7 +96,7 @@ html, body, [class*="css"] {
 }
 
 .block-container {
-    padding-top: 1.6rem;
+    padding-top: 3.75rem;
     padding-bottom: 3rem;
     padding-left: 2.2rem;
     padding-right: 2.2rem;
@@ -112,14 +112,12 @@ h1, h2, h3, h4, h5, [data-testid="stMarkdownContainer"] h1,
 }
 
 [data-testid="stMarkdownContainer"] h3 {
-    font-size: 1.1rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: 1.05rem !important;
     font-weight: 800 !important;
+    letter-spacing: 0.005em;
     color: var(--tsp-navy) !important;
     border-left: 3px solid var(--tsp-gold);
-    padding-left: 0.6rem;
-    margin-top: 0.4rem !important;
+    padding-left: 0.55rem;
 }
 
 [data-testid="stCaptionContainer"], .stCaption, small {
@@ -156,60 +154,68 @@ hr {
 /* Sidebar / control panel                                                */
 /* ---------------------------------------------------------------------- */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, var(--tsp-navy) 0%, var(--tsp-navy-soft) 100%);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-[data-testid="stSidebar"] * {
-    color: rgba(255, 255, 255, 0.92);
+    background: var(--tsp-bg-alt);
+    border-right: 1px solid var(--tsp-border);
 }
 
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2 {
-    font-size: 1.02rem !important;
-    letter-spacing: 0.02em;
-    padding-bottom: 0.6rem;
+    font-family: var(--tsp-font-display);
+    font-size: 0.98rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.01em;
+    color: var(--tsp-navy) !important;
+    padding-bottom: 0.55rem;
     margin-bottom: 0.6rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    border-bottom: 2px solid var(--tsp-gold);
 }
 
 [data-testid="stSidebar"] [data-testid="stExpander"] {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: var(--tsp-surface);
+    border: 1px solid var(--tsp-border);
     border-radius: var(--tsp-radius-md);
     margin-bottom: 0.55rem;
+    box-shadow: var(--tsp-shadow-xs);
 }
 
 [data-testid="stSidebar"] [data-testid="stExpander"] summary {
     font-family: var(--tsp-font-display);
     font-weight: 700;
-    font-size: 0.86rem;
+    font-size: 0.85rem;
+    color: var(--tsp-navy);
 }
 
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
-    color: rgba(255, 255, 255, 0.78) !important;
-    font-size: 0.82rem !important;
+    color: var(--tsp-ink-soft) !important;
+    font-size: 0.8rem !important;
     font-weight: 500 !important;
 }
 
 [data-testid="stSidebar"] input,
 [data-testid="stSidebar"] [data-testid="stNumberInput"] input,
 [data-testid="stSidebar"] [data-testid="stTextInput"] input {
-    background: rgba(255, 255, 255, 0.94) !important;
+    background: var(--tsp-surface) !important;
     color: var(--tsp-ink) !important;
+    border: 1px solid var(--tsp-border-strong) !important;
     border-radius: var(--tsp-radius-sm) !important;
     font-family: var(--tsp-font-mono) !important;
 }
 
 [data-testid="stSidebar"] [data-baseweb="select"] > div {
-    background: rgba(255, 255, 255, 0.94) !important;
+    background: var(--tsp-surface) !important;
+    border: 1px solid var(--tsp-border-strong) !important;
     border-radius: var(--tsp-radius-sm) !important;
     color: var(--tsp-ink) !important;
 }
 
 [data-testid="stSidebar"] hr {
-    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    border-top: 1px solid var(--tsp-border);
     margin: 1rem 0;
+}
+
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: var(--tsp-ink-faint) !important;
+    font-size: 0.76rem !important;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -232,17 +238,6 @@ hr {
     border-color: var(--tsp-gold) !important;
     box-shadow: 0 0 0 3px var(--tsp-gold-wash);
     transform: translateY(-1px);
-}
-
-[data-testid="stSidebar"] .stButton > button {
-    background: rgba(255, 255, 255, 0.06) !important;
-    color: #fff !important;
-    border: 1px solid rgba(255, 255, 255, 0.18) !important;
-}
-
-[data-testid="stSidebar"] .stButton > button:hover {
-    background: rgba(255, 255, 255, 0.12) !important;
-    border-color: var(--tsp-gold) !important;
 }
 
 .stButton > button[kind="primary"],
@@ -368,8 +363,8 @@ hr {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-bottom: 2.5px solid var(--tsp-gold);
     border-radius: var(--tsp-radius-lg);
-    padding: 1.05rem 1.5rem;
-    margin-bottom: 1.4rem;
+    padding: 0.85rem 1.4rem;
+    margin-bottom: 1.3rem;
     box-shadow: var(--tsp-shadow-md);
 }
 
@@ -388,7 +383,7 @@ hr {
 .status-ribbon-title {
     font-family: var(--tsp-font-display);
     font-weight: 800;
-    font-size: 1.05rem;
+    font-size: 0.95rem;
     letter-spacing: 0.02em;
     color: #FFFFFF;
     text-transform: uppercase;
