@@ -479,6 +479,13 @@ def determine_allocation(
     return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
 
+def latest_regime_from_history(recent_regimes: list[str] | None) -> str | None:
+    """Return the most recent regime from run history for hysteresis."""
+    if not recent_regimes:
+        return None
+    return recent_regimes[-1]
+
+
 def build_engine_result(
     data: dict[str, Any],
     override_active: bool = False,
@@ -591,6 +598,7 @@ __all__ = [
     "cumulative_alloc_drift",
     "score_market_data",
     "determine_allocation",
+    "latest_regime_from_history",
     "build_engine_result",
     "should_use_tsp_ift",
 ]
