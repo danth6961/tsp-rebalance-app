@@ -4,7 +4,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from constants import DEFAULTS, PROXIES, LOG_FILE, TRANSACTION_FILE
+from constants import DEFAULTS, PROXIES, LOG_FILE, TRANSACTION_FILE, REGIME_ORDER, BASELINE_ALLOCATIONS
 from data_sources import get_market_snapshot, get_cached_proxy_df, fetch_ytd_return
 from engine import build_engine_result, should_use_tsp_ift, cumulative_alloc_drift
 from storage import load_state, load_state_for_today, load_config, save_config, save_state, append_log_row
