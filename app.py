@@ -7,7 +7,7 @@ import streamlit as st
 from constants import DEFAULTS, PROXIES, LOG_FILE, TRANSACTION_FILE
 from data_sources import get_market_snapshot, get_cached_proxy_df, fetch_ytd_return
 from engine import build_engine_result, should_use_tsp_ift, cumulative_alloc_drift
-from storage import load_state, load_state_for_today, load_config, save_config, save_state, append_log_row, append_transaction_row
+from storage import load_state, load_state_for_today, load_config, save_config, save_state, append_log_row
 from ui import (
     render_metric_cards,
     render_snapshot_quality_badge,
@@ -21,6 +21,8 @@ from ui import (
     render_decision_breakdown,
 )
 from utils import compute_snapshot_quality, get_est_now
+from validation import validate_market_data
+from ift_state_machine import is_pure_g_move, IFTStateMachine
 
 st.set_page_config(
     page_title="TSP Rebalance Engine",
@@ -175,46 +177,8 @@ def load_editable_market_data():
 # meant that rounding drift could silently fail the safety-move check,
 # causing a defensive panic move to consume a scarce monthly IFT instead
 # of being exempted as a G-Fund safety action.
-G_MOVE_TOLERANCE_PCT = 0.5
-
-
-def is_pure_g_move(target_alloc: dict) -> bool:
-    """True if the target allocation is effectively 100% G Fund.
-
-    Uses a tolerance band instead of exact float equality to absorb
-    normalization rounding drift from engine.py's allocation math.
-    """
-    g = float(target_alloc.get("G", 0.0))
-    others = sum(float(target_alloc.get(f, 0.0)) for f in ("C", "I", "S", "F"))
-    return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
-
-
-def confirm_ift_used(today, current_alloc, target_alloc, regime):
-    state = load_state_for_today(today)
-
-    current_count = int(state.get("ift_count_this_month", 0))
-
-    if is_pure_g_move(target_alloc):
-        state["last_ift_date"] = today.isoformat()
-        state["last_run_date"] = today.isoformat()
-        save_state(state)
-        st.success("G Fund safety move recorded (does not count as a monthly IFT).")
-        return
-
-    if current_count >= 2:
-        st.warning("IFT not confirmed: monthly IFT limit of 2 has already been reached.")
-        return
-
-    state["ift_count_this_month"] = current_count + 1
-    state["last_ift_date"] = today.isoformat()
-    state["last_run_date"] = today.isoformat()
-
-    try:
-        append_transaction_row(today.isoformat(), current_alloc, target_alloc, regime)
-    except Exception as e:
-        st.warning(f"IFT transaction log write failed: {e}")
-
-    save_state(state)
+# is_pure_g_move and all IFT state mutation now live in ift_state_machine.py
+# as the single enforced writer (imported at top of file).
 
 
 def main():
@@ -367,15 +331,15 @@ def main():
             st.sidebar.warning("Run the engine first before submitting an IFT.")
         else:
             target_alloc = latest_result["allocations"]
-            if is_pure_g_move(target_alloc):
-                confirm_ift_used(today, current_alloc, target_alloc, "G FUND SAFETY MOVE")
-                st.sidebar.success("G Fund safety move recorded.")
+            machine = IFTStateMachine.load(today)
+            # can_confirm() and confirm() share one eligibility implementation,
+            # so there is no longer a second independent monthly-cap check
+            # here that could disagree with the state machine's own logic.
+            decision = machine.confirm(current_alloc, target_alloc, latest_result["regime"])
+            if decision.allowed:
+                st.sidebar.success(decision.reason)
             else:
-                if int(state.get("ift_count_this_month", 0)) >= 2:
-                    st.sidebar.warning("Monthly IFT limit reached. Normal IFT submission blocked.")
-                else:
-                    confirm_ift_used(today, current_alloc, target_alloc, latest_result["regime"])
-                    st.sidebar.success("IFT confirmed and saved.")
+                st.sidebar.warning(decision.reason)
         st.rerun()
 
     if run:
@@ -413,6 +377,15 @@ def main():
         state = load_state_for_today(today)
 
         market_data = load_editable_market_data()
+        range_warnings = validate_market_data(market_data)
+        if range_warnings:
+            # Non-blocking by design: this is a manual-confirmation tool.
+            # A genuinely extreme reading (e.g. a real VIX spike) should
+            # still reach the user, just flagged loudly rather than hidden.
+            st.session_state["market_data_warnings"] = range_warnings
+        else:
+            st.session_state["market_data_warnings"] = []
+
         result = build_engine_result(
             market_data,
             override_active=manual_override_enabled,
@@ -497,6 +470,14 @@ def main():
     action = "SUBMIT IFT" if use_ift else "HOLD"
 
     render_metric_cards(result["composite_score"], result["regime"], action, state["ift_count_this_month"], reason)
+
+    market_data_warnings = st.session_state.get("market_data_warnings", [])
+    if market_data_warnings:
+        st.warning(
+            "⚠️ Some market inputs look outside plausible ranges — verify before trusting the recommendation:\n"
+            + "\n".join(f"- {w}" for w in market_data_warnings)
+        )
+
     snapshot_quality = compute_snapshot_quality(get_current_market_sources())
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"])
