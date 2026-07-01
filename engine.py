@@ -1,5 +1,14 @@
+"""
+engine.py — tactical scoring and allocation logic.
+
+Owns factor scoring, regime selection, allocation construction, overlays,
+and IFT recommendation logic.
+
+Does not own UI code, persistence, or data fetching.
+"""
+
 from datetime import date
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 
 from constants import (
     DEFAULTS,
@@ -11,12 +20,7 @@ from utils import safe_float
 
 
 def _regime_alloc(name: str) -> Dict[str, float]:
-    """Fresh copy of a regime's baseline allocation from constants.py.
-
-    Always returns a new dict so callers are free to mutate it (F Fund
-    unlock, asymmetric vol reallocation, DXY tilt, etc.) without corrupting
-    the shared constant.
-    """
+    """Return a fresh copy of a regime allocation from constants.py."""
     return dict(BASELINE_ALLOCATIONS[name])
 
 
@@ -55,6 +59,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     central_bank_stance = safe_float(data.get("central_bank_stance"), 0.0)
     liquidity_pressure = safe_float(data.get("liquidity_pressure"), 0.0)
 
+    # Core factor scores.
     if pce < 1.8:
         scores["inflation"] = 3
     elif pce < 2.0:
@@ -205,6 +210,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["liquidity_pressure"] = -5
 
+    # Stress overlays.
     if 0.0 <= stlfsi <= 1.0:
         scores["market_stress"] -= 1
         scores["momentum"] -= 1
@@ -237,6 +243,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _regime_rank(name: str) -> int:
+    """Return the shared display order index for a regime name."""
     try:
         return REGIME_ORDER.index(name)
     except ValueError:
@@ -244,6 +251,7 @@ def _regime_rank(name: str) -> int:
 
 
 def _apply_f_unlock(alloc: Dict[str, float], unlocked: bool) -> Dict[str, float]:
+    """Apply the conditional F Fund overlay to a baseline allocation."""
     alloc = dict(alloc)
     if unlocked and alloc.get("G", 0) >= 10:
         alloc["G"] -= 10
@@ -258,6 +266,7 @@ def determine_allocation(
     override_regime: str = "OPTIMIZED NEUTRAL",
     previous_regime: Optional[str] = None,
 ):
+    """Select a regime and build the target allocation."""
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
             base_alloc = _regime_alloc("RISK-ON OVERRIDE")
@@ -398,6 +407,7 @@ def build_engine_result(
     override_regime: str = "OPTIMIZED NEUTRAL",
     previous_regime: Optional[str] = None,
 ):
+    """Build the full engine result payload."""
     scores = score_market_data(data)
     allocations, scores, composite_score, regime_name, base_alloc, vol_t, dxy_t = determine_allocation(
         data,
@@ -433,16 +443,7 @@ def should_use_tsp_ift(
     confirmation_days: int,
     cooldown_days: int,
 ):
-    """
-    Conservative IFT gate.
-
-    Rules:
-    1) Emergency trigger is the only fast path.
-    2) Normal IFT requires cooldown cleared.
-    3) Normal IFT requires enough confirmation history.
-    4) Normal IFT requires both meaningful drift and meaningful score change.
-    5) The old "confirmed regime catch-up" shortcut is removed.
-    """
+    """Evaluate the conservative IFT gate."""
     if ift_count_this_month >= 2:
         return False, "No IFTs remaining this month"
 
