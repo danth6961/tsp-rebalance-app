@@ -17,6 +17,7 @@ Does not own:
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
 import pandas as pd
@@ -38,6 +39,19 @@ def _safe_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _esc(value: Any) -> str:
+    """HTML-escape a value before it is interpolated into raw markup.
+
+    Every dynamic string that gets spliced into an ``st.markdown(...,
+    unsafe_allow_html=True)`` call must go through this first. Regime and
+    config labels are edited by humans (e.g. ``constants.py``'s
+    ``"Score: < 0"``) and market-data source strings are semi-external;
+    an unescaped ``<`` or ``&`` in any of them corrupts the surrounding
+    HTML block and can make the whole tile render as visible source text.
+    """
+    return html.escape(_safe_text(value), quote=True)
 
 
 def _source_pill_class(source: Any) -> str:
@@ -64,9 +78,9 @@ def tile_html(
     conveys emphasis through the left accent bar rather than a filled
     background, so it is intentionally unused here.
     """
-    title_text = _safe_text(title)
-    value_text = _safe_text(value)
-    note_text = _safe_text(note)
+    title_text = _esc(title)
+    value_text = _esc(value)
+    note_text = _esc(note)
 
     icon_html = f"<span>{icon}</span>" if icon else ""
     note_html = f"<div class='kpi-note'>{note_text}</div>" if note_text else ""
@@ -118,16 +132,16 @@ def render_app_header(
                 <div class="status-ribbon-seal">🏛️</div>
                 <div>
                     <div class="status-ribbon-title">TSP Tactical Allocation Engine</div>
-                    <div class="status-ribbon-sub">{_safe_text(subtitle)}</div>
+                    <div class="status-ribbon-sub">{_esc(subtitle)}</div>
                 </div>
             </div>
             <div class="status-ribbon-meta">
                 <div class="status-chip">
                     <span class="status-dot" style="color:{color};"></span>
-                    {icon} {_safe_text(regime)}
+                    {icon} {_esc(regime)}
                 </div>
-                <div class="status-chip">{_safe_text(data_quality_label)}</div>
-                <div class="status-chip mono">{_safe_text(timestamp_label)}</div>
+                <div class="status-chip">{_esc(data_quality_label)}</div>
+                <div class="status-chip mono">{_esc(timestamp_label)}</div>
             </div>
         </div>
         """,
@@ -156,7 +170,7 @@ def render_snapshot_quality_badge(quality: dict[str, Any], engine_ran: bool) -> 
                 <div>
                     <div class="kpi-eyebrow">Live Data Quality</div>
                     <div class="kpi-value" style="color:{quality['color']};">{live_pct:.1f}% live</div>
-                    <div class="kpi-note">{quality['headline']}</div>
+                    <div class="kpi-note">{_esc(quality['headline'])}</div>
                 </div>
                 <div style="font-family: var(--tsp-font-mono); font-variant-numeric: tabular-nums; font-size:0.82rem; color:var(--tsp-ink-soft); line-height:1.7; text-align:right;">
                     <div><strong>{quality['live_count']}</strong> live</div>
@@ -263,10 +277,10 @@ def render_editable_metric_tile(
         st.markdown(
             f"""
             <div class="editable-tile" style="--tile-accent: {color}; margin-bottom: 0.4rem;">
-                <div class="editable-tile-title">{label_text}</div>
-                <div class="editable-tile-value">{shown}</div>
+                <div class="editable-tile-title">{_esc(label_text)}</div>
+                <div class="editable-tile-value">{_esc(shown)}</div>
                 <div class="editable-tile-foot">
-                    <span class="pill {pill_class}">{source_text}</span>
+                    <span class="pill {pill_class}">{_esc(source_text)}</span>
                 </div>
             </div>
             """,
@@ -412,7 +426,7 @@ def _render_single_regime_card(name: str, info: dict[str, Any], is_active: bool)
     """Render one regime card."""
     color = info["color"]
     bg = info["bg"]
-    alloc_text = _regime_alloc_display(name, info)
+    alloc_text = _esc(_regime_alloc_display(name, info))
     active_class = "is-active" if is_active else ""
     badge_html = (
         f'<div class="regime-card-badge">★ Active</div>' if is_active else ""
@@ -423,10 +437,10 @@ def _render_single_regime_card(name: str, info: dict[str, Any], is_active: bool)
         <div class="regime-card {active_class}" style="--regime-color: {color}; --regime-bg: {bg};">
             {badge_html}
             <div class="regime-card-icon">{info['icon']}</div>
-            <div class="regime-card-name">{name}</div>
-            <div class="regime-card-meta">{info['profile']} · {info['score_label']}</div>
+            <div class="regime-card-name">{_esc(name)}</div>
+            <div class="regime-card-meta">{_esc(info['profile'])} · {_esc(info['score_label'])}</div>
             <div class="regime-card-alloc">{alloc_text}</div>
-            <div class="regime-card-desc">{info['description']}</div>
+            <div class="regime-card-desc">{_esc(info['description'])}</div>
         </div>
         """,
         unsafe_allow_html=True,
