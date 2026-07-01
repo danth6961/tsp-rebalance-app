@@ -50,7 +50,7 @@ st.markdown(
     """
 <style>
 .block-container {
-    padding-top: 3rem;
+    padding-top: 2rem;
     padding-bottom: 2rem;
     padding-left: 2rem;
     padding-right: 2rem;
@@ -194,7 +194,7 @@ def main():
     with st.sidebar:
         st.markdown("## 🏛️ TSP Rebalance Engine")
 
-        with st.expander("💼 Current Allocation", expanded=True):
+        with st.expander("💼 Current Allocation", expanded=False):
             neutral = BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"]
             st.caption(
                 f"Startup allocation is set to the tactical neutral baseline: "
