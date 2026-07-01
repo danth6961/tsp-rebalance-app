@@ -569,6 +569,11 @@ def cached_barchart_s5th() -> Optional[float]:
 
 
 @st.cache_data(ttl=3600)
+def cached_multpl_earnings_growth() -> Optional[float]:
+    return fetch_multpl_earnings_growth()
+
+
+@st.cache_data(ttl=3600)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
@@ -608,6 +613,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             executor.submit(cached_yahoo_closes, "^GSPC", "1y", "1d"): "spx_closes",
             executor.submit(cached_yahoo_closes, "^S5TH", "1mo", "1d"): "breadth_closes",
             executor.submit(cached_barchart_s5th): "barchart_breadth",
+            executor.submit(cached_multpl_earnings_growth): "fwd_eps_val",
             executor.submit(cached_yahoo_closes, "^TNX", "1mo", "1d"): "bond_yield_closes",
             executor.submit(cached_yahoo_closes, "^IRX", "1mo", "1d"): "bill_yield_closes",
             executor.submit(cached_fred, "ICSA", api_key): "initial_claims_val",
@@ -660,8 +666,14 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     final_real_yield = results.get("real_yield_10y_val") if results.get("real_yield_10y_val") is not None else DEFAULTS["real_yield_10y"]
     final_move = move_closes[-1] if move_closes else DEFAULTS["move_index"]
 
-    final_fwd_eps = DEFAULTS["fwd_eps_growth_yoy"]
-    fwd_eps_source = "CONFIG/DEFAULT"
+    # Previously this field was hardcoded to the static default regardless
+    # of use_live_macro, meaning fetch_multpl_earnings_growth() was dead
+    # code and the CAPE-ceiling adjustment in engine.py's valuation scoring
+    # was permanently anchored to a stale assumption. Now it's fetched live
+    # like the other snapshot fields, with the same live/fallback pattern.
+    fwd_eps_live = results.get("fwd_eps_val")
+    final_fwd_eps = fwd_eps_live if fwd_eps_live is not None else DEFAULTS["fwd_eps_growth_yoy"]
+    fwd_eps_source = "LIVE (Multpl.com Earnings Growth)" if fwd_eps_live is not None else "CONFIG/DEFAULT"
 
     if breadth_closes:
         live_breadth = breadth_closes[-1]
