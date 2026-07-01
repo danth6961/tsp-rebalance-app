@@ -114,8 +114,6 @@ Current responsibilities:
 - manual IFT submit button
 - G Fund safety move handling
 
-The app also contains the detailed “Engine Decision Breakdown” section and the regime summary cards.
-
 ### `engine.py`
 Core decision logic.
 
@@ -166,7 +164,7 @@ Current important values:
 - default market inputs
 - baseline allocations
 
-`BASELINE_ALLOCATIONS` includes the tactical regime set and may still contain leftover experimental entries that should be reviewed if you want the cleanest setup.
+`BASELINE_ALLOCATIONS` should be treated as the source of truth for regime definitions.
 
 ### `models.py`
 Typed dataclasses for:
@@ -210,28 +208,6 @@ The regime logic is meant to be:
 - rule-based
 - adaptable
 - more aggressive or defensive based on market conditions
-
----
-
-## Current UI details
-
-### Regime directory
-The app shows four regime cards:
-- Risk-On Override
-- Optimized Neutral
-- Defensive Allocation
-- Emergency Dispatch
-
-### Detailed decision breakdown
-The app includes a detailed decision expander with:
-- summary
-- factor score detail
-- factor interpretation
-- regime/allocation build
-- IFT logic
-
-### Proxy chart default
-The performance chart timeframe defaults to `10 Years`.
 
 ---
 
