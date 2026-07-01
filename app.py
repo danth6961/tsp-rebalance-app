@@ -409,22 +409,22 @@ def main() -> None:
         st.rerun()
 
     if reset_state_clicked:
-    save_state(
-        {
-            "month": today.strftime("%Y-%m"),
-            "ift_count_this_month": 0,
-            "last_ift_date": None,
-            "last_run_date": None,
-            "recent_regimes": [],
-            "recent_scores": [],
-            "recent_allocations": [],
-            "recent_run_dates": [],
-            "last_confirmation_key": None,
-        }
-    )
-    st.session_state["last_engine_result"] = None
-    st.session_state["engine_ran"] = False
-    st.rerun()
+        save_state(
+            {
+                "month": today.strftime("%Y-%m"),
+                "ift_count_this_month": 0,
+                "last_ift_date": None,
+                "last_run_date": None,
+                "recent_regimes": [],
+                "recent_scores": [],
+                "recent_allocations": [],
+                "recent_run_dates": [],
+                "last_confirmation_key": None,
+            }
+        )
+        st.session_state["last_engine_result"] = None
+        st.session_state["engine_ran"] = False
+        st.rerun()
 
     if clear_logs_clicked:
         if LOG_FILE.exists():
