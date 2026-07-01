@@ -1,198 +1,218 @@
+"""
+ift_state_machine.py — single-writer IFT state management.
+
+Owns:
+- IFT eligibility checks
+- monthly cap enforcement
+- idempotent confirmation handling
+- the only code path that may mutate IFT counters
+- transaction audit writes
+
+Does not own:
+- scoring
+- regime selection
+- UI rendering
+- data fetching
+- config file I/O
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
+from dataclasses import dataclass
+from datetime import date
+from typing import Callable
+
+from storage import append_transaction_row, load_state_for_today, save_state
 
 # -----------------------------------------------------------------------------
-# Shared type aliases
+# Constants
 # -----------------------------------------------------------------------------
-# These aliases make the intent of allocations and scores explicit across the
-# engine, UI, validation, and storage layers.
+# A tolerance is needed because engine.py normalizes allocations to 100.0 with
+# rounding, which can leave tiny decimal residue between rows.
 # -----------------------------------------------------------------------------
-FundsAlloc = dict[str, float]
-Scores = dict[str, int]
-
-
-# -----------------------------------------------------------------------------
-# Market snapshot contract
-# -----------------------------------------------------------------------------
-# MarketData is the normalized, engine-ready snapshot produced by
-# data_sources.py and validated by validation.py.
-#
-# Keep this class focused on data only:
-# - no scoring
-# - no fetching
-# - no persistence
-# - no UI logic
-# -----------------------------------------------------------------------------
-@dataclass
-class MarketData:
-    """Normalized macro and market snapshot used by the engine.
-
-    Notes
-    -----
-    - Most fields are inputs used directly by factor scoring.
-    - Some fields are derived overlays or short-horizon panic indicators.
-    - `timestamp` should represent when the snapshot was assembled, not when a
-      source originally published its underlying data.
-    """
-
-    # Core macro inputs
-    core_pce_yoy: float
-    ism_pmi: float
-    services_pmi: float
-    initial_claims: float
-    breakeven_inflation: float
-    fed_assets_growth_yoy: float
-    real_yield_10y: float
-    move_index: float
-    sloos_net_pct: float
-    hy_oas: float
-    shiller_cape: float
-    fwd_eps_growth_yoy: float
-    vix_spot: float
-    pct_dist_200_sma: float
-    drawdown_pct: float
-    stlfsi_index: float
-    bond_yield_10y: float
-    dxy_spot: float
-    market_breadth_pct: float
-    spx_spot: float
-
-    # Optional / derived spread and overlay inputs
-    treasury_10y_3m_spread: float = 0.0
-    inflation_shock: float = 0.0
-    central_bank_stance: float = 0.0
-    liquidity_pressure: float = 0.0
-
-    # Short-horizon panic flags
-    vix_3d_panic: bool = False
-    spx_3d_panic: bool = False
-
-    # Optional short lookback series for overlay logic / diagnostics
-    vix_last_3: list[float] = field(default_factory=list)
-    spx_dist_last_3: list[float] = field(default_factory=list)
-
-    # Snapshot assembly time in UTC-localized or ISO-formatted form
-    timestamp: datetime | None = None
+G_MOVE_TOLERANCE_PCT: float = 0.5
+MONTHLY_IFT_LIMIT: int = 2
 
 
 # -----------------------------------------------------------------------------
-# Engine output contract
+# Pure helper
 # -----------------------------------------------------------------------------
-# EngineResult is the single output object returned by engine.py.
-# It carries both the target allocation and the reasoning flags needed by the
-# UI and downstream IFT gate.
+# This helper determines whether the target allocation is effectively a pure
+# G Fund move. Pure G safety moves do not consume monthly IFT capacity.
 # -----------------------------------------------------------------------------
-@dataclass
-class EngineResult:
-    """Decision output from the tactical engine."""
 
-    allocations: FundsAlloc
-    scores: Scores
-    composite_score: int
-    regime: str
-    base_alloc: FundsAlloc
 
-    # Decision flags used for UI and IFT logic
-    asymmetric_vol_trigger: bool
-    dxy_strong: bool
-    emergency_triggered: bool
+def is_pure_g_move(target_alloc: dict[str, float]) -> bool:
+    """Return True if the target allocation is effectively 100% G Fund."""
+    g = float(target_alloc.get("G", 0.0))
+    others = sum(float(target_alloc.get(fund, 0.0)) for fund in ("C", "I", "S", "F"))
+    return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
 
 
 # -----------------------------------------------------------------------------
-# User / app configuration contract
+# Decision contract
 # -----------------------------------------------------------------------------
-# Config contains user-editable settings and runtime preferences.
-# It should be persisted by storage.py and edited via app.py UI controls.
+# This is returned by eligibility checks and confirmations so the UI can show
+# a clear reason and downstream code can tell whether the move was a safety move.
 # -----------------------------------------------------------------------------
-@dataclass
-class Config:
-    """Editable application configuration."""
+@dataclass(frozen=True)
+class IFTDecision:
+    """Result of an IFT eligibility check or confirmation attempt."""
 
-    current_alloc: FundsAlloc
-
-    # IFT and drift controls
-    allow_second_ift: bool = False
-    normal_drift_threshold_pct: float = 7.5
-    score_change_threshold: int = 3
-    confirmation_days: int = 3
-    cooldown_days: int = 5
-
-    # Data source preferences
-    use_live_macro: bool = True
-    fred_api_key: str = ""
-
-    # Manual override controls
-    manual_override_enabled: bool = False
-    manual_regime: str = "OPTIMIZED NEUTRAL"
-
-    # Free-form storage for experimental or advanced settings
-    overrides: dict[str, Any] = field(default_factory=dict)
+    allowed: bool
+    reason: str
+    is_safety_move: bool = False
+    transaction_written: bool = False
+    state_saved: bool = False
 
 
 # -----------------------------------------------------------------------------
-# Application runtime state
+# State machine
 # -----------------------------------------------------------------------------
-# AppState tracks locally persisted operational state across Streamlit reruns
-# and between sessions.
-#
-# Important:
-# - This is not the engine result.
-# - This is not the config.
-# - This is mutable operational memory for IFT counters, recent runs, and
-#   transaction-related history.
+# This class is intentionally the only place allowed to mutate IFT counters.
+# It relies on storage.py for persistence, but keeps the mutation workflow here.
 # -----------------------------------------------------------------------------
-@dataclass
-class AppState:
-    """Persisted application state."""
+class IFTStateMachine:
+    """Enforce that IFT state changes only happen through confirm()."""
 
-    month: str
+    def __init__(self, state: dict[str, object], today: date) -> None:
+        # Load-time month rollover is applied by storage.load_state_for_today().
+        self.state: dict[str, object] = state
+        self.today: date = today
 
-    # Monthly IFT tracking
-    ift_count_this_month: int = 0
+    @classmethod
+    def load(cls, today: date) -> "IFTStateMachine":
+        """Load state from disk with month rollover applied."""
+        return cls(load_state_for_today(today), today)
 
-    # Most recent lifecycle timestamps
-    last_ift_date: str | None = None
-    last_run_date: str | None = None
+    @property
+    def ift_count_this_month(self) -> int:
+        """Return the current month's confirmed IFT count."""
+        return int(self.state.get("ift_count_this_month", 0))
 
-    # Recent history for UI and diagnostics
-    recent_regimes: list[str] = field(default_factory=list)
-    recent_scores: list[int] = field(default_factory=list)
-    recent_allocations: list[FundsAlloc] = field(default_factory=list)
+    @property
+    def last_ift_date(self) -> date | None:
+        """Return the most recent IFT date, if present."""
+        raw = self.state.get("last_ift_date")
+        if not raw:
+            return None
+        return date.fromisoformat(str(raw))
 
-    # Optional rerun / idempotency guard
-    last_confirmation_key: str | None = None
+    def can_confirm(self, target_alloc: dict[str, float]) -> IFTDecision:
+        """Check whether a manual IFT can be confirmed without mutating state."""
+        if is_pure_g_move(target_alloc):
+            return IFTDecision(
+                allowed=True,
+                reason="G Fund safety move (does not count toward monthly cap)",
+                is_safety_move=True,
+            )
 
+        if self.ift_count_this_month >= MONTHLY_IFT_LIMIT:
+            return IFTDecision(
+                allowed=False,
+                reason=f"Monthly IFT limit of {MONTHLY_IFT_LIMIT} already reached",
+            )
 
-# -----------------------------------------------------------------------------
-# Optional transaction record contract
-# -----------------------------------------------------------------------------
-# If you formalize audit rows later, this dataclass can be used by storage.py
-# and the transaction log. It is included here because the architecture notes
-# mention transaction records as a likely extension point.
-# -----------------------------------------------------------------------------
-@dataclass
-class TransactionRecord:
-    """Audit record for confirmed IFT or safety actions."""
+        return IFTDecision(allowed=True, reason="Within monthly IFT allowance")
 
-    timestamp: datetime
-    action_type: str
-    regime: str
-    from_alloc: FundsAlloc
-    to_alloc: FundsAlloc
-    ift_count_after: int
-    snapshot_hash: str = ""
-    notes: str = ""
+    def confirm(
+        self,
+        current_alloc: dict[str, float],
+        target_alloc: dict[str, float],
+        regime: str,
+        confirmation_key: str | None = None,
+    ) -> IFTDecision:
+        """Apply an approved IFT submission and persist the updated state.
+
+        Parameters
+        ----------
+        current_alloc:
+            Current fund allocation before the move.
+        target_alloc:
+            Target allocation to confirm.
+        regime:
+            Regime name used for audit logging.
+        confirmation_key:
+            Optional idempotency key to prevent double confirmation on reruns.
+
+        Returns
+        -------
+        IFTDecision
+            Decision result including persistence flags.
+        """
+        # Idempotency guard: repeated reruns / duplicate clicks should not
+        # double-count or duplicate audit rows.
+        if confirmation_key is not None:
+            last_key = str(self.state.get("last_confirmation_key", ""))
+            if last_key == confirmation_key:
+                return IFTDecision(
+                    allowed=True,
+                    reason="Duplicate confirmation ignored",
+                    is_safety_move=is_pure_g_move(target_alloc),
+                    transaction_written=False,
+                    state_saved=False,
+                )
+
+        decision = self.can_confirm(target_alloc)
+        if not decision.allowed:
+            return decision
+
+        # Update state timestamps first so even safety moves are recorded.
+        self.state["last_ift_date"] = self.today.isoformat()
+        self.state["last_run_date"] = self.today.isoformat()
+
+        # Track the idempotency key if provided.
+        if confirmation_key is not None:
+            self.state["last_confirmation_key"] = confirmation_key
+
+        # Safety moves do not consume IFT capacity.
+        if decision.is_safety_move:
+            save_state(self.state)
+            return IFTDecision(
+                allowed=True,
+                reason=decision.reason,
+                is_safety_move=True,
+                transaction_written=False,
+                state_saved=True,
+            )
+
+        # Normal IFT submission consumes monthly allowance.
+        self.state["ift_count_this_month"] = self.ift_count_this_month + 1
+
+        transaction_written = False
+        try:
+            append_transaction_row(
+                self.today.isoformat(),
+                current_alloc,
+                target_alloc,
+                regime,
+            )
+            transaction_written = True
+        except Exception as exc:
+            # Persist state even if the audit row fails, but preserve the warning.
+            decision = IFTDecision(
+                allowed=True,
+                reason=f"Within monthly IFT allowance (warning: transaction log write failed: {exc})",
+                is_safety_move=False,
+                transaction_written=False,
+                state_saved=False,
+            )
+
+        save_state(self.state)
+
+        return IFTDecision(
+            allowed=True,
+            reason=decision.reason,
+            is_safety_move=False,
+            transaction_written=transaction_written,
+            state_saved=True,
+        )
 
 
 __all__ = [
-    "FundsAlloc",
-    "Scores",
-    "MarketData",
-    "EngineResult",
-    "Config",
-    "AppState",
-    "TransactionRecord",
+    "G_MOVE_TOLERANCE_PCT",
+    "MONTHLY_IFT_LIMIT",
+    "is_pure_g_move",
+    "IFTDecision",
+    "IFTStateMachine",
 ]
