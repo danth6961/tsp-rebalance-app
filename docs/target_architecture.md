@@ -289,8 +289,6 @@ Use this dependency hierarchy:
 - `apply_overlays()`
 - `should_recommend_ift()`
 
-The scoring guide already shows the engine’s logic is layered this way: core factor scores plus macro overlay scores, then guardrails and regime rules.
-
 ## `data_sources.py`
 - `fetch_fred_series()`
 - `fetch_yahoo_proxy_history()`
@@ -338,9 +336,6 @@ The best first extraction would be:
 - regime base allocations
 - stable display ordering
 
-### Move to `engine.py`
-- any remaining allocation selection logic still embedded in app-side helpers
-
 ---
 
 # What the Final Shape Should Feel Like
@@ -357,18 +352,3 @@ After the refactor:
 - `utils.py` reads like small helpers
 
 That is the clean target.
-
----
-
-# Bottom Line
-
-The best architecture is:
-
-- one source of truth in `constants.py`
-- decision logic isolated in `engine.py`
-- orchestration only in `app.py`
-- reusable rendering in `ui.py`
-- persistence only in `storage.py`
-- data acquisition only in `data_sources.py`
-- typed contracts in `models.py`
-- shared helpers in `utils.py`
