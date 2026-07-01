@@ -1,49 +1,100 @@
 """
 engine.py — tactical scoring and allocation logic.
 
-Owns factor scoring, regime selection, allocation construction, overlays,
-and IFT recommendation logic.
+Owns:
+- factor scoring
+- regime selection
+- allocation construction
+- macro overlays
+- IFT recommendation logic
 
-Does not own UI code, persistence, or data fetching.
+Does not own:
+- UI code
+- persistence
+- external data fetching
 """
 
-from datetime import date
-from typing import Dict, List, Optional, Any
+from __future__ import annotations
 
-from constants import (
-    DEFAULTS,
-    BASELINE_ALLOCATIONS,
-    DXY_TILT_THRESHOLD,
-    REGIME_ORDER,
-)
+from datetime import date
+from typing import Any
+
+from constants import BASELINE_ALLOCATIONS, DEFAULTS, DXY_TILT_THRESHOLD, REGIME_ORDER
+from models import EngineResult, FundsAlloc, Scores
 from utils import safe_float
 
 
-def _regime_alloc(name: str) -> Dict[str, float]:
+# -----------------------------------------------------------------------------
+# Allocation helpers
+# -----------------------------------------------------------------------------
+# These helpers always return fresh copies so callers cannot mutate the
+# canonical allocations stored in constants.py.
+# -----------------------------------------------------------------------------
+
+
+def _regime_alloc(name: str) -> FundsAlloc:
     """Return a fresh copy of a regime allocation from constants.py."""
     return dict(BASELINE_ALLOCATIONS[name])
 
 
-def max_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, float]) -> float:
+def max_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) -> float:
+    """Return the maximum per-fund absolute drift in percentage points."""
     funds = set(current_alloc.keys()) | set(target_alloc.keys())
-    return max(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
+    return max(
+        abs(float(current_alloc.get(fund, 0.0)) - float(target_alloc.get(fund, 0.0)))
+        for fund in funds
+    )
 
 
-def cumulative_alloc_drift(current_alloc: Dict[str, float], target_alloc: Dict[str, float]) -> float:
+def cumulative_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) -> float:
+    """Return half the L1 distance between two allocations.
+
+    Since allocation weights sum to 100, dividing the total absolute
+    difference by 2 gives the minimum turnover-style drift in percentage points.
+    """
     funds = set(current_alloc.keys()) | set(target_alloc.keys())
-    total_abs_diff = sum(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
+    total_abs_diff = sum(
+        abs(float(current_alloc.get(fund, 0.0)) - float(target_alloc.get(fund, 0.0)))
+        for fund in funds
+    )
     return total_abs_diff / 2.0
 
 
-def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
-    scores: Dict[str, int] = {}
+# -----------------------------------------------------------------------------
+# Scoring
+# -----------------------------------------------------------------------------
+# score_market_data() converts a raw market snapshot into factor scores.
+# The engine is rule-based and deterministic; it does not learn weights live.
+# -----------------------------------------------------------------------------
 
+
+def score_market_data(data: dict[str, Any]) -> Scores:
+    """Convert raw snapshot inputs into factor scores.
+
+    Parameters
+    ----------
+    data:
+        Raw market snapshot dictionary. Missing values are filled with
+        documented defaults from constants.py.
+
+    Returns
+    -------
+    Scores
+        A dict of factor name -> integer score.
+    """
+    scores: Scores = {}
+
+    # Core macro inputs
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
     pmi = safe_float(data.get("ism_pmi"), DEFAULTS["ism_pmi"])
     services_pmi = safe_float(data.get("services_pmi"), DEFAULTS["services_pmi"])
     initial_claims = safe_float(data.get("initial_claims"), DEFAULTS["initial_claims"])
-    breakeven_inflation = safe_float(data.get("breakeven_inflation"), DEFAULTS["breakeven_inflation"])
-    fed_assets_growth_yoy = safe_float(data.get("fed_assets_growth_yoy"), DEFAULTS["fed_assets_growth_yoy"])
+    breakeven_inflation = safe_float(
+        data.get("breakeven_inflation"), DEFAULTS["breakeven_inflation"]
+    )
+    fed_assets_growth_yoy = safe_float(
+        data.get("fed_assets_growth_yoy"), DEFAULTS["fed_assets_growth_yoy"]
+    )
     real_yield_10y = safe_float(data.get("real_yield_10y"), DEFAULTS["real_yield_10y"])
     sloos = safe_float(data.get("sloos_net_pct"), DEFAULTS["sloos_net_pct"])
     hy_spread = safe_float(data.get("hy_oas"), DEFAULTS["hy_oas"])
@@ -54,12 +105,13 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     drawdown = safe_float(data.get("drawdown_pct"), 0.0)
     stlfsi = safe_float(data.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
 
+    # Macro overlays
     treasury_10y_3m_spread = safe_float(data.get("treasury_10y_3m_spread"), 0.0)
     inflation_shock = safe_float(data.get("inflation_shock"), 0.0)
     central_bank_stance = safe_float(data.get("central_bank_stance"), 0.0)
     liquidity_pressure = safe_float(data.get("liquidity_pressure"), 0.0)
 
-    # Core factor scores.
+    # Inflation
     if pce < 1.8:
         scores["inflation"] = 3
     elif pce < 2.0:
@@ -76,6 +128,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     elif breakeven_inflation < 1.8:
         scores["inflation"] = max(scores["inflation"], 0)
 
+    # Growth
     composite_pmi = (0.20 * pmi) + (0.80 * services_pmi)
     if composite_pmi > 55.0:
         scores["growth"] = 3
@@ -93,6 +146,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     elif initial_claims > 250.0:
         scores["growth"] -= 1
 
+    # Liquidity
     if sloos < -15.0:
         scores["liquidity"] = 3
     elif sloos <= 5.0:
@@ -105,6 +159,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["liquidity"] -= 2
 
+    # Credit spreads
     if hy_spread < 3.0:
         scores["credit_spreads"] = 3
     elif hy_spread < 4.0:
@@ -116,6 +171,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["credit_spreads"] = -5
 
+    # Valuation
     base_cape_ceiling = 35.0 if fwd_eps >= 15.0 else 30.0
     if real_yield_10y > 2.2:
         active_cape_ceiling = base_cape_ceiling - 5.0
@@ -133,6 +189,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["valuation"] = -5
 
+    # Market stress
     if vix < 12.0:
         scores["market_stress"] = 3
     elif vix < 15.0:
@@ -144,6 +201,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["market_stress"] = -5
 
+    # Momentum
     if sma_dist > 5.0:
         scores["momentum"] = 3
     elif sma_dist >= 0.0:
@@ -153,6 +211,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["momentum"] = -5
 
+    # Drawdown
     if drawdown < 5.0:
         scores["drawdown"] = 3
     elif drawdown < 10.0:
@@ -164,6 +223,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["drawdown"] = -5
 
+    # Yield curve
     if treasury_10y_3m_spread > 1.0:
         scores["yield_curve"] = 2
     elif treasury_10y_3m_spread > 0.5:
@@ -175,6 +235,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["yield_curve"] = -4
 
+    # Inflation shock overlay
     if inflation_shock <= -0.2:
         scores["inflation_shock"] = 2
     elif inflation_shock <= 0.0:
@@ -186,6 +247,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["inflation_shock"] = -4
 
+    # Central bank stance overlay
     if central_bank_stance >= 2.0:
         scores["central_bank"] = 2
     elif central_bank_stance >= 1.0:
@@ -199,6 +261,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["central_bank"] = 0
 
+    # Liquidity pressure overlay
     if liquidity_pressure <= 0.5:
         scores["liquidity_pressure"] = 1
     elif liquidity_pressure <= 1.5:
@@ -210,7 +273,7 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     else:
         scores["liquidity_pressure"] = -5
 
-    # Stress overlays.
+    # Overlay adjustments
     if 0.0 <= stlfsi <= 1.0:
         scores["market_stress"] -= 1
         scores["momentum"] -= 1
@@ -242,31 +305,35 @@ def score_market_data(data: Dict[str, Any]) -> Dict[str, int]:
     return scores
 
 
-def _regime_rank(name: str) -> int:
-    """Return the shared display order index for a regime name."""
-    try:
-        return REGIME_ORDER.index(name)
-    except ValueError:
-        return len(REGIME_ORDER)
+# -----------------------------------------------------------------------------
+# Allocation and regime selection
+# -----------------------------------------------------------------------------
 
 
-def _apply_f_unlock(alloc: Dict[str, float], unlocked: bool) -> Dict[str, float]:
+def _apply_f_unlock(alloc: FundsAlloc, unlocked: bool) -> FundsAlloc:
     """Apply the conditional F Fund overlay to a baseline allocation."""
     alloc = dict(alloc)
-    if unlocked and alloc.get("G", 0) >= 10:
-        alloc["G"] -= 10
-        alloc["F"] = alloc.get("F", 0) + 10
+    if unlocked and alloc.get("G", 0.0) >= 10.0:
+        alloc["G"] -= 10.0
+        alloc["F"] = alloc.get("F", 0.0) + 10.0
     return alloc
 
 
 def determine_allocation(
-    data: Dict[str, Any],
-    scores: Dict[str, int],
+    data: dict[str, Any],
+    scores: Scores,
     override_active: bool = False,
     override_regime: str = "OPTIMIZED NEUTRAL",
-    previous_regime: Optional[str] = None,
-):
-    """Select a regime and build the target allocation."""
+    previous_regime: str | None = None,
+) -> tuple[FundsAlloc, Scores, int, str, FundsAlloc, bool, bool]:
+    """Select a regime and build the target allocation.
+
+    Returns
+    -------
+    tuple
+        (final_alloc, scores, composite_score, regime_name,
+         base_alloc, asymmetric_vol_trigger, dxy_strong)
+    """
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
             base_alloc = _regime_alloc("RISK-ON OVERRIDE")
@@ -281,6 +348,7 @@ def determine_allocation(
         base_alloc = _regime_alloc("EMERGENCY DISPATCH")
         return base_alloc, scores, -50, "EMERGENCY DISPATCH", base_alloc, False, False
 
+    # Core regime inputs
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
     cape = safe_float(data.get("shiller_cape"), DEFAULTS["shiller_cape"])
     move_index = safe_float(data.get("move_index"), DEFAULTS["move_index"])
@@ -291,6 +359,7 @@ def determine_allocation(
     vix_3d_panic = bool(data.get("vix_3d_panic", False))
     spx_3d_panic = bool(data.get("spx_3d_panic", False))
 
+    # Overlay inputs
     treasury_10y_3m_spread = safe_float(data.get("treasury_10y_3m_spread"), 0.0)
     inflation_shock = safe_float(data.get("inflation_shock"), 0.0)
     central_bank_stance = safe_float(data.get("central_bank_stance"), 0.0)
@@ -301,7 +370,7 @@ def determine_allocation(
     asymmetric_vol_trigger = scores.get("market_stress", 0) <= -3 or scores.get("momentum", 0) <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
     dxy_strong = dxy_spot >= DXY_TILT_THRESHOLD and dxy_trend_up
-    panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth is not None and market_breadth <= 60.0)
+    panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and market_breadth <= 60.0
 
     curve_inverted = treasury_10y_3m_spread < 0.0
     curve_deeply_inverted = treasury_10y_3m_spread < -0.5
@@ -311,15 +380,17 @@ def determine_allocation(
     liquidity_tight = liquidity_pressure >= 3.0
     liquidity_very_tight = liquidity_pressure >= 4.0
 
+    # Emergency dispatch has highest priority.
     if panic_valve_triggered:
         regime_name = "EMERGENCY DISPATCH"
         composite_score = -50
-        base_alloc = _apply_f_unlock(_regime_alloc("EMERGENCY DISPATCH"), f_fund_unlocked)
-        alloc = base_alloc.copy()
-        total = sum(alloc.values()) or 100
-        final_alloc = {k: round(v / total * 100, 1) for k, v in alloc.items()}
+        base_alloc = _apply_f_unlock(_regime_alloc(regime_name), f_fund_unlocked)
+        final_alloc = dict(base_alloc)
+        total = sum(final_alloc.values()) or 100.0
+        final_alloc = {k: round(v / total * 100.0, 1) for k, v in final_alloc.items()}
         return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
+    # Macro defensive guardrail.
     macro_defensive_trigger = (
         (curve_deeply_inverted and inflation_shock_up)
         or (policy_aggressive and liquidity_very_tight)
@@ -328,19 +399,20 @@ def determine_allocation(
 
     if macro_defensive_trigger:
         regime_name = "DEFENSIVE ALLOCATION"
-        base_alloc = _apply_f_unlock(_regime_alloc("DEFENSIVE ALLOCATION"), f_fund_unlocked)
+        base_alloc = _apply_f_unlock(_regime_alloc(regime_name), f_fund_unlocked)
 
-        alloc = base_alloc.copy()
+        alloc = dict(base_alloc)
         if asymmetric_vol_trigger:
-            s_w = alloc["S"]
-            alloc["S"] = 0
-            alloc["G"] += s_w
+            s_weight = alloc["S"]
+            alloc["S"] = 0.0
+            alloc["G"] += s_weight
 
-        total = sum(alloc.values()) or 100
-        final_alloc = {k: round((v / total) * 100, 1) for k, v in alloc.items()}
+        total = sum(alloc.values()) or 100.0
+        final_alloc = {k: round((v / total) * 100.0, 1) for k, v in alloc.items()}
         composite_score = min(composite_score, -5)
         return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
+    # Default regime selection.
     candidate_regime = "DEFENSIVE ALLOCATION"
     if (
         composite_score >= 7
@@ -356,6 +428,7 @@ def determine_allocation(
     elif composite_score >= 0 and not curve_deeply_inverted and not policy_aggressive:
         candidate_regime = "OPTIMIZED NEUTRAL"
 
+    # Hysteresis / stickiness rules.
     if previous_regime == "RISK-ON OVERRIDE" and candidate_regime == "OPTIMIZED NEUTRAL":
         if composite_score >= 4 and not curve_inverted and not policy_restrictive and not liquidity_tight:
             candidate_regime = "RISK-ON OVERRIDE"
@@ -381,68 +454,90 @@ def determine_allocation(
     else:
         base_alloc = _regime_alloc("DEFENSIVE ALLOCATION")
 
+    # Valuation / stress override.
     if scores.get("valuation") == -5 and safe_float(data.get("vix_spot"), 0.0) > 24.0:
         base_alloc = _regime_alloc("DEFENSIVE ALLOCATION")
         regime_name = "DEFENSIVE ALLOCATION"
 
     base_alloc = _apply_f_unlock(base_alloc, f_fund_unlocked)
 
-    alloc = base_alloc.copy()
+    alloc = dict(base_alloc)
+
+    # Asymmetric volatility trims S and reallocates to G.
     if asymmetric_vol_trigger:
-        s_w = alloc["S"]
-        alloc["S"] = 0
-        alloc["G"] += s_w
+        s_weight = alloc["S"]
+        alloc["S"] = 0.0
+        alloc["G"] += s_weight
+
+    # Strong DXY tilt reduces international exposure in constructive regimes.
     if dxy_strong and regime_name in ("RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL") and alloc["I"] >= 5:
         alloc["I"] -= 5
         alloc["C"] += 5
 
-    total = sum(alloc.values()) or 100
-    final_alloc = {k: round((v / total) * 100, 1) for k, v in alloc.items()}
+    total = sum(alloc.values()) or 100.0
+    final_alloc = {k: round((v / total) * 100.0, 1) for k, v in alloc.items()}
     return final_alloc, scores, composite_score, regime_name, base_alloc, asymmetric_vol_trigger, dxy_strong
 
 
 def build_engine_result(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     override_active: bool = False,
     override_regime: str = "OPTIMIZED NEUTRAL",
-    previous_regime: Optional[str] = None,
-):
-    """Build the full engine result payload."""
+    previous_regime: str | None = None,
+) -> EngineResult:
+    """Build the full engine result payload as a typed dataclass."""
     scores = score_market_data(data)
-    allocations, scores, composite_score, regime_name, base_alloc, vol_t, dxy_t = determine_allocation(
+    (
+        allocations,
+        scores,
+        composite_score,
+        regime_name,
+        base_alloc,
+        vol_trigger,
+        dxy_trigger,
+    ) = determine_allocation(
         data,
         scores,
         override_active=override_active,
         override_regime=override_regime,
         previous_regime=previous_regime,
     )
-    return {
-        "allocations": allocations,
-        "scores": scores,
-        "composite_score": composite_score,
-        "regime": regime_name,
-        "base_alloc": base_alloc,
-        "asymmetric_vol_trigger": vol_t,
-        "dxy_strong": dxy_t,
-        "emergency_triggered": regime_name == "EMERGENCY DISPATCH",
-    }
+
+    return EngineResult(
+        allocations=allocations,
+        scores=scores,
+        composite_score=composite_score,
+        regime=regime_name,
+        base_alloc=base_alloc,
+        asymmetric_vol_trigger=vol_trigger,
+        dxy_strong=dxy_trigger,
+        emergency_triggered=regime_name == "EMERGENCY DISPATCH",
+    )
+
+
+# -----------------------------------------------------------------------------
+# IFT recommendation logic
+# -----------------------------------------------------------------------------
+# This is the conservative decision gate used to decide whether the app should
+# recommend submitting an IFT.
+# -----------------------------------------------------------------------------
 
 
 def should_use_tsp_ift(
     today: date,
-    current_alloc: Dict[str, float],
-    target_alloc: Dict[str, float],
-    recent_regimes: List[str],
-    recent_scores: List[int],
+    current_alloc: FundsAlloc,
+    target_alloc: FundsAlloc,
+    recent_regimes: list[str],
+    recent_scores: list[int],
     emergency_triggered: bool,
     ift_count_this_month: int,
-    last_ift_date: Optional[date],
+    last_ift_date: date | None,
     allow_second_ift: bool,
     normal_drift_threshold_pct: float,
     score_change_threshold: int,
     confirmation_days: int,
     cooldown_days: int,
-):
+) -> tuple[bool, str]:
     """Evaluate the conservative IFT gate."""
     if ift_count_this_month >= 2:
         return False, "No IFTs remaining this month"
@@ -474,11 +569,13 @@ def should_use_tsp_ift(
 
     implied_regime = min(
         BASELINE_ALLOCATIONS.keys(),
-        key=lambda name: max_alloc_drift(current_alloc, BASELINE_ALLOCATIONS[name])
+        key=lambda name: max_alloc_drift(current_alloc, BASELINE_ALLOCATIONS[name]),
     )
     implied_norm = (
-        "EMERGENCY DISPATCH" if "EMERGENCY" in implied_regime
-        else "DEFENSIVE ALLOCATION" if "DEFENSIVE" in implied_regime
+        "EMERGENCY DISPATCH"
+        if "EMERGENCY" in implied_regime
+        else "DEFENSIVE ALLOCATION"
+        if "DEFENSIVE" in implied_regime
         else implied_regime
     )
 
@@ -486,3 +583,14 @@ def should_use_tsp_ift(
         return False, f"Regime not yet stable ({current_confirmed_regime} vs {implied_norm})"
 
     return True, f"Confirmed regime shift with {cum_drift:.1f}% cumulative drift"
+
+
+__all__ = [
+    "_regime_alloc",
+    "max_alloc_drift",
+    "cumulative_alloc_drift",
+    "score_market_data",
+    "determine_allocation",
+    "build_engine_result",
+    "should_use_tsp_ift",
+]
