@@ -1,3 +1,11 @@
+"""
+app.py — Streamlit orchestration layer.
+
+Owns page layout, sidebar controls, fetch/run flow, rendering, and
+manual confirmation wiring.
+
+Does not own scoring, persistence internals, or data acquisition.
+"""
 from datetime import date
 import json
 
