@@ -21,7 +21,7 @@ DEFAULTS = {
     "sloos_net_pct": 6.6,
     "hy_oas": 2.76,
     "shiller_cape": 39.66,
-    "fwd_eps_growth_yoy": 30.82,
+    "fwd_eps_growth_yoy": 31.21,
     "stlfsi_index": -0.9568,
     "bond_yield_3m": 4.20,
     "bond_yield_10y": 4.50,
