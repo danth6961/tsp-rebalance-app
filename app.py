@@ -375,16 +375,19 @@ def main() -> None:
         fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
         st.divider()
-        run_clicked = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
         confirm_clicked = st.button(
             "✅ Submit IFT",
             use_container_width=True,
             disabled=not st.session_state.get("engine_ran", False),
         )
+        st.divider()
         save_clicked = st.button("💾 Save Config", use_container_width=True)
         reset_state_clicked = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_clicked = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_clicked = st.button("🗑️ Clear Audit Trail", use_container_width=True)
+        
+        st.divider()
+        run_clicked = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
     # -----------------------------------------------------------------------------
     # Sidebar action handlers
