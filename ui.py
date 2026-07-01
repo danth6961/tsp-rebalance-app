@@ -228,6 +228,18 @@ def make_score_chart(state):
     return pd.DataFrame({"Score": scores})
 
 
+def make_alloc_chart(target_alloc, current_alloc):
+    rows = []
+    for fund in ["G", "C", "I", "S", "F"]:
+        rows.append({
+            "Fund": fund,
+            "Current %": float(current_alloc.get(fund, 0.0)),
+            "Target %": float(target_alloc.get(fund, 0.0)),
+            "Delta %": float(target_alloc.get(fund, 0.0)) - float(current_alloc.get(fund, 0.0)),
+        })
+    return pd.DataFrame(rows)
+
+
 def _regime_alloc_display(name: str, info: dict) -> str:
     if "alloc_display" in info:
         return info["alloc_display"]
