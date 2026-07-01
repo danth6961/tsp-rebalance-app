@@ -310,7 +310,7 @@ def render_decision_breakdown(
 ):
     """Render the engine decision breakdown panel."""
     st.markdown("### 🔍 Engine Decision Breakdown")
-    with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
+    with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=False):
         st.markdown("#### 1) Decision Summary")
 
         sum_cols = st.columns(4)
