@@ -266,13 +266,20 @@ def render_history_table(state: dict[str, Any]) -> None:
     recent_regimes = state.get("recent_regimes", [])
     recent_scores = state.get("recent_scores", [])
     recent_allocations = state.get("recent_allocations", [])
+    recent_run_dates = state.get("recent_run_dates", [])
 
     rows: list[dict[str, Any]] = []
-    n = max(len(recent_regimes), len(recent_scores), len(recent_allocations))
+    n = max(
+        len(recent_regimes),
+        len(recent_scores),
+        len(recent_allocations),
+        len(recent_run_dates),
+    )
     for i in range(n):
         rows.append(
             {
                 "Index": i + 1,
+                "Date": recent_run_dates[i] if i < len(recent_run_dates) else None,
                 "Regime": recent_regimes[i] if i < len(recent_regimes) else None,
                 "Score": recent_scores[i] if i < len(recent_scores) else None,
                 "Allocation": recent_allocations[i] if i < len(recent_allocations) else None,
@@ -284,14 +291,36 @@ def render_history_table(state: dict[str, Any]) -> None:
 
 
 def make_score_chart(state: dict[str, Any]) -> pd.DataFrame | None:
-    """Build a score history dataframe."""
+    """Build a score history dataframe with dates on the x-axis.
+
+    If dates and scores are mismatched, falls back to an index-based series.
+    """
     scores = state.get("recent_scores", [])
+    dates = state.get("recent_run_dates", [])
+
     if not scores:
         return None
-    return pd.DataFrame({"Score": scores})
+
+    if len(dates) != len(scores):
+        return pd.DataFrame({"Score": scores})
+
+    df = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(dates, errors="coerce"),
+            "Score": scores,
+        }
+    ).dropna(subset=["Date"])
+
+    if df.empty:
+        return pd.DataFrame({"Score": scores})
+
+    return df.set_index("Date")
 
 
-def make_alloc_chart(target_alloc: dict[str, float], current_alloc: dict[str, float]) -> pd.DataFrame:
+def make_alloc_chart(
+    target_alloc: dict[str, float],
+    current_alloc: dict[str, float],
+) -> pd.DataFrame:
     """Build a fund allocation comparison dataframe."""
     rows: list[dict[str, Any]] = []
     for fund in ["G", "C", "I", "S", "F"]:
