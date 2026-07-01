@@ -48,6 +48,7 @@ from ui import (
     make_alloc_chart,
     make_score_chart,
     recent_state_cards,
+    render_app_header,
     render_decision_breakdown,
     render_editable_metric_tile,
     render_history_table,
@@ -310,7 +311,8 @@ def main() -> None:
 
     # Sidebar controls
     with st.sidebar:
-        st.markdown("## 🏛️ TSP Rebalance Engine")
+        st.markdown("## ⚙️ Control Panel")
+        st.caption("Configure inputs, rules, and manual overrides.")
 
         with st.expander("💼 Current Allocation", expanded=False):
             neutral = BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"]
@@ -549,6 +551,15 @@ def main() -> None:
     # -----------------------------------------------------------------------------
     # Main display
     # -----------------------------------------------------------------------------
+    _header_quality = compute_snapshot_quality(get_current_market_sources())
+    _quality_label = (
+        f"{_header_quality['live_pct']:.1f}% live data"
+        if st.session_state.get("engine_ran", False)
+        else "Awaiting first run"
+    )
+    _timestamp_label = f"Last run: {state.get('last_run_date') or '—'}"
+    render_app_header(result.regime, _quality_label, _timestamp_label)
+
     render_metric_cards(
         result.composite_score,
         result.regime,
