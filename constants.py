@@ -31,6 +31,14 @@ DEFAULTS = {
     "spx_spot": 5000.0,
 }
 
+# Single source of truth for the DXY tilt trigger. Referenced by both
+# engine.py (allocation logic) and factor_scoring_guide.md (documentation).
+# Previously engine.py hardcoded 105.0 (the STRONG/VERY STRONG boundary)
+# while the guide documented 103.5 -- a real spec/code drift that silently
+# narrowed the tilt's trigger window. This constant is now the only place
+# that number lives.
+DXY_TILT_THRESHOLD = 103.5
+
 PROXIES = {
     "C Fund (S&P 500 Stock Index)": "SPY",
     "S Fund (Mid/Small Cap Stock Index)": "VXF",
