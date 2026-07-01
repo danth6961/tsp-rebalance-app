@@ -64,19 +64,6 @@ def render_snapshot_quality_badge(quality: dict, engine_ran: bool):
         unsafe_allow_html=True,
     )
 
-    if quality["fallback_fields"]:
-        with st.expander(
-            f"Placeholder inputs ({quality['fallback_count']}) — using saved defaults, not fresh market data",
-            expanded=quality["level"] == "low",
-        ):
-            for _, label, source in quality["fallback_fields"]:
-                st.markdown(f"- **{label}** — `{source}`")
-
-    if quality["derived_fields"]:
-        with st.expander(f"Derived inputs ({quality['derived_count']}) — calculated from other fields"):
-            for _, label, source in quality["derived_fields"]:
-                st.markdown(f"- **{label}** — `{source}`")
-
 
 def render_metric_cards(composite_score, regime, action, ift_count_this_month, reason):
     cols = st.columns(4)
