@@ -2,7 +2,7 @@
 
 The refactor should preserve the core behavior of the tactical TSP engine while making the codebase easier to maintain, test, and keep synchronized.
 
-The current project already has the right broad module split: `app.py` handles orchestration and UI, `engine.py` handles scoring and allocation logic, `data_sources.py` handles market data, `storage.py` handles persistence, `ui.py` provides reusable rendering helpers, `constants.py` contains defaults and paths, and `models.py` defines typed structures.
+The current project already has the right broad module split: `app.py` handles orchestration and UI, `engine.py` handles scoring and allocation logic, `data_sources.py` handles market data, `storage.py` handles persistence, `ui.py` provides reusable rendering helpers, `constants.py` contains defaults and paths, and `models.py` defines typed structures  .
 
 The main goals of the refactor are:
 
@@ -43,7 +43,7 @@ The main goals of the refactor are:
 - data fetching logic
 
 ### Why
-This file should be the single source of truth for allocations and regime names. Right now, the tactical baselines exist in `constants.py`, but similar values are also hardcoded in `engine.py` and `app.py`, which creates drift risk.
+This file should be the single source of truth for allocations and regime names. The repository already notes the drift risk caused by duplicating the same allocation numbers across multiple files, and the consistency tests are designed to protect against that  .
 
 ---
 
@@ -125,7 +125,7 @@ Examples:
 - direct config editing
 
 ### Why
-The engine is the heart of the tactical system. The scoring guide shows that it already carries the core factor and macro overlay rules, and the app renders those decisions for transparency.
+The engine is the heart of the tactical system. The scoring guide shows that it already carries layered factor logic with core scores plus macro overlays, and the app renders those decisions for transparency.
 
 ### Important rule
 `engine.py` should never hardcode regime allocations. It should import them from `constants.py`.
@@ -152,7 +152,7 @@ Persistence and state management only.
 - data fetching logic
 
 ### Why
-`storage.py` is already the right place for atomic-ish JSON persistence and CSV audit logging, but its neutral startup config currently duplicates the tactical neutral allocation literal, which should be derived from `constants.py` instead.
+`storage.py` is the right place for atomic-ish JSON persistence and CSV audit logging. It should derive its defaults from shared constants rather than recreating allocation literals.
 
 ---
 
@@ -289,6 +289,8 @@ Use this dependency hierarchy:
 - `apply_overlays()`
 - `should_recommend_ift()`
 
+The scoring guide already shows the engine’s logic is layered this way: core factor scores plus macro overlay scores, then guardrails and regime rules.
+
 ## `data_sources.py`
 - `fetch_fred_series()`
 - `fetch_yahoo_proxy_history()`
@@ -336,6 +338,9 @@ The best first extraction would be:
 - regime base allocations
 - stable display ordering
 
+### Move to `engine.py`
+- any remaining allocation selection logic still embedded in app-side helpers
+
 ---
 
 # What the Final Shape Should Feel Like
@@ -352,3 +357,18 @@ After the refactor:
 - `utils.py` reads like small helpers
 
 That is the clean target.
+
+---
+
+# Bottom Line
+
+The best architecture is:
+
+- one source of truth in `constants.py`
+- decision logic isolated in `engine.py`
+- orchestration only in `app.py`
+- reusable rendering in `ui.py`
+- persistence only in `storage.py`
+- data acquisition only in `data_sources.py`
+- typed contracts in `models.py`
+- shared helpers in `utils.py`
