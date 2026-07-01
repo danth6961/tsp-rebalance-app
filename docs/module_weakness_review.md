@@ -9,16 +9,17 @@ The repository is now organized in a sensible way:
 - `data_sources.py` assembles the market snapshot
 - `storage.py` handles persistence
 - `ui.py` provides reusable visual helpers
+- `styles.py` owns CSS and visual tokens
 - `constants.py`, `models.py`, `utils.py`, `validation.py`, and `ift_state_machine.py` support the main flow
 
-The biggest earlier risk was drift: if allocations, thresholds, or IFT rules were changed in one place but not another, the system could become internally inconsistent. That risk has been materially reduced by centralizing regime definitions in `constants.py` and adding consistency tests that enforce synchronization across the major modules  
+The biggest earlier risk was drift: if allocations, thresholds, or IFT rules were changed in one place but not another, the system could become internally inconsistent. That risk has been materially reduced by centralizing regime definitions in `constants.py` and by using consistency tests to keep the major modules aligned  
 
 ---
 
 ## What Has Been Fixed
 
 ### 1) Regime allocation drift is now much better controlled
-`constants.py` now explicitly owns the regime registry, including the tactical allocations and UI metadata, and the test suite checks that the engine and UI stay aligned with it  
+`constants.py` now explicitly owns the regime registry, including tactical allocations and UI metadata, and the test suite checks that the engine and UI stay aligned with it. That is a major improvement over the earlier state where the same allocation numbers were duplicated across files and could silently diverge 
 
 What this fixes:
 - duplicate regime literals spread across files
@@ -26,30 +27,24 @@ What this fixes:
 - accidental changes to allocations in one module without updates in the others
 
 ### 2) The Risk-On allocation bug was corrected
-The Risk-On regime now sums to 100% after the I Fund allocation was corrected, and the tests explicitly protect against the old 105% error  
+The Risk-On regime now sums to 100% after the I Fund allocation was corrected, and the tests explicitly protect against the old 105% error 
 
 ### 3) The IFT workflow is now explicitly managed
-`ift_state_machine.py` now owns IFT eligibility checks and the only mutation path for IFT counters, `last_ift_date`, and transaction logging. The tests directly cover:
-- pure G Fund move detection
-- monthly cap enforcement
-- safety-move exemption behavior  
+`ift_state_machine.py` now owns IFT eligibility checks and the mutation path for IFT counters, `last_ift_date`, and transaction logging. The project handoff and tests describe the intended rule clearly:
+- pure G Fund moves are exempt from normal IFT counting
+- normal confirmations must respect the monthly cap
+- recommendation and confirmation must remain separate  
 
 This is a major improvement over the earlier state, where recommendation and confirmation could blur together.
 
 ### 4) The DXY threshold drift issue is guarded
-The DXY tilt threshold is now centralized and tested against the documented value, reducing the chance of silent mismatch between code and documentation  
+The DXY tilt threshold is centralized in `constants.py`, which reduces the chance of silent mismatch between code and documentation 
 
-### 5) The project now has real consistency tests
-`test_regime_consistency.py` checks:
-- regime ordering
-- engine allocation alignment
-- allocation totals
-- UI-required regime metadata fields
-- DXY threshold behavior
-- IFT state machine behavior
-- storage defaults and month rollover behavior 
+### 5) The project has real consistency tests
+The repository includes consistency checks that keep the regime definitions, engine, UI, validation, storage, and IFT-state logic aligned. That is a strong hardening step and should be treated as a core safeguard, not an afterthought 
 
-That is a substantial hardening step.
+### 6) Styling is ready to be separated from orchestration
+The current codebase already shows that `app.py` is carrying the styling burden inline, while `ui.py` is generating class-based HTML fragments. Moving CSS into `styles.py` is a good architectural cleanup and will make `app.py` thinner.
 
 ---
 
@@ -60,10 +55,10 @@ That is a substantial hardening step.
 - Manual IFT button is disabled until a result exists
 - Explicit handling for the pure G Fund safety move path
 - The UI exposes factor detail, regime selection, and IFT logic clearly
-- The app reflects the regime set and baseline allocations documented in the handoff files and `constants.py`  
+- The app reflects the regime set and baseline allocations documented in the handoff files and `constants.py` 
 
 ### Fixed
-- Some of the earlier regime mismatch risk is now mitigated because the app draws from the centralized regime definitions and is covered by consistency tests 
+- Some of the earlier regime mismatch risk is now mitigated because the app draws from centralized regime definitions and is covered by consistency tests  
 
 ### Still Broken or Risky
 
@@ -73,7 +68,10 @@ Streamlit reruns are normal, but they make state management fragile. If one bran
 #### B. Manual confirmation still depends on cached result state
 The submit button uses `st.session_state["last_engine_result"]`. That is workable, but it means the confirmation action depends on the last successful UI run, not on a locked snapshot. If the user changes inputs after the engine ran, the app can still submit against the older result unless it forces a fresh run first.
 
-#### C. The IFT logic remains somewhat hard to reason about for end users
+#### C. UI, style, and engine responsibilities are still mixed at the app boundary
+`app.py` currently owns orchestration, some presentation behavior, and inline CSS. That is workable for a small app, but it is not the clean final target.
+
+#### D. The IFT logic remains somewhat hard to reason about for end users
 The app exposes multiple controls such as:
 - drift threshold
 - score change threshold
@@ -85,9 +83,10 @@ That flexibility is useful, but it can become opaque. A user may not know which 
 
 ### Patch Recommendations
 1. Treat the engine result as immutable once displayed, and require a fresh run before manual confirmation if inputs change.
-2. Consider storing a run identifier or snapshot hash with `last_engine_result` so confirmation cannot silently target stale state.
-3. Collapse advanced IFT settings into a “basic / advanced” UI mode to reduce confusion.
+2. Store a run identifier or snapshot hash with `last_engine_result` so confirmation cannot silently target stale state.
+3. Move CSS out of `app.py` into `styles.py`.
 4. Keep app-side regime rendering read-only; all allocation math should come from shared constants or the engine result object.
+5. Simplify advanced IFT settings into a basic/advanced UI mode if needed.
 
 ---
 
@@ -100,7 +99,7 @@ That flexibility is useful, but it can become opaque. A user may not know which 
 - The model is auditable and explainable
 
 ### Fixed
-- The engine is now expected to share regime baseline allocations with `constants.py`, and the consistency tests enforce that alignment  
+- The engine is now expected to share regime baseline allocations with `constants.py`, and the consistency tests enforce that alignment 
 
 ### Still Broken or Risky
 
@@ -132,9 +131,9 @@ Several signals are economically related:
 - STLFSI
 - MOVE
 
-That means the engine can accidentally double-count the same macro theme in different forms. This may be intentional, but it can also overweight one macro idea too much.
+That means the engine can accidentally double-count the same macro theme in different forms. For example, tighter policy can hurt valuation, liquidity, market stress, and central bank stance all at once. That may be intentional, but it can overweight one macro idea too much.
 
-#### C. Emergency logic may still be too sticky if not carefully calibrated
+#### C. Emergency logic may be too sticky if not carefully calibrated
 If stress or panic triggers are too sensitive, the engine may become defensive too often and stay there too long.
 
 #### D. Risk-On may remain hard to reach
@@ -204,7 +203,7 @@ Some indicators, especially claims, SLOOS, inflation data, and CAPE, are delayed
 - Derives overlays after raw data is loaded
 
 ### Fixed
-- The project now has better visibility into data quality via the broader validation/test scaffolding, but the source layer itself still needs stronger explicit provenance handling.
+- The broader project now has better visibility into data quality via validation and the handoff docs, but the source layer itself still needs stronger explicit provenance handling.
 
 ### Still Broken or Risky
 
@@ -242,7 +241,7 @@ Because the snapshot derives more signals from the same underlying inputs, it in
 - Clear defaults
 
 ### Fixed
-- Storage defaults now appear to be aligned with the optimized neutral baseline, and the tests confirm month rollover behavior and default config consistency 
+- Storage defaults appear to be aligned with the optimized neutral baseline, and the consistency tests cover month rollover behavior and default config consistency 
 
 ### Still Broken or Risky
 
@@ -257,7 +256,7 @@ The app wants the transaction log to reflect actual confirmations only, which is
 
 ### Patch Recommendations
 1. Add schema validation for config and state on load.
-2. Use atomic write patterns for JSON files.
+2. Use atomic file writes for JSON files.
 3. Separate daily-run log writes from confirmed transaction writes more explicitly.
 4. Derive defaults from `constants.py` only.
 
@@ -293,7 +292,7 @@ These are good additions because they separate rules from orchestration.
 ### Strengths
 - Validation can enforce clean inputs before the engine runs
 - The IFT state machine can enforce monthly limits and pure G safety behavior more cleanly than scattered UI checks
-- The state machine is now test-covered, which is a major improvement  
+- The state machine is now test-covered, which is a major improvement 
 
 ### Fixed
 - The monthly IFT cap and pure-G exemption are now explicitly encoded and tested.
@@ -312,7 +311,28 @@ These are good additions because they separate rules from orchestration.
 
 ---
 
-## 8) System-Level Weaknesses
+## 8) `styles.py`
+
+This module should exist as the CSS and visual-token layer.
+
+### Strengths
+- It cleanly separates visual concerns from orchestration.
+- It makes theme changes safer and easier to maintain.
+- It reduces clutter in `app.py`.
+
+### What still needs attention
+- If styles are still embedded inline in `app.py`, move them out.
+- Keep `ui.py` free of raw CSS strings.
+- Standardize class names and style tokens in one place.
+
+### Patch Recommendations
+1. Move all CSS out of `app.py`.
+2. Keep `styles.py` as the only place defining visual tokens.
+3. Make `app.py` call a single style injector at startup.
+
+---
+
+## 9) System-Level Weaknesses
 
 These are the bigger architectural issues.
 
@@ -342,7 +362,8 @@ That would make tactical decisions easier to trust.
   - `constants.py` for single-source regime truth
   - `validation.py` for data guards
   - `ift_state_machine.py` for execution control
-  - test coverage for regime and IFT consistency  
+  - `styles.py` for visual separation
+  - test coverage for regime and IFT consistency 
 
 ---
 
@@ -370,6 +391,7 @@ That would make tactical decisions easier to trust.
 3. Fallback/default data potentially masquerading as live data
 4. Flat-file persistence that is okay for personal use, but not robust enough for concurrency
 5. Possible bias toward defensive regimes if emergency logic is too sensitive
+6. Inline styling still lingering in `app.py` if not fully extracted into `styles.py`
 
 ---
 
@@ -383,6 +405,7 @@ I would do these in order:
 4. Add tests to ensure `engine.py` and `app.py` agree on regime baselines
 5. Review the scoring weights for overlapping macro variables
 6. Add a confidence indicator for snapshot freshness and completeness
+7. Move CSS fully into `styles.py`
 
 ---
 
@@ -393,5 +416,6 @@ The project is already coherent and well structured, and several earlier weaknes
 - validation
 - source-quality transparency
 - execution safety
+- styling separation
 
 That is the difference between a useful tactical tool and a robust production-grade decision system.
