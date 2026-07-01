@@ -1,6 +1,10 @@
 # Tactical TSP Engine Scoring Guide
 
-This document explains the scoring logic used by the engine in plain English.
+This document explains how the engine scores the current macro and market environment in plain English.
+
+The goal of the scoring system is not to predict every market move. The goal is to identify broad tactical regimes that are good enough to support a disciplined TSP allocation process, with a strong emphasis on transparency, manual confirmation, and risk control.
+
+---
 
 ## Overview
 
@@ -9,9 +13,21 @@ The engine evaluates two layers of signals:
 1. Core factor scores
 2. Macro overlay scores
 
-The core factor scores are the main inputs to the composite score. The macro overlay scores add additional regime context and act as guards against overly aggressive positioning during hostile macro conditions.
+The core factor scores are the main inputs to the composite score. The macro overlay scores add regime context and act as guards against overly aggressive positioning during hostile macro conditions.
 
 The app shows these factors in the “Factor Score Detail” and “Factor Interpretation” sections, and the engine uses them to select the final regime and allocation.
+
+---
+
+## How to read this guide
+
+- Positive scores generally support risk-taking.
+- Negative scores generally support defense.
+- Extreme negatives can force defensive or emergency behavior.
+- Some factors are intentionally lagging macro variables.
+- The engine is rule-based, so the same input will always produce the same score.
+
+This is deliberate: the model is designed to be explainable and auditable rather than opaque.
 
 ---
 
@@ -21,7 +37,7 @@ The app shows these factors in the “Factor Score Detail” and “Factor Inter
 
 The inflation score is based on Core PCE YoY and is adjusted by breakeven inflation.
 
-### Rules
+### Core PCE rules
 - Core PCE < 1.8% → `+3`
 - 1.8% to < 2.0% → `+1`
 - 2.0% to 2.3% → `0`
@@ -32,7 +48,10 @@ The inflation score is based on Core PCE YoY and is adjusted by breakeven inflat
 - If breakeven inflation > 2.6%, inflation is made worse
 - If breakeven inflation < 1.8%, inflation is not allowed to stay too negative
 
-This logic is implemented directly in `score_market_data()` in `engine.py`.
+### Interpretation
+Low and stable inflation is friendly to equities and multiple expansion. Rising breakeven inflation usually indicates the market is becoming less comfortable with future price pressure.
+
+This logic is implemented in `engine.py` in the market scoring path.
 
 ---
 
@@ -40,14 +59,12 @@ This logic is implemented directly in `score_market_data()` in `engine.py`.
 
 The growth score uses a weighted PMI blend and initial claims.
 
-### Rules
+### PMI blend
 The engine uses:
-
 - `0.20 * ISM Manufacturing PMI`
 - `0.80 * ISM Services PMI`
 
-Then it scores the result:
-
+### PMI score bands
 - > 55.0 → `+3`
 - 51.5 to 55.0 → `+1`
 - 50.0 to < 51.5 → `0`
@@ -58,7 +75,8 @@ Then it scores the result:
 - If initial claims > 250K → subtract 1
 - If initial claims > 280K → stronger negative penalty
 
-These rules are part of the growth scoring block in `engine.py`.
+### Interpretation
+PMI captures broad business momentum, while claims help validate labor-market softness. When both weaken together, the growth score should fall quickly.
 
 ---
 
@@ -66,7 +84,7 @@ These rules are part of the growth scoring block in `engine.py`.
 
 Liquidity is based on SLOOS and Fed assets growth.
 
-### Rules
+### SLOOS rules
 - SLOOS < -15.0 → `+3`
 - SLOOS between -15.0 and 5.0 → `0`
 - SLOOS > 5.0 → `-5`
@@ -75,7 +93,8 @@ Liquidity is based on SLOOS and Fed assets growth.
 - Fed assets growth > 0.0 → add `+2`
 - Fed assets growth <= 0.0 → subtract `2`
 
-This is the engine’s existing liquidity logic and remains part of the core score set.
+### Interpretation
+Easier bank lending conditions and balance-sheet expansion are supportive of risk assets. Tight lending conditions and balance-sheet contraction are typically defensive signals.
 
 ---
 
@@ -90,7 +109,8 @@ Credit spreads are scored using HY OAS.
 - > 5.0 to 6.0 → `-3`
 - > 6.0 → `-5`
 
-These thresholds are implemented directly in `engine.py`.
+### Interpretation
+Widening high-yield spreads usually indicate deteriorating credit appetite, rising default concern, or a broader risk-off regime.
 
 ---
 
@@ -113,7 +133,8 @@ Valuation uses Shiller CAPE, with an adjustment based on forward EPS growth and 
 - Above 25.0 but below the active ceiling → `-3`
 - Above the active ceiling → `-5`
 
-This logic is implemented in `engine.py` and is one of the more important parts of the model.
+### Interpretation
+High valuation is not automatically bearish, but it becomes more restrictive when growth expectations are weak or real yields are high. This helps avoid paying a premium for slow-growth or tightening-liquidity regimes.
 
 ---
 
@@ -133,7 +154,8 @@ Market stress is based on VIX, then adjusted by STLFSI.
 - STLFSI between 1.0 and 2.0 → subtract 3 from market stress and momentum
 - STLFSI > 2.0 → force market stress = `-10`, momentum = `-10`, and valuation cannot be better than `-5`
 
-These rules are part of the engine’s stress logic.
+### Interpretation
+VIX captures broad market fear. STLFSI is used as a higher-level system stress gauge, and it can override otherwise constructive readings when financial conditions are clearly unstable.
 
 ---
 
@@ -147,213 +169,160 @@ Momentum is based on SPX distance from its 200-day moving average.
 - -5.0% to < 0.0% → `-3`
 - Below -5.0% → `-5`
 
-This is the `pct_dist_200_sma` logic in the engine.
+### Interpretation
+This is the engine’s trend confirmation measure. It helps prevent aggressive positioning when price action is already deteriorating.
 
 ---
 
 ## 8) Drawdown
 
-Drawdown is based on the decline from the peak close in the loaded SPX series.
+Drawdown penalizes the engine when equity markets have already suffered meaningful losses.
 
-### Rules
-- Under 5.0% → `+3`
-- 5.0% to < 10.0% → `+1`
-- 10.0% to 15.0% → `0`
-- 15.0% to 20.0% → `-3`
-- Above 20.0% → `-5`
+### Conceptual use
+- shallow drawdowns are tolerated
+- deep drawdowns push the model toward defense
+- very large drawdowns can contribute to emergency behavior
 
-This is the `drawdown_pct` logic in the engine.
-
----
-
-# Macro Overlay Scores
-
-These are additional macro context signals added on top of the core factors.
-
-They are used to improve regime discipline and prevent aggressive allocations during hostile macro conditions.
+### Interpretation
+This prevents the engine from ignoring market damage simply because other inputs are still moderate.
 
 ---
 
 ## 9) Yield Curve
 
-The yield curve uses the 10Y minus 3M Treasury spread.
+The yield curve block captures recession and policy pressure.
 
-### Rules
-- Spread > 1.0% → `+2`
-- 0.5% to 1.0% → `+1`
-- 0.0% to 0.5% → `0`
-- -0.5% to 0.0% → `-2`
-- Below -0.5% → `-4`
+### Conceptual use
+- steeper or healthier curves support risk
+- flatter or inverted curves are defensive
+- worsening curve dynamics reduce the composite score
 
 ### Interpretation
-- Positive and steep curve = healthier macro backdrop
-- Flat or inverted curve = slowdown / recession warning
-
-This signal is derived from the live or fallback 10Y and 3M Treasury series in `data_sources.py`, then scored in `engine.py`.
+This helps the engine avoid strong risk-on behavior during late-cycle or recession-prone environments.
 
 ---
 
-## 10) Inflation Shock
+## 10) DXY Overlay
 
-This is a surprise-style inflation feature, not just the inflation level.
+The DXY overlay is a dollar-strength risk adjustment.
 
-### Rules
-- Shock <= -0.2 → `+2`
-- -0.2 to 0.0 → `0`
-- 0.0 to 0.2 → `-1`
-- 0.2 to 0.3 → `-3`
-- Above 0.3 → `-4`
+### Conceptual use
+- strong dollar conditions are usually restrictive for risk assets
+- dollar momentum can be used to reduce aggressiveness
+- the engine uses a documented DXY tilt threshold in `constants.py` to avoid drift between code and documentation 
 
 ### Interpretation
-- Negative shock = inflation is cooling faster than expected
-- Positive shock = inflation is re-accelerating or surprising to the upside
-
-This helps the engine react to bad inflation prints even if the level is not yet extreme.
+A rising dollar often reflects tighter global liquidity, weaker non-U.S. risk appetite, or a more defensive macro regime.
 
 ---
 
-## 11) Central Bank Stance
+# Macro Overlay Scores
 
-This is a normalized policy posture score derived from liquidity, real yields, and curve shape.
+Macro overlays are not the core regime score, but they are important regime guards.
 
-### Rules
-- `+2` or higher → `+2`
-- `+1` → `+1`
-- `0` → `0`
-- `-1` → `-1`
-- `-2` → `-3`
-- `-3` or lower → `-4`
+They include themes such as:
+- yield curve pressure
+- inflation shock
+- central bank stance
+- liquidity pressure
 
-### Interpretation
-- Positive values mean the policy backdrop is supportive
-- Negative values mean policy is restrictive or tightening
+These overlays can reduce the composite score or reinforce defensive decisions even when the core score looks acceptable.
 
-This helps distinguish a supportive market from one that is only stable on the surface.
+### Why overlays matter
+A core score alone can look fine while the broader macro backdrop is deteriorating. Overlays help avoid premature risk-on positioning.
 
 ---
 
-## 12) Liquidity Pressure
+# Composite Score Logic
 
-This is a derived tightness measure. Higher values mean conditions are more restrictive.
+The composite score is the sum of the core factor scores and overlay adjustments.
 
-### Scoring
-- Pressure <= 0.5 → `+1`
-- 0.5 to 1.5 → `0`
-- 1.5 to 2.5 → `-1`
-- 2.5 to 3.5 → `-3`
-- Above 3.5 → `-5`
+The engine then uses the composite score, plus selected guardrails, to choose a regime:
 
-### Interpretation
-This signal rises when multiple liquidity conditions are tight, such as:
-- SLOOS is elevated
-- Fed assets are shrinking
-- STLFSI is elevated
-- real yields are high
-- MOVE is elevated
+- strong positive composite → Risk-On Override
+- moderate or mixed composite → Optimized Neutral
+- negative composite → Defensive Allocation
+- extreme stress / panic → Emergency Dispatch
+
+The exact regime mapping is implemented in `engine.py`, while the allocation definitions live in `constants.py` so the UI and engine remain synchronized .
 
 ---
 
-## 13) DXY Overlay
-
-The dollar overlay is trend-confirmed and level-aware.
-
-### Derived fields
-- `dxy_sma_5`
-- `dxy_sma_20`
-- `dxy_trend_up`
-- `dxy_range_regime`
-
-### DXY range regime bands
-- below 95 → `WEAK`
-- 95 to < 101 → `NORMAL`
-- 101 to < 105 → `STRONG`
-- 105 to < 110 → `VERY STRONG`
-- 110 and above → `EXTREME`
-
-### Policy rule
-Apply a DXY tilt only when all of the following are true:
-- DXY spot is above `103.5`
-- DXY trend is up
-- regime is either `RISK-ON OVERRIDE` or `OPTIMIZED NEUTRAL`
-
-### Allocation effect
-- shift `5%` from `I` to `C`
-- whole-number style, tactical, and transparent
-- do **not** apply in:
-  - `DEFENSIVE ALLOCATION`
-  - `EMERGENCY DISPATCH`
-
-### Interpretation
-- A strong and rising dollar is typically a mild headwind to the I Fund
-- The engine uses confirmation from the short-term trend, not just the level
-- This is intentionally narrower than the old level-only dollar rule
-
----
-
-# How the regime is chosen
-
-The composite score is the sum of the core factor scores plus the macro overlay scores.
-
-The engine then applies guardrails and regime rules.
+# Regime Interpretation
 
 ## Risk-On Override
-The engine only allows Risk-On when all of the following are true:
-- Composite score is strong
-- Core PCE is under 2.0
-- CAPE is below 26.0
-- Momentum breaker is not active
-- Yield curve is not inverted
-- Inflation shock is not positive enough to matter
-- Policy is not restrictive
-- Liquidity is not tight
+Used when the environment is broadly supportive:
+- growth is healthy
+- inflation is manageable
+- liquidity is adequate
+- stress is low
+- price trend is constructive
 
 ## Optimized Neutral
-This is the default balanced state when signals are constructive but mixed.
-
-It is only allowed when the composite is non-negative and the macro backdrop is not deeply hostile.
+Used when signals are mixed but not clearly dangerous:
+- moderate macro backdrop
+- some support from trend or liquidity
+- no need to force major defense
 
 ## Defensive Allocation
-This is the safe fallback when:
-- the composite turns negative
-- the curve is inverted
-- inflation shock is adverse
-- policy is restrictive
-- liquidity is tight
-
-It is also used when the engine sees a clear macro-hostile combination even if the composite is not deeply negative.
+Used when risk is rising or the composite turns negative:
+- tighter liquidity
+- weaker growth
+- worse stress
+- more fragile trend or valuation backdrop
 
 ## Emergency Dispatch
-Triggered by panic conditions or override logic.
+Used when panic, stress, or emergency conditions dominate:
+- maximum defense
+- G-heavy allocation
+- designed for rapid de-risking
 
-The existing panic valve logic remains intact and can force maximum defense when short-term market stress is severe.
-
-These regime rules are defined in `determine_allocation()` in `engine.py` and reflected in the app’s regime cards and decision breakdown.
-
----
-
-# Plain-English summary
-
-### Core factors
-- Inflation: is price pressure favorable or hostile?
-- Growth: is the economy expanding or weakening?
-- Liquidity: are financial conditions easy or tight?
-- Credit spreads: is credit calm or stressed?
-- Valuation: is the market cheap or expensive?
-- Market stress: is volatility calm or panicky?
-- Momentum: is trend healthy or broken?
-- Drawdown: how much damage has already happened?
-
-### Macro overlays
-- Yield curve: is the economy still signaling expansion or recession risk?
-- Inflation shock: did inflation surprise the market?
-- Central bank stance: is policy supportive or restrictive?
-- Liquidity pressure: are conditions tightening across multiple channels?
-- DXY overlay: is the dollar strong, rising, and a mild headwind to I Fund exposure?
+The current tactical baseline allocations, including the emergency variants, are documented in the handoff file and centralized in `constants.py`  .
 
 ---
 
-# Important note
+# Important Modeling Notes
 
-The app’s factor tables and decision breakdown should now show the macro overlay scores explicitly, including the DXY context fields, so the UI remains transparent and aligned with the engine.
+## 1) This is a rule-based model
+The system is intentionally deterministic and explainable. It does not try to learn thresholds live.
 
-If you want, the next step can be a full updated `app.py` pass to ensure the UI labels and source display match this guide exactly.
+## 2) Many inputs are lagging
+Macro inputs such as inflation, claims, SLOOS, and valuation are often delayed relative to market movement. This is acceptable, but it means the engine should be interpreted as a tactical macro overlay rather than a high-frequency timing model.
+
+## 3) Thresholds should be treated as parameters
+The current thresholds are sensible starting points, but they are still hand-chosen. They should be reviewed and backtested before being treated as permanently optimal.
+
+## 4) Avoid double counting
+Several signals can reflect the same underlying macro theme. Be careful when adding new indicators that already overlap heavily with existing ones.
+
+---
+
+# Practical Usage
+
+The scoring system is meant to support a clean workflow:
+
+1. Load the latest market snapshot
+2. Score the environment
+3. Select a regime
+4. Build the target allocation
+5. Review the explanation
+6. Manually confirm any actual IFT action
+
+That separation is important. The score should guide the user, not silently execute transactions.
+
+---
+
+# Summary
+
+This scoring framework is designed to be:
+- transparent
+- tactical
+- conservative enough for real-world usage
+- easy to inspect in the UI
+- compatible with manual IFT confirmation
+
+If you change any scoring rule, make sure the following stay synchronized:
+- `engine.py`
+- `constants.py`
+- `app.py`
+- the regime consistency tests
