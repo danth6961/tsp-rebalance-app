@@ -7,7 +7,7 @@ import streamlit as st
 from constants import DEFAULTS, PROXIES, LOG_FILE, TRANSACTION_FILE
 from data_sources import get_market_snapshot, get_cached_proxy_df, fetch_ytd_return
 from engine import build_engine_result, should_use_tsp_ift, cumulative_alloc_drift
-from storage import load_state, load_config, save_config, save_state, append_log_row, append_transaction_row
+from storage import load_state, load_state_for_today, load_config, save_config, save_state, append_log_row, append_transaction_row
 from ui import (
     render_metric_cards,
     render_snapshot_quality_badge,
@@ -168,25 +168,29 @@ def load_editable_market_data():
     return market
 
 
+# Allocations in engine.py are produced via round(v / total * 100, 1)
+# normalization, which can yield 99.9/100.1 instead of an exact 100.0/0.0
+# even when the *intended* allocation is pure G (e.g. panic-valve
+# EMERGENCY DISPATCH rounding). Exact float equality below previously
+# meant that rounding drift could silently fail the safety-move check,
+# causing a defensive panic move to consume a scarce monthly IFT instead
+# of being exempted as a G-Fund safety action.
+G_MOVE_TOLERANCE_PCT = 0.5
+
+
 def is_pure_g_move(target_alloc: dict) -> bool:
-    return (
-        float(target_alloc.get("G", 0.0)) == 100.0
-        and float(target_alloc.get("C", 0.0)) == 0.0
-        and float(target_alloc.get("I", 0.0)) == 0.0
-        and float(target_alloc.get("S", 0.0)) == 0.0
-        and float(target_alloc.get("F", 0.0)) == 0.0
-    )
+    """True if the target allocation is effectively 100% G Fund.
+
+    Uses a tolerance band instead of exact float equality to absorb
+    normalization rounding drift from engine.py's allocation math.
+    """
+    g = float(target_alloc.get("G", 0.0))
+    others = sum(float(target_alloc.get(f, 0.0)) for f in ("C", "I", "S", "F"))
+    return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
 
 
 def confirm_ift_used(today, current_alloc, target_alloc, regime):
-    state = load_state()
-
-    if state.get("month") != today.strftime("%Y-%m"):
-        state["month"] = today.strftime("%Y-%m")
-        state["ift_count_this_month"] = 0
-        state["recent_regimes"] = []
-        state["recent_scores"] = []
-        state["recent_allocations"] = []
+    state = load_state_for_today(today)
 
     current_count = int(state.get("ift_count_this_month", 0))
 
@@ -215,8 +219,13 @@ def confirm_ift_used(today, current_alloc, target_alloc, regime):
 
 def main():
     cfg = load_config()
-    state = load_state()
     today = date.today()
+    # Was load_state() here with no rollover applied, so on the 1st of a
+    # new month the IFT count / recent-history cards briefly displayed
+    # last month's stale numbers until a button click triggered rollover
+    # elsewhere. load_state_for_today() guarantees rollover is applied
+    # every time state is read, not just on write paths.
+    state = load_state_for_today(today)
     init_session(cfg)
 
     with st.sidebar:
@@ -401,13 +410,7 @@ def main():
             st.session_state["spx_dist_last_3"] = fetched_data.get("spx_dist_last_3", [])
             st.session_state["engine_ran"] = True
 
-        state = load_state()
-        if state.get("month") != today.strftime("%Y-%m"):
-            state["month"] = today.strftime("%Y-%m")
-            state["ift_count_this_month"] = 0
-            state["recent_regimes"] = []
-            state["recent_scores"] = []
-            state["recent_allocations"] = []
+        state = load_state_for_today(today)
 
         market_data = load_editable_market_data()
         result = build_engine_result(
