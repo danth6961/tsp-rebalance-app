@@ -556,7 +556,9 @@ def main():
 
         st.markdown("### Market Snapshot")
         st.caption("Editable market inputs with the same card aesthetic.")
+        
         render_snapshot_quality_badge(snapshot_quality, st.session_state.get("engine_ran", False))
+        
         market_edit_items = [
             ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
             ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
