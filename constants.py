@@ -1,15 +1,37 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-MAX_RETRIES = 3
-RETRY_SLEEP_SEC = 1.5
-CACHE_TTL_SEC = 3600
+# -----------------------------------------------------------------------------
+# Runtime and retry configuration
+# -----------------------------------------------------------------------------
+# These values are shared across data fetching, caching, and app orchestration.
+# Keep them here so the rest of the codebase does not hardcode operational
+# behavior in multiple places.
+# -----------------------------------------------------------------------------
+MAX_RETRIES: int = 3
+RETRY_SLEEP_SEC: float = 1.5
+CACHE_TTL_SEC: int = 3600
 
-STATE_FILE = Path("tsp_state.json")
-CONFIG_FILE = Path("tsp_config.json")
-LOG_FILE = Path("tsp_daily_log.csv")
-TRANSACTION_FILE = Path("tsp_transactions.csv")
+# -----------------------------------------------------------------------------
+# Persistence file locations
+# -----------------------------------------------------------------------------
+# Flat-file persistence is acceptable for a single-user Streamlit application,
+# but the paths must remain centralized so storage.py, app.py, and tests all
+# reference the same canonical locations.
+# -----------------------------------------------------------------------------
+STATE_FILE: Path = Path("tsp_state.json")
+CONFIG_FILE: Path = Path("tsp_config.json")
+LOG_FILE: Path = Path("tsp_daily_log.csv")
+TRANSACTION_FILE: Path = Path("tsp_transactions.csv")
 
-DEFAULTS = {
+# -----------------------------------------------------------------------------
+# Default fallback market / macro values
+# -----------------------------------------------------------------------------
+# These values are used when live data is unavailable or a source fails.
+# They should be treated as fallback inputs and not as live observations.
+# -----------------------------------------------------------------------------
+DEFAULTS: dict[str, float] = {
     "core_pce_yoy": 3.4,
     "ism_pmi": 54.0,
     "services_pmi": 54.5,
@@ -31,15 +53,21 @@ DEFAULTS = {
     "spx_spot": 5000.0,
 }
 
-# Single source of truth for the DXY tilt trigger. Referenced by both
-# engine.py (allocation logic) and factor_scoring_guide.md (documentation).
-# Previously engine.py hardcoded 105.0 (the STRONG/VERY STRONG boundary)
-# while the guide documented 103.5 -- a real spec/code drift that silently
-# narrowed the tilt's trigger window. This constant is now the only place
-# that number lives.
-DXY_TILT_THRESHOLD = 103.5
+# -----------------------------------------------------------------------------
+# Macro / market thresholds
+# -----------------------------------------------------------------------------
+# DXY tilt threshold is intentionally centralized so the engine, tests, and
+# documentation all use the exact same trigger level.
+# -----------------------------------------------------------------------------
+DXY_TILT_THRESHOLD: float = 103.5
 
-PROXIES = {
+# -----------------------------------------------------------------------------
+# Fund proxy symbols
+# -----------------------------------------------------------------------------
+# These proxies are used when the app needs market-surrogate instruments for
+# display, validation, or historical approximation.
+# -----------------------------------------------------------------------------
+PROXIES: dict[str, str] = {
     "C Fund (S&P 500 Stock Index)": "SPY",
     "S Fund (Mid/Small Cap Stock Index)": "VXF",
     "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
@@ -47,23 +75,20 @@ PROXIES = {
     "G Fund (Short-Term U.S. Treasury Bills)": "BIL",
 }
 
-# ---------------------------------------------------------------------------
-# Single source of truth for regime definitions.
+# -----------------------------------------------------------------------------
+# Regime definitions
+# -----------------------------------------------------------------------------
+# This is the single source of truth for regime names, descriptions, display
+# metadata, and canonical allocations.
 #
-# engine.py, app.py, storage.py, and ui.py should all derive their regime
-# names, base allocations, and display metadata from this dict rather than
-# hardcoding literals. This is the fix for the "file drift" risk called out
-# in Project_Handoff.md and target_architecture.md: previously the same
-# allocation numbers were duplicated in constants.py, engine.py, and app.py.
-# ---------------------------------------------------------------------------
-REGIME_DEFINITIONS = {
+# Other modules should import from here instead of duplicating allocations or
+# labels. This prevents drift between engine.py, app.py, ui.py, and storage.py.
+# -----------------------------------------------------------------------------
+REGIME_DEFINITIONS: dict[str, dict[str, object]] = {
     "RISK-ON OVERRIDE": {
         "icon": "🚀",
         "score_label": "Score: ≥ +5",
         "profile": "Aggressive Profile",
-        # I Fund corrected 25 -> 20 (was: G30/C40/I25/S10/F0 = 105%, a
-        # pre-existing data bug caught by tests/test_regime_consistency.py).
-        # Now G30/C40/I20/S10/F0 = 100%.
         "allocation": {"G": 30, "C": 40, "I": 20, "S": 10, "F": 0},
         "description": "Strong macro backdrop and solid upward momentum.",
         "color": "#10b981",
@@ -99,20 +124,54 @@ REGIME_DEFINITIONS = {
     },
 }
 
-# Stable display ordering for regime cards / directories.
-REGIME_ORDER = [
+# -----------------------------------------------------------------------------
+# Regime display order
+# -----------------------------------------------------------------------------
+# Keep the order stable for UI cards, dropdowns, and documentation.
+# -----------------------------------------------------------------------------
+REGIME_ORDER: list[str] = [
     "RISK-ON OVERRIDE",
     "OPTIMIZED NEUTRAL",
     "DEFENSIVE ALLOCATION",
     "EMERGENCY DISPATCH",
 ]
 
-# Flat name -> allocation map, derived from REGIME_DEFINITIONS so it can
-# never drift out of sync. Kept for callers (engine.py's IFT gate, storage
-# defaults) that just want the numbers. Includes the F-unlocked emergency
-# variant, which is an overlay on top of EMERGENCY DISPATCH rather than a
-# distinct top-level regime card.
-BASELINE_ALLOCATIONS = {
+# -----------------------------------------------------------------------------
+# Derived allocation map
+# -----------------------------------------------------------------------------
+# This is generated from REGIME_DEFINITIONS to prevent drift. The emergency
+# F-unlocked variant is exposed as an overlay allocation rather than a full
+# top-level regime card.
+# -----------------------------------------------------------------------------
+BASELINE_ALLOCATIONS: dict[str, dict[str, int]] = {
     name: dict(info["allocation"]) for name, info in REGIME_DEFINITIONS.items()
 }
-BASELINE_ALLOCATIONS["EMERGENCY DISPATCH (F-Unlocked)"] = {"G": 90, "C": 0, "I": 0, "S": 0, "F": 10}
+BASELINE_ALLOCATIONS["EMERGENCY DISPATCH (F-Unlocked)"] = {
+    "G": 90,
+    "C": 0,
+    "I": 0,
+    "S": 0,
+    "F": 10,
+}
+
+# -----------------------------------------------------------------------------
+# Explicit public exports
+# -----------------------------------------------------------------------------
+# This keeps the module interface clear and prevents accidental reliance on
+# internal helper names if new constants are added later.
+# -----------------------------------------------------------------------------
+__all__: list[str] = [
+    "MAX_RETRIES",
+    "RETRY_SLEEP_SEC",
+    "CACHE_TTL_SEC",
+    "STATE_FILE",
+    "CONFIG_FILE",
+    "LOG_FILE",
+    "TRANSACTION_FILE",
+    "DEFAULTS",
+    "DXY_TILT_THRESHOLD",
+    "PROXIES",
+    "REGIME_DEFINITIONS",
+    "REGIME_ORDER",
+    "BASELINE_ALLOCATIONS",
+]
