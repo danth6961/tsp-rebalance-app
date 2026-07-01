@@ -38,7 +38,6 @@ def safe_load_json(file_path: Path, default_factory: Callable[[], Dict[str, Any]
 
     return default_factory()
 
-
 def default_state() -> Dict[str, Any]:
     return {
         "month": date.today().strftime("%Y-%m"),
