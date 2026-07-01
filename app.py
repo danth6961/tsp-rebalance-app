@@ -4,10 +4,17 @@ import json
 import pandas as pd
 import streamlit as st
 
-from constants import DEFAULTS, PROXIES, LOG_FILE, TRANSACTION_FILE, REGIME_ORDER, BASELINE_ALLOCATIONS
+from constants import (
+    DEFAULTS,
+    PROXIES,
+    LOG_FILE,
+    TRANSACTION_FILE,
+    REGIME_ORDER,
+    BASELINE_ALLOCATIONS,
+)
 from data_sources import get_market_snapshot, get_cached_proxy_df, fetch_ytd_return
 from engine import build_engine_result, should_use_tsp_ift, cumulative_alloc_drift
-from storage import load_state, load_state_for_today, load_config, save_config, save_state, append_log_row
+from storage import load_state_for_today, load_config, save_config, save_state, append_log_row
 from ui import (
     render_metric_cards,
     render_snapshot_quality_badge,
@@ -22,7 +29,7 @@ from ui import (
 )
 from utils import compute_snapshot_quality, get_est_now
 from validation import validate_market_data
-from ift_state_machine import is_pure_g_move, IFTStateMachine, MONTHLY_IFT_LIMIT
+from ift_state_machine import IFTStateMachine
 
 st.set_page_config(
     page_title="TSP Rebalance Engine",
@@ -170,25 +177,9 @@ def load_editable_market_data():
     return market
 
 
-# Allocations in engine.py are produced via round(v / total * 100, 1)
-# normalization, which can yield 99.9/100.1 instead of an exact 100.0/0.0
-# even when the *intended* allocation is pure G (e.g. panic-valve
-# EMERGENCY DISPATCH rounding). Exact float equality below previously
-# meant that rounding drift could silently fail the safety-move check,
-# causing a defensive panic move to consume a scarce monthly IFT instead
-# of being exempted as a G-Fund safety action.
-# is_pure_g_move and all IFT state mutation now live in ift_state_machine.py
-# as the single enforced writer (imported at top of file).
-
-
 def main():
     cfg = load_config()
     today = date.today()
-    # Was load_state() here with no rollover applied, so on the 1st of a
-    # new month the IFT count / recent-history cards briefly displayed
-    # last month's stale numbers until a button click triggered rollover
-    # elsewhere. load_state_for_today() guarantees rollover is applied
-    # every time state is read, not just on write paths.
     state = load_state_for_today(today)
     init_session(cfg)
 
@@ -238,23 +229,43 @@ def main():
                     step=1.0,
                 ),
             }
+
         total_alloc = sum(current_alloc.values())
         if abs(total_alloc - 100.0) > 0.5:
             st.warning(f"Current allocation totals {total_alloc:.1f}%. Expected 100.0%.")
-    
+
         with st.expander("🛡️ Rules", expanded=False):
             allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg["allow_second_ift"]))
-            normal_drift_threshold_pct = st.number_input("Normal drift threshold %", value=float(cfg["normal_drift_threshold_pct"]), step=0.5)
-            score_change_threshold = st.number_input("Score change threshold", value=int(cfg["score_change_threshold"]), step=1)
-            confirmation_days = st.number_input("Confirmation days", value=int(cfg["confirmation_days"]), step=1)
-            cooldown_days = st.number_input("Cooldown days", value=int(cfg["cooldown_days"]), step=1)
+            normal_drift_threshold_pct = st.number_input(
+                "Normal drift threshold %",
+                value=float(cfg["normal_drift_threshold_pct"]),
+                step=0.5,
+            )
+            score_change_threshold = st.number_input(
+                "Score change threshold",
+                value=int(cfg["score_change_threshold"]),
+                step=1,
+            )
+            confirmation_days = st.number_input(
+                "Confirmation days",
+                value=int(cfg["confirmation_days"]),
+                step=1,
+            )
+            cooldown_days = st.number_input(
+                "Cooldown days",
+                value=int(cfg["cooldown_days"]),
+                step=1,
+            )
             use_live_macro = st.checkbox("Use live macro data", value=bool(cfg["use_live_macro"]))
 
         with st.expander("🛠️ Manual Override", expanded=False):
-            manual_override_enabled = st.checkbox("Enable manual override", value=bool(cfg["manual_override_enabled"]))
+            manual_override_enabled = st.checkbox(
+                "Enable manual override",
+                value=bool(cfg["manual_override_enabled"]),
+            )
             manual_regime_default = cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
             manual_regime_index = REGIME_ORDER.index(manual_regime_default) if manual_regime_default in REGIME_ORDER else 1
-            
+
             manual_regime = st.selectbox(
                 "Override regime",
                 REGIME_ORDER,
@@ -339,9 +350,6 @@ def main():
         else:
             target_alloc = latest_result["allocations"]
             machine = IFTStateMachine.load(today)
-            # can_confirm() and confirm() share one eligibility implementation,
-            # so there is no longer a second independent monthly-cap check
-            # here that could disagree with the state machine's own logic.
             decision = machine.confirm(current_alloc, target_alloc, latest_result["regime"])
             if decision.allowed:
                 st.sidebar.success(decision.reason)
@@ -385,18 +393,12 @@ def main():
 
         market_data = load_editable_market_data()
         range_warnings = validate_market_data(market_data)
-        if range_warnings:
-            # Non-blocking by design: this is a manual-confirmation tool.
-            # A genuinely extreme reading (e.g. a real VIX spike) should
-            # still reach the user, just flagged loudly rather than hidden.
-            st.session_state["market_data_warnings"] = range_warnings
-        else:
-            st.session_state["market_data_warnings"] = []
+        st.session_state["market_data_warnings"] = range_warnings if range_warnings else []
 
         result = build_engine_result(
             market_data,
             override_active=manual_override_enabled,
-            override_regime=manual_regime
+            override_regime=manual_regime,
         )
         st.session_state["last_engine_result"] = result
 
@@ -421,12 +423,9 @@ def main():
 
         action = "SUBMIT IFT" if use_ift else "HOLD"
 
-        if "recent_regimes" not in state:
-            state["recent_regimes"] = []
-        if "recent_scores" not in state:
-            state["recent_scores"] = []
-        if "recent_allocations" not in state:
-            state["recent_allocations"] = []
+        state.setdefault("recent_regimes", [])
+        state.setdefault("recent_scores", [])
+        state.setdefault("recent_allocations", [])
 
         state["recent_regimes"].append(result["regime"])
         state["recent_scores"].append(result["composite_score"])
@@ -454,7 +453,7 @@ def main():
         result = build_engine_result(
             market_data,
             override_active=cfg.get("manual_override_enabled", False),
-            override_regime=cfg.get("manual_regime", "OPTIMIZED_NEUTRAL")
+            override_regime=cfg.get("manual_regime", "OPTIMIZED_NEUTRAL"),
         )
 
     last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
@@ -503,9 +502,15 @@ def main():
         st.markdown("### 🎚️ Portfolio Drift Runway")
         c1, c2 = st.columns([1, 3])
         with c1:
-            st.metric("Cumulative Portfolio Drift", f"{cum_drift:.2f}%", f"{cum_drift - float(normal_drift_threshold_pct):+.2f}% vs Threshold")
+            st.metric(
+                "Cumulative Portfolio Drift",
+                f"{cum_drift:.2f}%",
+                f"{cum_drift - float(normal_drift_threshold_pct):+.2f}% vs Threshold",
+            )
         with c2:
-            st.write(f"**Rebalance Threshold Progress**: `{cum_drift:.2f}%` / `{float(normal_drift_threshold_pct):.2f}%` required.")
+            st.write(
+                f"**Rebalance Threshold Progress**: `{cum_drift:.2f}%` / `{float(normal_drift_threshold_pct):.2f}%` required."
+            )
             st.progress(min(cum_drift / float(normal_drift_threshold_pct), 1.0) if float(normal_drift_threshold_pct) > 0 else 1.0)
 
         st.markdown("### Allocation Comparison")
@@ -606,8 +611,8 @@ def main():
             reason=reason,
             state=state,
             current_alloc=current_alloc,
-            dxy_range_regime=st.session_state.get('dxy_range_regime', 'UNKNOWN'),
-            dxy_trend_up=st.session_state.get('dxy_trend_up', False),
+            dxy_range_regime=st.session_state.get("dxy_range_regime", "UNKNOWN"),
+            dxy_trend_up=st.session_state.get("dxy_trend_up", False),
             cooldown_days=cooldown_days,
             confirmation_days=confirmation_days,
             allow_second_ift=allow_second_ift,
@@ -626,7 +631,7 @@ def main():
             "S Fund (Mid/Small)",
             "I Fund (Intl ACWX)",
             "F Fund (Bonds)",
-            "G Fund (T-Bills)"
+            "G Fund (T-Bills)",
         ]
 
         for idx, (fund_label, ticker) in enumerate(PROXIES.items()):
@@ -641,7 +646,7 @@ def main():
             timeframe_selected = st.selectbox(
                 "Select Performance Chart Timeframe",
                 options=["1 Month", "3 Months", "6 Months", "1 Year", "5 Years", "10 Years"],
-                index=5
+                index=5,
             )
 
         ticker = PROXIES[fund_selected]
@@ -651,7 +656,7 @@ def main():
             "6 Months": "6mo",
             "1 Year": "1y",
             "5 Years": "5y",
-            "10 Years": "10y"
+            "10 Years": "10y",
         }
         proxy_df = get_cached_proxy_df(ticker, period_map[timeframe_selected])
 
