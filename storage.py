@@ -65,7 +65,54 @@ def load_state() -> Dict[str, Any]:
     return state
 
 
+# Caps how many daily entries recent_regimes/recent_scores/recent_allocations
+# can hold. should_use_tsp_ift() and the confirmation-days check only ever
+# look at the last (confirmation_days + 1) entries, so unbounded growth here
+# was pure waste -- tsp_state.json (re-copied to .bak on every save) would
+# otherwise grow linearly forever across a year of daily runs.
+MAX_HISTORY_ENTRIES = 90
+
+
+def roll_state_if_new_month(state: Dict[str, Any], today: date) -> Dict[str, Any]:
+    """
+    Reset monthly-scoped counters (IFT count, recent history) when the
+    calendar month has changed since the state was last saved.
+
+    This is now the ONLY place month-rollover should happen. Previously
+    app.py duplicated this exact comparison in three separate places
+    (top of main(), inside the `run` block, and inside
+    confirm_ift_used()) -- and only two of the three actually persisted
+    the reset. The plain page-load path computed a corrected state in
+    memory but never saved it, so on the 1st of a new month the IFT
+    counter and recent-history cards could show stale numbers until the
+    user clicked a button. Route all reads/writes of monthly state
+    through this function (or load_state_for_today below) instead.
+    """
+    current_month = today.strftime("%Y-%m")
+    if state.get("month") != current_month:
+        state["month"] = current_month
+        state["ift_count_this_month"] = 0
+        state["recent_regimes"] = []
+        state["recent_scores"] = []
+        state["recent_allocations"] = []
+    return state
+
+
+def load_state_for_today(today: date) -> Dict[str, Any]:
+    """Load state from disk and apply month rollover in one call.
+
+    This is the normal entrypoint app.py should use instead of calling
+    load_state() directly whenever the result will be used to display or
+    act on ift_count_this_month / recent_* history.
+    """
+    return roll_state_if_new_month(load_state(), today)
+
+
 def save_state(state_data: Dict[str, Any]) -> None:
+    for key in ("recent_regimes", "recent_scores", "recent_allocations"):
+        values = state_data.get(key)
+        if isinstance(values, list) and len(values) > MAX_HISTORY_ENTRIES:
+            state_data[key] = values[-MAX_HISTORY_ENTRIES:]
     safe_save_json(STATE_FILE, state_data)
 
 
