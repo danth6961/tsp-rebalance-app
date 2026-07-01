@@ -683,6 +683,13 @@ def main():
             st.info("No score history yet.")
 
     with tab5:
+        st.markdown("### Recent State Overview")
+        recent_state_cards(state)
+
+        st.markdown("### Run History Log")
+        render_history_table(state)
+
+        st.markdown("---")
         st.markdown("### Transaction History (Audit Trail)")
         if TRANSACTION_FILE.exists():
             tx_df = pd.read_csv(TRANSACTION_FILE).tail(25)
@@ -704,12 +711,6 @@ def main():
         else:
             st.info("No physical portfolio transactions recorded yet.")
 
-        st.markdown("---")
-        st.markdown("### Recent State Overview")
-        recent_state_cards(state)
-
-        st.markdown("### Run History Log")
-        render_history_table(state)
         st.markdown("---")
         st.markdown("### Daily Run Log Viewer")
         if LOG_FILE.exists():
