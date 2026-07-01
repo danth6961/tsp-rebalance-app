@@ -1,130 +1,423 @@
 """
-ift_state_machine.py — The single enforced writer for IFT-related state.
+ui.py — presentation helpers for Streamlit rendering.
 
-Owns: eligibility checks and the ONLY code path that may mutate
-ift_count_this_month, last_ift_date, last_run_date, or write a
-transaction audit row.
-
-Should NOT contain: scoring logic, regime selection, Streamlit widgets,
-or config I/O beyond what's needed to read/write AppState.
-
-Why this module exists: previously (see module_weakness_review.md §1B)
-app.py had two independent places that reasoned about IFT eligibility --
-the sidebar button's `disabled=` check (only looked at engine_ran) and
-confirm_ift_used()'s internal monthly-cap check -- with no code-level
-guarantee they'd stay in agreement. Wrapping both in one class means
-there is exactly one function (`confirm`) that can change IFT state, and
-exactly one function (`can_confirm`) that decides whether it's allowed.
+Owns cards, charts, tables, badges, and breakdown views.
+Does not own engine logic, storage logic, or data fetching.
 """
-from dataclasses import dataclass
-from datetime import date
-from typing import Dict, Optional
 
-from storage import load_state_for_today, save_state, append_transaction_row
+import pandas as pd
+import streamlit as st
 
-# Tolerance for float-rounding drift in engine.py's normalize-to-100
-# allocation math (round(v / total * 100, 1) can yield 99.9/100.1 instead
-# of an exact 100.0/0.0 for an intended pure-G move).
-G_MOVE_TOLERANCE_PCT = 0.5
-
-MONTHLY_IFT_LIMIT = 2
+from constants import REGIME_DEFINITIONS, REGIME_ORDER
 
 
-def is_pure_g_move(target_alloc: Dict[str, float]) -> bool:
-    """True if the target allocation is effectively 100% G Fund.
-
-    Uses a tolerance band instead of exact float equality to absorb
-    normalization rounding drift from engine.py's allocation math.
-    """
-    g = float(target_alloc.get("G", 0.0))
-    others = sum(float(target_alloc.get(f, 0.0)) for f in ("C", "I", "S", "F"))
-    return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
+def _safe_text(value):
+    """Return a display-safe string."""
+    if value is None:
+        return ""
+    return str(value)
 
 
-@dataclass
-class IFTDecision:
-    """Result of an eligibility check. `allowed=False` always carries a
-    human-readable `reason` so the UI never has to guess why a button
-    is disabled."""
-    allowed: bool
-    reason: str
-    is_safety_move: bool = False
+def _source_pill_class(source):
+    """Map a source label to a CSS pill class."""
+    source_str = _safe_text(source).upper()
+    if "LIVE" in source_str:
+        return "pill-live"
+    if "FAILED" in source_str or "DEFAULT" in source_str or "OFFLINE" in source_str:
+        return "pill-failed"
+    return "pill-default"
 
 
-class IFTStateMachine:
-    """
-    Wraps AppState and enforces that IFT count / transaction history can
-    only change through `confirm()`.
+def tile_html(title, value, note=None, icon=None, color="#3b82f6", bg=None):
+    """Build HTML for a KPI-style tile."""
+    title = _safe_text(title)
+    value = _safe_text(value)
+    note = _safe_text(note)
 
-    Usage:
-        machine = IFTStateMachine.load(today)
-        decision = machine.can_confirm(target_alloc)
-        if decision.allowed:
-            machine.confirm(current_alloc, target_alloc, regime)
+    bg_style = f"background-color: {bg};" if bg else ""
+    icon_html = f"{icon} " if icon else ""
+    note_html = f"<div class='small-kpi-note'>{note}</div>" if note else ""
+
+    return f"""
+    <div class="small-kpi" style="border-left: 5px solid {color}; {bg_style}">
+        <div class="small-kpi-title">{icon_html}{title}</div>
+        <div class="small-kpi-value" style="color:#0f172a;">{value}</div>
+        {note_html}
+    </div>
     """
 
-    def __init__(self, state: Dict, today: date):
-        # Rollover is applied on every load, so eligibility checks never
-        # operate on a stale prior month's counter.
-        self.state = state
-        self.today = today
 
-    @classmethod
-    def load(cls, today: date) -> "IFTStateMachine":
-        """Construct from disk, applying month rollover."""
-        return cls(load_state_for_today(today), today)
+def render_snapshot_quality_badge(quality: dict, engine_ran: bool):
+    """Render the live-data quality badge."""
+    if not engine_ran:
+        st.info("Run **Fetch & Run Engine** to load market data and see how much of the snapshot is live.")
+        return
 
-    @property
-    def ift_count_this_month(self) -> int:
-        return int(self.state.get("ift_count_this_month", 0))
+    live_pct = quality["live_pct"]
+    st.markdown(
+        f"""
+        <div class="small-kpi" style="border: 1px solid {quality['border']}; border-left: 5px solid {quality['color']}; background-color: {quality['bg']}; margin-bottom: 1rem;">
+            <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center; flex-wrap:wrap;">
+                <div>
+                    <div class="small-kpi-title">Live Data Quality</div>
+                    <div class="small-kpi-value" style="color:{quality['color']};">{live_pct:.1f}% live</div>
+                    <div class="small-kpi-note">{quality['headline']}</div>
+                </div>
+                <div style="font-size:0.85rem; color:#475569; line-height:1.6;">
+                    <div><strong>{quality['live_count']}</strong> live</div>
+                    <div><strong>{quality['derived_count']}</strong> derived</div>
+                    <div><strong>{quality['fallback_count']}</strong> placeholder</div>
+                    <div><strong>{quality['total_count']}</strong> total inputs</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    @property
-    def last_ift_date(self) -> Optional[date]:
-        raw = self.state.get("last_ift_date")
-        return date.fromisoformat(raw) if raw else None
 
-    def can_confirm(self, target_alloc: Dict[str, float]) -> IFTDecision:
-        """Determine whether a manual IFT confirmation should be allowed
-        right now, without mutating any state.
+def render_metric_cards(composite_score, regime, action, ift_count_this_month, reason):
+    """Render the top-level metric cards."""
+    cols = st.columns(4)
 
-        A pure G-Fund safety move is always allowed and never blocked by
-        the monthly cap, matching the TSP rule that G-only safety moves
-        don't consume a normal Interfund Transfer.
-        """
-        if is_pure_g_move(target_alloc):
-            return IFTDecision(allowed=True, reason="G Fund safety move (does not count toward monthly cap)", is_safety_move=True)
+    cards = [
+        ("Composite Score", f"{composite_score:+.2f}", "Engine output", "📊", "#3b82f6"),
+        ("Regime", regime, "Current market regime", "🧭", "#8b5cf6"),
+        ("Action", action, reason, "✅", "#16a34a" if action == "SUBMIT IFT" else "#64748b"),
+        ("IFT Count", str(ift_count_this_month), "This month", "📁", "#f59e0b"),
+    ]
 
-        if self.ift_count_this_month >= MONTHLY_IFT_LIMIT:
-            return IFTDecision(allowed=False, reason=f"Monthly IFT limit of {MONTHLY_IFT_LIMIT} already reached")
+    for col, (title, value, note, icon, color) in zip(cols, cards):
+        with col:
+            st.markdown(tile_html(title, value, note=note, icon=icon, color=color), unsafe_allow_html=True)
 
-        return IFTDecision(allowed=True, reason="Within monthly IFT allowance")
 
-    def confirm(self, current_alloc: Dict[str, float], target_alloc: Dict[str, float], regime: str) -> IFTDecision:
-        """
-        The ONLY method in the codebase that may increment
-        ift_count_this_month, set last_ift_date, or append a transaction
-        row. Re-validates eligibility internally so callers cannot bypass
-        can_confirm() by calling confirm() directly.
-        """
-        decision = self.can_confirm(target_alloc)
-        if not decision.allowed:
-            return decision
+def render_tile_grid(items, columns=4):
+    """Render a responsive grid of KPI tiles."""
+    if not items:
+        return
 
-        self.state["last_ift_date"] = self.today.isoformat()
-        self.state["last_run_date"] = self.today.isoformat()
+    cols = st.columns(columns)
+    for idx, item in enumerate(items):
+        with cols[idx % columns]:
+            st.markdown(
+                tile_html(
+                    item.get("label", ""),
+                    item.get("value", ""),
+                    note=item.get("note", ""),
+                    icon=item.get("icon", ""),
+                    color=item.get("color", "#3b82f6"),
+                    bg=item.get("bg", None),
+                ),
+                unsafe_allow_html=True,
+            )
 
-        if decision.is_safety_move:
-            save_state(self.state)
-            return decision
 
-        self.state["ift_count_this_month"] = self.ift_count_this_month + 1
+def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
+    """Render an editable metric tile for numeric, boolean, or text values."""
+    pill_class = _source_pill_class(source)
+    label_text = _safe_text(label)
+    source_text = _safe_text(source)
+
+    is_bool = isinstance(value, bool)
+    is_numeric = False
+    display_value = value
+
+    if not is_bool:
         try:
-            append_transaction_row(self.today.isoformat(), current_alloc, target_alloc, regime)
-        except Exception as e:
-            # Persist the state change even if the audit-log write fails --
-            # losing a log row is recoverable; silently under-counting a
-            # real IFT the user believes they've submitted is not.
-            decision.reason += f" (warning: transaction log write failed: {e})"
+            display_value = float(value)
+            is_numeric = True
+        except Exception:
+            is_numeric = False
 
-        save_state(self.state)
-        return decision
+    with st.container(border=True):
+        if is_bool:
+            shown = "Yes" if value else "No"
+        elif is_numeric:
+            shown = f"{float(display_value):.2f}"
+        else:
+            shown = _safe_text(value)
+
+        st.markdown(
+            f"""
+            <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
+                <div class="small-kpi-title">{label_text}</div>
+                <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.15rem;">
+                    {shown}
+                </div>
+                <div style="margin-top: 0.35rem;">
+                    <span class="pill {pill_class}">{source_text}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if is_bool:
+            st.checkbox(
+                label_text,
+                value=bool(value),
+                key=key,
+                label_visibility="collapsed",
+            )
+        elif is_numeric:
+            st.number_input(
+                label_text,
+                value=float(display_value),
+                step=step,
+                format=fmt,
+                key=key,
+                label_visibility="collapsed",
+            )
+        else:
+            st.text_input(
+                label_text,
+                value=_safe_text(value),
+                key=key,
+                label_visibility="collapsed",
+            )
+
+
+def recent_state_cards(state):
+    """Render the recent state summary cards."""
+    cols = st.columns(3)
+
+    last_run = state.get("last_run_date") or "—"
+    last_ift = state.get("last_ift_date") or "—"
+    ift_count = state.get("ift_count_this_month", 0)
+
+    items = [
+        ("Last Run", last_run, "Most recent engine execution", "🕒", "#3b82f6"),
+        ("Last IFT", last_ift, "Most recent submission", "📨", "#10b981"),
+        ("IFT Count", str(ift_count), "This month", "📌", "#f59e0b"),
+    ]
+
+    for col, (title, value, note, icon, color) in zip(cols, items):
+        with col:
+            st.markdown(tile_html(title, value, note=note, icon=icon, color=color), unsafe_allow_html=True)
+
+
+def render_history_table(state):
+    """Render the recent run history table."""
+    recent_regimes = state.get("recent_regimes", [])
+    recent_scores = state.get("recent_scores", [])
+    recent_allocations = state.get("recent_allocations", [])
+
+    rows = []
+    n = max(len(recent_regimes), len(recent_scores), len(recent_allocations))
+    for i in range(n):
+        rows.append({
+            "Index": i + 1,
+            "Regime": recent_regimes[i] if i < len(recent_regimes) else None,
+            "Score": recent_scores[i] if i < len(recent_scores) else None,
+            "Allocation": recent_allocations[i] if i < len(recent_allocations) else None,
+        })
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def make_score_chart(state):
+    """Build a score history dataframe."""
+    scores = state.get("recent_scores", [])
+    if not scores:
+        return None
+    return pd.DataFrame({"Score": scores})
+
+
+def make_alloc_chart(target_alloc, current_alloc):
+    """Build a fund allocation comparison dataframe."""
+    rows = []
+    for fund in ["G", "C", "I", "S", "F"]:
+        rows.append({
+            "Fund": fund,
+            "Current %": float(current_alloc.get(fund, 0.0)),
+            "Target %": float(target_alloc.get(fund, 0.0)),
+            "Delta %": float(target_alloc.get(fund, 0.0)) - float(current_alloc.get(fund, 0.0)),
+        })
+    return pd.DataFrame(rows)
+
+
+def _regime_alloc_display(name: str, info: dict) -> str:
+    """Format a regime allocation for display."""
+    if "alloc_display" in info:
+        return info["alloc_display"]
+    alloc = info.get("allocation", {})
+    fund_order = ["G", "C", "I", "S", "F"]
+    return " / ".join(f"{fund} {alloc.get(fund, 0)}%" for fund in fund_order)
+
+
+def _render_single_regime_card(name: str, info: dict, is_active: bool):
+    """Render one regime card."""
+    border = info["color"] if is_active else "rgba(148,163,184,0.18)"
+    bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
+    badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
+    badge_color = info["color"] if is_active else "#64748b"
+    alloc_text = _regime_alloc_display(name, info)
+
+    st.markdown(
+        f"""
+        <div class="small-kpi" style="border-left: 5px solid {border}; background-color: {bg}; min-height: 250px;">
+            <div style="color: {badge_color}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;">{badge}</div>
+            <div style="font-weight: 800; font-size: 0.95rem; color: {info['color']};">{info['icon']} {name}</div>
+            <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score_label']}</div>
+            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {info['color']};">Base: {alloc_text}</div>
+            <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['description']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_regime_cards(active_regime: str):
+    """Render the strategic regime directory cards."""
+    st.markdown("### 🧭 Strategic Regime Directory")
+    st.caption("The engine maps composite score to one of the policy regimes below.")
+
+    cols = st.columns(len(REGIME_ORDER))
+    for col, name in zip(cols, REGIME_ORDER):
+        info = REGIME_DEFINITIONS[name]
+        with col:
+            _render_single_regime_card(name, info, active_regime == name)
+
+
+FACTOR_ROWS = [
+    ("Inflation", "inflation", "Core PCE / Breakevens"),
+    ("Growth", "growth", "PMI / Services PMI / Claims"),
+    ("Liquidity", "liquidity", "SLOOS / Fed Assets Growth"),
+    ("Credit Spreads", "credit_spreads", "HY OAS"),
+    ("Valuation", "valuation", "Shiller CAPE / Real Yield"),
+    ("Market Stress", "market_stress", "VIX / STLFSI"),
+    ("Momentum", "momentum", "200SMA distance / STLFSI"),
+    ("Drawdown", "drawdown", "Peak-to-trough decline"),
+    ("Yield Curve", "yield_curve", "10Y - 3M Treasury Spread"),
+    ("Inflation Shock", "inflation_shock", "Inflation surprise vs anchor"),
+    ("Central Bank", "central_bank", "Fed stance / real yields / curve"),
+    ("Liquidity Pressure", "liquidity_pressure", "SLOOS / Fed assets / STLFSI / MOVE"),
+]
+
+
+def render_decision_breakdown(
+    result: dict,
+    action: str,
+    reason: str,
+    state: dict,
+    current_alloc: dict,
+    dxy_range_regime: str,
+    dxy_trend_up: bool,
+    cooldown_days: int,
+    confirmation_days: int,
+    allow_second_ift: bool,
+    normal_drift_threshold_pct: float,
+    score_change_threshold: int,
+):
+    """Render the engine decision breakdown panel."""
+    st.markdown("### 🔍 Engine Decision Breakdown")
+    with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
+        st.markdown("#### 1) Decision Summary")
+
+        sum_cols = st.columns(4)
+        with sum_cols[0]:
+            st.markdown(f"**Regime**  \n{result['regime']}")
+        with sum_cols[1]:
+            st.markdown(f"**Composite Score**  \n{result['composite_score']:+d}")
+        with sum_cols[2]:
+            st.markdown(f"**Action**  \n{action}")
+        with sum_cols[3]:
+            st.markdown(f"**Emergency Trigger**  \n{'Yes' if result['emergency_triggered'] else 'No'}")
+
+        st.caption(f"IFT Decision Reason: {reason}")
+
+        st.markdown("#### 2) Factor Score Detail")
+        factor_rows = []
+        for display_name, score_key, source_text in FACTOR_ROWS:
+            raw_score = int(result["scores"].get(score_key, 0))
+            if raw_score >= 3:
+                strength = "Strong Positive"
+            elif raw_score > 0:
+                strength = "Mild Positive"
+            elif raw_score == 0:
+                strength = "Neutral"
+            elif raw_score <= -5:
+                strength = "Strong Negative"
+            else:
+                strength = "Negative"
+
+            factor_rows.append({
+                "Factor": display_name,
+                "Raw Score": raw_score,
+                "Interpretation": strength,
+                "Source / Logic": source_text,
+            })
+
+        st.dataframe(pd.DataFrame(factor_rows), use_container_width=True, hide_index=True)
+
+        st.markdown("#### 3) Factor Interpretation")
+        pos_factors, neg_factors, neu_factors = [], [], []
+        for display_name, score_key, _ in FACTOR_ROWS:
+            val = result["scores"].get(score_key, 0)
+            if val > 0:
+                pos_factors.append(f"{display_name} (+{val} pts)")
+            elif val < 0:
+                neg_factors.append(f"{display_name} ({val} pts)")
+            else:
+                neu_factors.append(display_name)
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown("**🟢 Positive Drivers**")
+            for item in pos_factors or ["None"]:
+                st.markdown(f"- {item}")
+        with c2:
+            st.markdown("**⚪ Neutral Factors**")
+            for item in neu_factors or ["None"]:
+                st.markdown(f"- {item}")
+        with c3:
+            st.markdown("**🔴 Negative Drags**")
+            for item in neg_factors or ["None"]:
+                st.markdown(f"- {item}")
+
+        st.markdown("#### 4) Regime and Allocation Build")
+
+        build_cols = st.columns(2)
+        with build_cols[0]:
+            st.markdown("**Regime Selection**")
+            st.write(f"- Selected regime: `{result['regime']}`")
+            st.write(f"- Composite score: `{result['composite_score']:+d}`")
+            st.write(f"- Emergency trigger: `{'Yes' if result['emergency_triggered'] else 'No'}`")
+            st.write(f"- Base allocation: `{result['base_alloc']}`")
+
+        with build_cols[1]:
+            st.markdown("**Adjustment Flags**")
+            st.write(f"- F Fund unlocked: `{'Yes' if result['base_alloc'].get('F', 0) > 0 else 'No'}`")
+            st.write(f"- Asymmetric volatility trigger: `{'Yes' if result['asymmetric_vol_trigger'] else 'No'}`")
+            st.write(f"- DXY regime: `{dxy_range_regime}`")
+            st.write(f"- DXY trend up: `{'Yes' if dxy_trend_up else 'No'}`")
+            st.write(f"- Strong DXY adjustment: `{'Yes' if result['dxy_strong'] else 'No'}`")
+            st.write(f"- Macro overlays active: `{'Yes' if any(result['scores'].get(k, 0) != 0 for k in ['yield_curve', 'inflation_shock', 'central_bank', 'liquidity_pressure']) else 'No'}`")
+
+        st.markdown("**Final Target Allocation**")
+        st.dataframe(
+            make_alloc_chart(result["allocations"], current_alloc),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.markdown("#### 5) IFT Decision Logic")
+        ift_cols = st.columns(4)
+        with ift_cols[0]:
+            st.metric("Monthly IFT Count", str(state["ift_count_this_month"]))
+        with ift_cols[1]:
+            st.metric("Cooldown", f"{cooldown_days} days")
+        with ift_cols[2]:
+            st.metric("Confirmation Days", str(confirmation_days))
+        with ift_cols[3]:
+            st.metric("Allow 2nd IFT", "Yes" if allow_second_ift else "No")
+
+        st.write(f"- Normal drift threshold: `{float(normal_drift_threshold_pct):.2f}%`")
+        st.write(f"- Score change threshold: `{int(score_change_threshold)}`")
+        st.write(f"- Confirmation rule: requires {confirmation_days} stable days plus 1 prior point for score-change comparison.")
+        st.write(f"- Recent regime history: `{state['recent_regimes'][-(confirmation_days + 1):] if state['recent_regimes'] else []}`")
+        st.write(f"- Recent score history: `{state['recent_scores'][-(confirmation_days + 1):] if state['recent_scores'] else []}`")
+        st.write(f"- Final IFT recommendation: **{action}**")
+        st.write(f"- Reason: {reason}")
