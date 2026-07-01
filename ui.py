@@ -2,6 +2,7 @@
 ui.py — presentation helpers for Streamlit rendering.
 
 Owns:
+- header / status ribbon
 - cards
 - charts
 - tables
@@ -57,22 +58,81 @@ def tile_html(
     color: str = "#3b82f6",
     bg: str | None = None,
 ) -> str:
-    """Build HTML for a KPI-style tile."""
+    """Build HTML for a KPI-style tile.
+
+    ``bg`` is accepted for backward compatibility but the current design
+    conveys emphasis through the left accent bar rather than a filled
+    background, so it is intentionally unused here.
+    """
     title_text = _safe_text(title)
     value_text = _safe_text(value)
     note_text = _safe_text(note)
 
-    bg_style = f"background-color: {bg};" if bg else ""
-    icon_html = f"{icon} " if icon else ""
-    note_html = f"<div class='small-kpi-note'>{note_text}</div>" if note_text else ""
+    icon_html = f"<span>{icon}</span>" if icon else ""
+    note_html = f"<div class='kpi-note'>{note_text}</div>" if note_text else ""
 
     return f"""
-    <div class="small-kpi" style="border-left: 5px solid {color}; {bg_style}">
-        <div class="small-kpi-title">{icon_html}{title_text}</div>
-        <div class="small-kpi-value" style="color:#0f172a;">{value_text}</div>
+    <div class="kpi-tile" style="--tile-accent: {color};">
+        <div class="kpi-eyebrow">{icon_html}<span>{title_text}</span></div>
+        <div class="kpi-value">{value_text}</div>
         {note_html}
     </div>
     """
+
+
+# -----------------------------------------------------------------------------
+# Header / status ribbon
+# -----------------------------------------------------------------------------
+# A single, deliberately bolder element that anchors the page. Everything
+# else in the UI stays quiet by comparison.
+# -----------------------------------------------------------------------------
+
+
+def render_app_header(
+    regime: str,
+    data_quality_label: str,
+    timestamp_label: str,
+    subtitle: str = "Regime-based rebalancing · Thrift Savings Plan",
+) -> None:
+    """Render the top-of-page status ribbon.
+
+    Parameters
+    ----------
+    regime:
+        The currently active regime name, used to color the status dot.
+    data_quality_label:
+        Short label describing snapshot data quality (e.g. "82.1% live").
+    timestamp_label:
+        Short label describing when the engine last ran.
+    subtitle:
+        Secondary descriptive line shown under the app title.
+    """
+    info = REGIME_DEFINITIONS.get(regime, {})
+    color = _safe_text(info.get("color", "#94a3b8"))
+    icon = _safe_text(info.get("icon", "🧭"))
+
+    st.markdown(
+        f"""
+        <div class="status-ribbon">
+            <div class="status-ribbon-brand">
+                <div class="status-ribbon-seal">🏛️</div>
+                <div>
+                    <div class="status-ribbon-title">TSP Tactical Allocation Engine</div>
+                    <div class="status-ribbon-sub">{_safe_text(subtitle)}</div>
+                </div>
+            </div>
+            <div class="status-ribbon-meta">
+                <div class="status-chip">
+                    <span class="status-dot" style="color:{color};"></span>
+                    {icon} {_safe_text(regime)}
+                </div>
+                <div class="status-chip">{_safe_text(data_quality_label)}</div>
+                <div class="status-chip mono">{_safe_text(timestamp_label)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -91,14 +151,14 @@ def render_snapshot_quality_badge(quality: dict[str, Any], engine_ran: bool) -> 
     live_pct = float(quality["live_pct"])
     st.markdown(
         f"""
-        <div class="small-kpi" style="border: 1px solid {quality['border']}; border-left: 5px solid {quality['color']}; background-color: {quality['bg']}; margin-bottom: 1rem;">
+        <div class="kpi-tile" style="--tile-accent: {quality['color']}; margin-bottom: 1rem;">
             <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center; flex-wrap:wrap;">
                 <div>
-                    <div class="small-kpi-title">Live Data Quality</div>
-                    <div class="small-kpi-value" style="color:{quality['color']};">{live_pct:.1f}% live</div>
-                    <div class="small-kpi-note">{quality['headline']}</div>
+                    <div class="kpi-eyebrow">Live Data Quality</div>
+                    <div class="kpi-value" style="color:{quality['color']};">{live_pct:.1f}% live</div>
+                    <div class="kpi-note">{quality['headline']}</div>
                 </div>
-                <div style="font-size:0.85rem; color:#475569; line-height:1.6;">
+                <div style="font-family: var(--tsp-font-mono); font-variant-numeric: tabular-nums; font-size:0.82rem; color:var(--tsp-ink-soft); line-height:1.7; text-align:right;">
                     <div><strong>{quality['live_count']}</strong> live</div>
                     <div><strong>{quality['derived_count']}</strong> derived</div>
                     <div><strong>{quality['fallback_count']}</strong> placeholder</div>
@@ -130,7 +190,7 @@ def render_metric_cards(
         ("Composite Score", f"{composite_score:+.2f}", "Engine output", "📊", "#3b82f6"),
         ("Regime", regime, "Current market regime", "🧭", "#8b5cf6"),
         ("Action", action, reason, "✅", "#16a34a" if action == "SUBMIT IFT" else "#64748b"),
-        ("IFT Count", str(ift_count_this_month), "This month", "📁", "#f59e0b"),
+        ("IFT Count", str(ift_count_this_month), "This month", "📁", "#B4893D"),
     ]
 
     for col, (title, value, note, icon, color) in zip(cols, cards):
@@ -202,12 +262,10 @@ def render_editable_metric_tile(
 
         st.markdown(
             f"""
-            <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
-                <div class="small-kpi-title">{label_text}</div>
-                <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.15rem;">
-                    {shown}
-                </div>
-                <div style="margin-top: 0.35rem;">
+            <div class="editable-tile" style="--tile-accent: {color}; margin-bottom: 0.4rem;">
+                <div class="editable-tile-title">{label_text}</div>
+                <div class="editable-tile-value">{shown}</div>
+                <div class="editable-tile-foot">
                     <span class="pill {pill_class}">{source_text}</span>
                 </div>
             </div>
@@ -352,20 +410,23 @@ def _regime_alloc_display(name: str, info: dict[str, Any]) -> str:
 
 def _render_single_regime_card(name: str, info: dict[str, Any], is_active: bool) -> None:
     """Render one regime card."""
-    border = info["color"] if is_active else "rgba(148,163,184,0.18)"
-    bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
-    badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
-    badge_color = info["color"] if is_active else "#64748b"
+    color = info["color"]
+    bg = info["bg"]
     alloc_text = _regime_alloc_display(name, info)
+    active_class = "is-active" if is_active else ""
+    badge_html = (
+        f'<div class="regime-card-badge">★ Active</div>' if is_active else ""
+    )
 
     st.markdown(
         f"""
-        <div class="small-kpi" style="border-left: 5px solid {border}; background-color: {bg}; min-height: 250px;">
-            <div style="color: {badge_color}; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 0.35rem;">{badge}</div>
-            <div style="font-weight: 800; font-size: 0.95rem; color: {info['color']};">{info['icon']} {name}</div>
-            <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.6rem;">{info['profile']} • {info['score_label']}</div>
-            <div style="font-size: 0.8rem; font-weight: 700; margin-bottom: 0.6rem; color: {info['color']};">Base: {alloc_text}</div>
-            <div style="font-size: 0.78rem; color: #64748b; line-height: 1.35;">{info['description']}</div>
+        <div class="regime-card {active_class}" style="--regime-color: {color}; --regime-bg: {bg};">
+            {badge_html}
+            <div class="regime-card-icon">{info['icon']}</div>
+            <div class="regime-card-name">{name}</div>
+            <div class="regime-card-meta">{info['profile']} · {info['score_label']}</div>
+            <div class="regime-card-alloc">{alloc_text}</div>
+            <div class="regime-card-desc">{info['description']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -549,6 +610,7 @@ __all__ = [
     "_safe_text",
     "_source_pill_class",
     "tile_html",
+    "render_app_header",
     "render_snapshot_quality_badge",
     "render_metric_cards",
     "render_tile_grid",
