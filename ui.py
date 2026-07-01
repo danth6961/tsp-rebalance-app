@@ -1,3 +1,10 @@
+"""
+ui.py — presentation helpers for Streamlit rendering.
+
+Owns cards, charts, tables, badges, and breakdown views.
+Does not own engine logic, storage logic, or data fetching.
+"""
+
 import pandas as pd
 import streamlit as st
 
@@ -5,12 +12,14 @@ from constants import REGIME_DEFINITIONS, REGIME_ORDER
 
 
 def _safe_text(value):
+    """Return a display-safe string."""
     if value is None:
         return ""
     return str(value)
 
 
 def _source_pill_class(source):
+    """Map a source label to a CSS pill class."""
     source_str = _safe_text(source).upper()
     if "LIVE" in source_str:
         return "pill-live"
@@ -20,6 +29,7 @@ def _source_pill_class(source):
 
 
 def tile_html(title, value, note=None, icon=None, color="#3b82f6", bg=None):
+    """Build HTML for a KPI-style tile."""
     title = _safe_text(title)
     value = _safe_text(value)
     note = _safe_text(note)
@@ -38,6 +48,7 @@ def tile_html(title, value, note=None, icon=None, color="#3b82f6", bg=None):
 
 
 def render_snapshot_quality_badge(quality: dict, engine_ran: bool):
+    """Render the live-data quality badge."""
     if not engine_ran:
         st.info("Run **Fetch & Run Engine** to load market data and see how much of the snapshot is live.")
         return
@@ -66,6 +77,7 @@ def render_snapshot_quality_badge(quality: dict, engine_ran: bool):
 
 
 def render_metric_cards(composite_score, regime, action, ift_count_this_month, reason):
+    """Render the top-level metric cards."""
     cols = st.columns(4)
 
     cards = [
@@ -81,6 +93,7 @@ def render_metric_cards(composite_score, regime, action, ift_count_this_month, r
 
 
 def render_tile_grid(items, columns=4):
+    """Render a responsive grid of KPI tiles."""
     if not items:
         return
 
@@ -101,17 +114,11 @@ def render_tile_grid(items, columns=4):
 
 
 def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f", color="#3b82f6"):
-    """
-    Streamlit-safe metric tile that supports numeric, boolean, and text values.
-    - numeric values: editable via number_input
-    - booleans: editable via checkbox
-    - strings: editable via text_input only when non-numeric
-    """
+    """Render an editable metric tile for numeric, boolean, or text values."""
     pill_class = _source_pill_class(source)
     label_text = _safe_text(label)
     source_text = _safe_text(source)
 
-    # Determine value type
     is_bool = isinstance(value, bool)
     is_numeric = False
     display_value = value
@@ -172,6 +179,7 @@ def render_editable_metric_tile(label, value, source, key, step=0.1, fmt="%.2f",
 
 
 def recent_state_cards(state):
+    """Render the recent state summary cards."""
     cols = st.columns(3)
 
     last_run = state.get("last_run_date") or "—"
@@ -190,6 +198,7 @@ def recent_state_cards(state):
 
 
 def render_history_table(state):
+    """Render the recent run history table."""
     recent_regimes = state.get("recent_regimes", [])
     recent_scores = state.get("recent_scores", [])
     recent_allocations = state.get("recent_allocations", [])
@@ -209,6 +218,7 @@ def render_history_table(state):
 
 
 def make_score_chart(state):
+    """Build a score history dataframe."""
     scores = state.get("recent_scores", [])
     if not scores:
         return None
@@ -216,6 +226,7 @@ def make_score_chart(state):
 
 
 def make_alloc_chart(target_alloc, current_alloc):
+    """Build a fund allocation comparison dataframe."""
     rows = []
     for fund in ["G", "C", "I", "S", "F"]:
         rows.append({
@@ -228,14 +239,16 @@ def make_alloc_chart(target_alloc, current_alloc):
 
 
 def _regime_alloc_display(name: str, info: dict) -> str:
+    """Format a regime allocation for display."""
     if "alloc_display" in info:
         return info["alloc_display"]
-    alloc = info["allocation"]
+    alloc = info.get("allocation", {})
     fund_order = ["G", "C", "I", "S", "F"]
     return " / ".join(f"{fund} {alloc.get(fund, 0)}%" for fund in fund_order)
 
 
 def _render_single_regime_card(name: str, info: dict, is_active: bool):
+    """Render one regime card."""
     border = info["color"] if is_active else "rgba(148,163,184,0.18)"
     bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
     badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
@@ -257,14 +270,9 @@ def _render_single_regime_card(name: str, info: dict, is_active: bool):
 
 
 def render_regime_cards(active_regime: str):
-    """Render the strategic regime directory cards.
-
-    Regime metadata (name, allocation, description, color) comes from
-    constants.REGIME_DEFINITIONS, the single source of truth, so these
-    cards can never drift from what engine.py actually computes.
-    """
+    """Render the strategic regime directory cards."""
     st.markdown("### 🧭 Strategic Regime Directory")
-    st.caption("The engine maps the overall composite score to one of the four policy regimes below to determine baseline targets:")
+    st.caption("The engine maps composite score to one of the policy regimes below.")
 
     cols = st.columns(len(REGIME_ORDER))
     for col, name in zip(cols, REGIME_ORDER):
@@ -303,12 +311,7 @@ def render_decision_breakdown(
     normal_drift_threshold_pct: float,
     score_change_threshold: int,
 ):
-    """Render the full 'Engine Decision Breakdown' expander.
-
-    This is a pure rendering function: all decision logic (scores, regime,
-    IFT gating) is computed upstream by engine.py and passed in. ui.py never
-    makes tactical decisions, it only presents them.
-    """
+    """Render the engine decision breakdown panel."""
     st.markdown("### 🔍 Engine Decision Breakdown")
     with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=True):
         st.markdown("#### 1) Decision Summary")
