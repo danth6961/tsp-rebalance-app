@@ -553,11 +553,7 @@ def main() -> None:
         int(state.get("ift_count_this_month", 0)),
         reason,
     )
-    render_snapshot_quality_badge(
-        compute_snapshot_quality(get_current_market_sources()),
-        st.session_state.get("engine_ran", False),
-    )
-
+    
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         ["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"]
     )
