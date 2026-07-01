@@ -4,7 +4,7 @@ A Streamlit-based tactical TSP allocation assistant for macro-aware fund rotatio
 
 The app analyzes market and macro inputs, scores the current environment, maps that environment to a regime, recommends a target TSP allocation, and helps decide whether to submit an IFT or hold. It is intentionally tactical and quantitative, not a lifecycle-fund clone.
 
-## What it does
+## What It Does
 
 - Fetches live market and macro data
 - Computes factor scores and a composite regime score
@@ -20,9 +20,9 @@ The app analyzes market and macro inputs, scores the current environment, maps t
 - Stores logs and state on disk
 - Shows proxy fund performance and historical views
 
-## Current tactical allocation model
+## Current Tactical Allocation Model
 
-The current baseline regime targets are defined in `constants.py` and should be treated as the source of truth for regime allocations .
+The current baseline regime targets are defined in `constants.py` and should be treated as the source of truth for regime allocations.
 
 ### Risk-On Override
 - G: 30%
@@ -52,7 +52,7 @@ The current baseline regime targets are defined in `constants.py` and should be 
 - S: 0%
 - F: 0%
 
-### Emergency Dispatch with F Fund unlocked
+### Emergency Dispatch with F Fund Unlocked
 - G: 90%
 - C: 0%
 - I: 0%
@@ -61,7 +61,7 @@ The current baseline regime targets are defined in `constants.py` and should be 
 
 The F Fund is treated as a conditional overlay only. It is added only when the engine’s F Fund unlock rule is satisfied.
 
-## Project structure
+## Project Structure
 
 - `app.py` — Streamlit app entrypoint and UI orchestration
 - `engine.py` — factor scoring, regime selection, allocation logic, and IFT logic
@@ -71,22 +71,22 @@ The F Fund is treated as a conditional overlay only. It is added only when the e
 - `constants.py` — shared defaults, paths, proxy tickers, and regime baselines
 - `models.py` — typed data models for the app
 - `utils.py` — general helper functions
-- `validation.py` — market/allocation validation helpers
+- `validation.py` — market and allocation validation helpers
 - `ift_state_machine.py` — pure-G and monthly IFT rule enforcement
 - `requirements.txt` — Python dependencies
 
-## How it works
+## How It Works
 
 1. The app loads config and state from local files.
 2. It fetches market and macro data.
 3. The engine scores the environment across multiple factors.
 4. The engine selects a regime and target allocation.
 5. The app compares the current allocation to the target.
-6. The IFT rule engine decides whether to recommend submission or hold.
+6. The IFT rule engine decides whether to submit or hold.
 7. The result is logged locally.
 8. Manual confirmation updates the transaction state.
 
-## Data inputs used by the engine
+## Data Inputs Used by the Engine
 
 The scoring engine uses inputs such as:
 - Core PCE YoY
@@ -109,7 +109,7 @@ The scoring engine uses inputs such as:
 - Market breadth
 - Panic flags
 
-## Manual IFT workflow
+## Manual IFT Workflow
 
 The safest operating mode is manual confirmation:
 
@@ -118,14 +118,14 @@ The safest operating mode is manual confirmation:
 
 This keeps the recommendation separate from the actual transaction and reduces the risk of accidental state drift.
 
-## Live files created by the app
+## Live Files Created by the App
 
 - `tsp_config.json` — saved config
 - `tsp_state.json` — saved state
 - `tsp_daily_log.csv` — daily run log
 - `tsp_transactions.csv` — audit trail / transaction history
 
-## Important limitations
+## Important Limitations
 
 - Live market data may fall back to defaults if a source is unavailable.
 - Multiple macro indicators are lagged and may update asynchronously.
