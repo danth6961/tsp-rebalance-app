@@ -252,10 +252,13 @@ def main():
 
         with st.expander("🛠️ Manual Override", expanded=False):
             manual_override_enabled = st.checkbox("Enable manual override", value=bool(cfg["manual_override_enabled"]))
+            manual_regime_default = cfg.get("manual_regime", "OPTIMIZED NEUTRAL")
+            manual_regime_index = REGIME_ORDER.index(manual_regime_default) if manual_regime_default in REGIME_ORDER else 1
+            
             manual_regime = st.selectbox(
                 "Override regime",
                 REGIME_ORDER,
-                index=REGIME_ORDER.index(cfg["manual_regime"]) if cfg.get("manual_regime") in REGIME_ORDER else 1,
+                index=manual_regime_index,
             )
 
         st.divider()
