@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Dict, List, Optional, Any, Tuple
 
-from constants import DEFAULTS, BASELINE_ALLOCATIONS
+from constants import DEFAULTS, BASELINE_ALLOCATIONS, DXY_TILT_THRESHOLD
 from utils import safe_float
 
 
@@ -281,7 +281,10 @@ def determine_allocation(
     momentum_breaker = scores.get("momentum", 0) <= -3
     asymmetric_vol_trigger = scores.get("market_stress", 0) <= -3 or scores.get("momentum", 0) <= -3
     f_fund_unlocked = (bond_yield - pce) >= 1.5 and move_index < 120.0
-    dxy_strong = dxy_spot >= 105.0 and dxy_trend_up
+    # Was hardcoded to 105.0 (the STRONG/VERY STRONG boundary from
+    # derive_dxy_overlay), which contradicted factor_scoring_guide.md's
+    # documented 103.5 trigger. Now derives from the single shared constant.
+    dxy_strong = dxy_spot >= DXY_TILT_THRESHOLD and dxy_trend_up
     panic_valve_triggered = (vix_3d_panic or spx_3d_panic) and (market_breadth is not None and market_breadth <= 60.0)
 
     curve_inverted = treasury_10y_3m_spread < 0.0
