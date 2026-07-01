@@ -4,19 +4,23 @@
 
 This project is a Streamlit-based tactical TSP allocation assistant.
 
-It analyzes macro and market data, scores the current environment, selects a regime, recommends a target TSP allocation, and determines whether an IFT should be submitted or held. The system is meant to be:
-- tactical
-- quantitative
-- transparent
-- manually confirmable for IFT tracking
+It analyzes macro and market data, scores the current environment, selects a regime, recommends a target allocation, and helps decide whether to submit an IFT or hold. The system is designed to be tactical, quantitative, transparent, and manually confirmable for IFT tracking.
 
-The current architecture already reflects a sensible module split, with `app.py` handling orchestration and UI, `engine.py` handling scoring and allocation logic, `data_sources.py` handling market data, `storage.py` handling persistence, `ui.py` handling reusable rendering, `constants.py` holding shared defaults and regime definitions, and `models.py` defining typed structures  .
+The current codebase already reflects a strong module split:
+- `app.py` handles orchestration and UI
+- `engine.py` handles tactical decision logic
+- `data_sources.py` builds the market snapshot
+- `storage.py` handles persistence
+- `ui.py` provides reusable rendering helpers
+- `constants.py`, `models.py`, `utils.py`, `validation.py`, and `ift_state_machine.py` support the main flow
+
+The largest earlier risk was drift across allocations, thresholds, and IFT rules. That risk has been materially reduced by centralizing regime definitions in `constants.py` and adding consistency tests around the shared regime and IFT rules.
 
 ---
 
-## Current high-level behavior
+## Current High-Level Behavior
 
-### Main flow
+### Main Flow
 1. Load config and state.
 2. Fetch live or fallback market data.
 3. Score the market.
@@ -28,18 +32,18 @@ The current architecture already reflects a sensible module split, with `app.py`
 9. Save state and log the run.
 10. Manually confirm any actual IFT action.
 
-### Important workflow rule
+### Important Workflow Rule
 The safest workflow is:
 - the engine may recommend `SUBMIT IFT`
 - but only the manual submit button should increment the IFT count and write the transaction row
 
-That means recommendation and actual confirmation are intentionally separated.
+Recommendation and confirmation must remain separate.
 
 ---
 
-## Current regime allocations
+## Current Regime Allocations
 
-These are the current tactical baselines, and they should be treated as the canonical regime set unless intentionally changed in `constants.py` .
+These are the current tactical baselines and should be treated as canonical unless intentionally changed in `constants.py`.
 
 ### Risk-On Override
 - G 30
@@ -76,11 +80,11 @@ These are the current tactical baselines, and they should be treated as the cano
 - S 0
 - F 10
 
-The current baseline allocations are stored in `constants.py`, and `engine.py` should match them exactly. `app.py` should display the same regime cards in the UI.
+`constants.py` is the source of truth for regime allocations, and `engine.py` should match it exactly. The UI should render the same regime cards and allocation logic.
 
 ---
 
-## Manual IFT and G Fund behavior
+## Manual IFT and G Fund Behavior
 
 ### Normal IFTs
 Normal IFT confirmations:
@@ -89,17 +93,17 @@ Normal IFT confirmations:
 - write to the transaction audit trail
 - must respect the 2-IFT monthly limit
 
-### Pure G Fund safety move
+### Pure G Fund Safety Move
 A pure 100% G allocation is treated as a TSP-safe safety move:
 - it does not consume a monthly IFT
 - it does not count toward the normal 2-IFT cap
 - it is still recorded by the app as a safety action
 
-This is meant to support the TSP rule that moving to G can be handled as a special safety path.
+This supports the TSP rule that moving to G can be handled as a special safety path.
 
 ---
 
-## Files and roles
+## Files and Roles
 
 ### `app.py`
 Main Streamlit application and orchestration layer.
@@ -115,16 +119,16 @@ Current responsibilities:
 - manual IFT submit button
 - G Fund safety move handling
 
-The app also contains the detailed “Engine Decision Breakdown” section and the regime summary cards.
+The app also contains the detailed Engine Decision Breakdown section and the regime summary cards.
 
 ### `engine.py`
 Core decision logic.
 
 It:
-- scores macro/market inputs
+- scores macro and market inputs
 - selects the regime
 - applies allocation adjustments
-- handles panic/emergency logic
+- handles panic and emergency logic
 - applies F Fund unlock logic
 - applies asymmetric volatility and strong DXY adjustments
 - determines IFT eligibility
@@ -132,12 +136,12 @@ It:
 Important:
 - `engine.py` should use the same baseline regime allocations as `constants.py`
 - emergency and F Fund overlay logic should remain intact
-- the current IFT gating logic should be reviewed if you want it stricter and more conservative
+- IFT gating is functional, but if stricter turnover control is desired, it may need further tightening
 
 ### `data_sources.py`
 External data acquisition.
 
-It fetches or derives market/macro inputs and provides fallback handling if live data is unavailable.
+It fetches or derives market and macro inputs and provides fallback handling if live data is unavailable.
 
 ### `storage.py`
 Persistence layer.
@@ -167,7 +171,7 @@ Current important values:
 - default market inputs
 - baseline allocations
 
-`REGIME_DEFINITIONS` is now the preferred single source of truth for regime names, descriptions, and allocations, and should remain synchronized with engine and UI usage .
+`REGIME_DEFINITIONS` and the derived allocation structures should remain synchronized with the engine and UI.
 
 ### `models.py`
 Typed dataclasses for:
@@ -196,7 +200,7 @@ IFT rule utilities for:
 
 ---
 
-## Important current design decisions
+## Important Current Design Decisions
 
 ### 1) F Fund is conditional only
 Do not treat F as part of the normal baseline mix.
@@ -207,13 +211,12 @@ The engine should:
 
 ### 2) Manual IFT confirmation is the source of truth
 The safest workflow is:
-
 - engine recommends
 - user submits in TSP
 - user clicks manual submit in the app
 - app increments IFT count and writes transaction row
 
-Do not let the recommendation path and the confirmation path both update the IFT state.
+Do not let the recommendation path and confirmation path both update the IFT state.
 
 ### 3) The app is tactical, not lifecycle
 This is not intended to mimic TSP L Funds.
@@ -222,34 +225,34 @@ The regime logic is meant to be:
 - quantitative
 - rule-based
 - adaptable
-- more aggressive or defensive based on market conditions
+- responsive to changing macro conditions
 
 ---
 
-## Current UI details
+## Current UI Details
 
-### Regime directory
+### Regime Directory
 The app shows regime cards for the tactical allocation set.
 
-### Detailed decision breakdown
+### Detailed Decision Breakdown
 The app includes a detailed decision expander with:
 - summary
 - factor score detail
 - factor interpretation
-- regime/allocation build
+- regime / allocation build
 - IFT logic
 
-### Proxy chart default
+### Proxy Chart Default
 The performance chart timeframe defaults to `10 Years`.
 
 ---
 
-## Known issues / things to watch
+## Known Issues / Things to Watch
 
 ### 1) Possible mismatch if files are edited independently
 If allocations are changed in one place but not others, the app can show one set of numbers while the engine calculates another.
 
-Make sure these stay aligned:
+Keep these aligned:
 - `constants.py`
 - `engine.py`
 - `app.py`
@@ -261,21 +264,21 @@ Only confirmed IFTs should be written to `tsp_transactions.csv`.
 ### 3) IFT gate could still be tightened further
 The current app supports a G-only safety move path, but the underlying engine eligibility logic may still be more permissive than desired if you want stricter turnover control.
 
-### 4) Flat-file persistence is deliberately lightweight
-This is appropriate for a personal Streamlit workflow, but it is not concurrency-safe.
+### 4) Flat-file persistence is intentionally lightweight
+This is appropriate for a single-user Streamlit workflow, but it is not concurrency-safe.
 
 ---
 
-## Suggested next steps for the next AI
+## Suggested Next Steps for the Next AI
 
-Help incorporate macro context such as:
+Help incorporate additional macro context such as:
 - yield curve dynamics
 - inflation shocks
 - central bank policy and liquidity
 - global growth trends
 - risk-on / risk-off regimes
 
-Ensure logic respects the TSP rule of only two Interfund Transfers (IFTs) per calendar month. Actively guard against:
+Ensure logic respects the TSP rule of only two Interfund Transfers per calendar month. Actively guard against:
 - look-ahead bias
 - data leakage
 - excessive turnover
@@ -296,11 +299,11 @@ Help review, design, and improve:
 
 ---
 
-## Conversation context to preserve
+## Conversation Context to Preserve
 
 The user prefers:
 - plain English explanations
-- tactical/quantitative framing
+- tactical and quantitative framing
 - manual IFT confirmation
 - detailed reasoning in the UI
 - updated regime allocations:
@@ -315,23 +318,24 @@ The user also wants:
 
 ---
 
-## Notes for future edits
+## Notes for Future Edits
 
 If you change the regime mix again:
 - update `constants.py`
 - update `engine.py`
 - update `app.py` UI labels
-- update any storage defaults
+- update `storage.py` defaults if needed
 - update regime consistency tests
 
 Keep all of them synchronized.
 
 If you change the IFT workflow:
-- ensure only one path updates count/history
+- ensure only one path updates count and history
 - recommendation should remain separate from confirmation
 - G-only safety moves should be visually obvious
 
 ---
 
-## Short summary for the next AI
-This is a tactical TSP engine with updated allocations, manual IFT confirmation, a pure G Fund safety move path, and a detailed decision UI. The main remaining risk is file mismatch between `engine.py`, `app.py`, `constants.py`, and `storage.py`. Keep the baseline regime allocations synchronized and preserve the manual confirmation workflow.
+## Short Summary for the Next AI
+
+This is a tactical TSP engine with updated allocations, manual IFT confirmation, a pure G Fund safety move path, and a detailed decision UI. The main remaining risk is file mismatch between `engine.py`, `app.py`, `constants.py`, and `storage.py`. Keep baseline regime allocations synchronized and preserve the manual confirmation workflow.
