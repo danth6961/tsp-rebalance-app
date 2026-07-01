@@ -4,13 +4,13 @@
 
 This project is a Streamlit-based tactical TSP allocation assistant.
 
-It analyzes macro and market data, scores the current environment, selects a regime, recommends a target TSP allocation, and decides whether an IFT should be submitted or held.
-
-The system is meant to be:
+It analyzes macro and market data, scores the current environment, selects a regime, recommends a target TSP allocation, and determines whether an IFT should be submitted or held. The system is meant to be:
 - tactical
 - quantitative
 - transparent
 - manually confirmable for IFT tracking
+
+The current architecture already reflects a sensible module split, with `app.py` handling orchestration and UI, `engine.py` handling scoring and allocation logic, `data_sources.py` handling market data, `storage.py` handling persistence, `ui.py` handling reusable rendering, `constants.py` holding shared defaults and regime definitions, and `models.py` defining typed structures  .
 
 ---
 
@@ -26,6 +26,7 @@ The system is meant to be:
 7. Determine HOLD vs SUBMIT IFT.
 8. Display detailed reasoning.
 9. Save state and log the run.
+10. Manually confirm any actual IFT action.
 
 ### Important workflow rule
 The safest workflow is:
@@ -38,7 +39,7 @@ That means recommendation and actual confirmation are intentionally separated.
 
 ## Current regime allocations
 
-These are the current tactical baselines:
+These are the current tactical baselines, and they should be treated as the canonical regime set unless intentionally changed in `constants.py` .
 
 ### Risk-On Override
 - G 30
@@ -75,7 +76,7 @@ These are the current tactical baselines:
 - S 0
 - F 10
 
-The current baseline allocations are stored in `constants.py`, and `engine.py` should match them exactly. `app.py` also displays the same regime cards in the UI.
+The current baseline allocations are stored in `constants.py`, and `engine.py` should match them exactly. `app.py` should display the same regime cards in the UI.
 
 ---
 
@@ -114,6 +115,8 @@ Current responsibilities:
 - manual IFT submit button
 - G Fund safety move handling
 
+The app also contains the detailed “Engine Decision Breakdown” section and the regime summary cards.
+
 ### `engine.py`
 Core decision logic.
 
@@ -129,7 +132,7 @@ It:
 Important:
 - `engine.py` should use the same baseline regime allocations as `constants.py`
 - emergency and F Fund overlay logic should remain intact
-- the current IFT gating logic still needs review if you want it stricter and more conservative
+- the current IFT gating logic should be reviewed if you want it stricter and more conservative
 
 ### `data_sources.py`
 External data acquisition.
@@ -164,7 +167,7 @@ Current important values:
 - default market inputs
 - baseline allocations
 
-`BASELINE_ALLOCATIONS` should be treated as the source of truth for regime definitions.
+`REGIME_DEFINITIONS` is now the preferred single source of truth for regime names, descriptions, and allocations, and should remain synchronized with engine and UI usage .
 
 ### `models.py`
 Typed dataclasses for:
@@ -178,6 +181,18 @@ Generic helpers:
 - time handling
 - parsing
 - small utility support
+
+### `validation.py`
+Validation helpers for:
+- allocation totals
+- input quality
+- market data structure
+
+### `ift_state_machine.py`
+IFT rule utilities for:
+- pure G move detection
+- monthly IFT cap logic
+- state machine enforcement
 
 ---
 
@@ -211,6 +226,24 @@ The regime logic is meant to be:
 
 ---
 
+## Current UI details
+
+### Regime directory
+The app shows regime cards for the tactical allocation set.
+
+### Detailed decision breakdown
+The app includes a detailed decision expander with:
+- summary
+- factor score detail
+- factor interpretation
+- regime/allocation build
+- IFT logic
+
+### Proxy chart default
+The performance chart timeframe defaults to `10 Years`.
+
+---
+
 ## Known issues / things to watch
 
 ### 1) Possible mismatch if files are edited independently
@@ -226,7 +259,10 @@ Make sure these stay aligned:
 Only confirmed IFTs should be written to `tsp_transactions.csv`.
 
 ### 3) IFT gate could still be tightened further
-The current app now supports a G-only safety move path, but the underlying engine eligibility logic may still be more permissive than desired if you want stricter turnover control.
+The current app supports a G-only safety move path, but the underlying engine eligibility logic may still be more permissive than desired if you want stricter turnover control.
+
+### 4) Flat-file persistence is deliberately lightweight
+This is appropriate for a personal Streamlit workflow, but it is not concurrency-safe.
 
 ---
 
@@ -285,7 +321,8 @@ If you change the regime mix again:
 - update `constants.py`
 - update `engine.py`
 - update `app.py` UI labels
-- optionally update `storage.py` default allocation
+- update any storage defaults
+- update regime consistency tests
 
 Keep all of them synchronized.
 
