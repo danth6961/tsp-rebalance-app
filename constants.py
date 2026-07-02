@@ -87,7 +87,7 @@ DEFAULTS = {
     "sloos_net_pct": 0.0,
     "hy_oas": 4.0,
     "shiller_cape": 25.0,
-    "fwd_eps_growth_yoy": 10.0,
+    "fwd_eps_growth_yoy": 31.21,
     "vix_spot": 15.0,
     "stlfsi_index": 0.0,
     "move_index": 100.0,
