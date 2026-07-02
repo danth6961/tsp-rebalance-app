@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 ift_state_machine.py — single-writer IFT state management.
 
@@ -5,10 +6,14 @@ Owns:
 - IFT eligibility checks
 - monthly cap enforcement
 - idempotent confirmation handling
-- mutation of IFT counters and audit writes
-"""
+- the only code path that may mutate IFT counters and perform audit writes
 
-from __future__ import annotations
+Does not own:
+- scoring logic
+- UI rendering
+- data fetching
+- configuration file I/O
+"""
 
 from dataclasses import dataclass
 from datetime import date
@@ -19,7 +24,10 @@ from constants import G_MOVE_TOLERANCE_PCT, MONTHLY_IFT_LIMIT
 
 
 def is_pure_g_move(target_alloc: dict[str, float]) -> bool:
-    """Return True if the target allocation is effectively 100% G Fund."""
+    """Return True if the target allocation is effectively a pure G Fund move.
+    That is, if the G Fund equals approximately 100% (with a small tolerance)
+    and all other funds are near 0%.
+    """
     g = float(target_alloc.get("G", 0.0))
     others = sum(float(target_alloc.get(fund, 0.0)) for fund in ("C", "I", "S", "F"))
     return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
@@ -44,21 +52,24 @@ class IFTStateMachine:
 
     @classmethod
     def load(cls, today: date) -> IFTStateMachine:
-        """Load state from persistence with month rollover applied."""
+        """Load state from disk with month rollover applied."""
         return cls(load_state_for_today(today), today)
 
     @property
     def ift_count_this_month(self) -> int:
+        """Return the current month's confirmed IFT count."""
         return int(self.state.get("ift_count_this_month", 0))
 
     @property
     def last_ift_date(self) -> Optional[date]:
+        """Return the most recent IFT date, if present."""
         raw = self.state.get("last_ift_date")
         if not raw:
             return None
         return date.fromisoformat(str(raw))
 
     def can_confirm(self, target_alloc: dict[str, float]) -> IFTDecision:
+        """Check whether a manual IFT can be confirmed without mutating state."""
         if is_pure_g_move(target_alloc):
             return IFTDecision(
                 allowed=True,
@@ -79,6 +90,25 @@ class IFTStateMachine:
         regime: str,
         confirmation_key: str | None = None,
     ) -> IFTDecision:
+        """Apply an approved IFT submission and persist the updated state.
+
+        Parameters
+        ----------
+        current_alloc:
+            Current fund allocation before the move.
+        target_alloc:
+            Target allocation to confirm.
+        regime:
+            Regime name used for audit logging.
+        confirmation_key:
+            Optional idempotency key to prevent double confirmation on re-runs.
+
+        Returns
+        -------
+        IFTDecision
+            Decision result including persistence flags.
+        """
+        # Idempotency guard: repeated clicks should not double count.
         if confirmation_key is not None:
             last_key = str(self.state.get("last_confirmation_key", ""))
             if last_key == confirmation_key:
@@ -89,15 +119,19 @@ class IFTStateMachine:
                     transaction_written=False,
                     state_saved=False,
                 )
+
         decision = self.can_confirm(target_alloc)
         if not decision.allowed:
             return decision
 
+        # Update state timestamps so even safety moves are recorded.
         self.state["last_ift_date"] = self.today.isoformat()
         self.state["last_run_date"] = self.today.isoformat()
+
         if confirmation_key is not None:
             self.state["last_confirmation_key"] = confirmation_key
 
+        # Safety moves are not counted toward IFT capacity.
         if decision.is_safety_move:
             save_state(self.state)
             return IFTDecision(
@@ -108,7 +142,9 @@ class IFTStateMachine:
                 state_saved=True,
             )
 
+        # Normal IFT submission consumes monthly allowance.
         self.state["ift_count_this_month"] = self.ift_count_this_month + 1
+
         transaction_written = False
         try:
             append_transaction_row(
@@ -126,6 +162,7 @@ class IFTStateMachine:
                 transaction_written=False,
                 state_saved=False,
             )
+
         save_state(self.state)
 
         return IFTDecision(
