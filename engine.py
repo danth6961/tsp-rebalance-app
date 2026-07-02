@@ -19,7 +19,7 @@ Public Functions (unchanged external API):
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from constants import BASELINE_ALLOCATIONS, DEFAULTS, DXY_TILT_THRESHOLD
@@ -109,7 +109,13 @@ def determine_allocation(
     market_state = build_market_state(data, pce, cape)
     # For this example, we use the 'dxy' field of market_state to decide the regime.
     regime_name: str = market_state.dxy
-    logger.info("Determined regime: %s", regime_name)
+    logger.info("Market state returned regime (%s)", regime_name)
+
+    # Ensure regime_name is a valid key in BASELINE_ALLOCATIONS.
+    # If not, default to "OPTIMIZED NEUTRAL".
+    if regime_name not in BASELINE_ALLOCATIONS:
+        logger.warning("Regime '%s' not recognized. Defaulting to OPTIMIZED NEUTRAL.", regime_name)
+        regime_name = "OPTIMIZED NEUTRAL"
 
     base_alloc: FundsAlloc = _regime_alloc(regime_name)
 
@@ -153,7 +159,6 @@ def build_engine_result(
         override_regime=override_regime,
     )
     emergency_triggered = (regime == "EMERGENCY DISPATCH")
-    # Construct and return the EngineResult.
     return EngineResult(
         allocations=allocs,
         scores=scores,
