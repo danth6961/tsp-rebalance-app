@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from constants import BASELINE_ALLOCATIONS, DXY_TILT_THRESHOLD
+from constants import BASELINE_ALLOCATIONS, DEFAULTS, DXY_TILT_THRESHOLD
 from market_state import build_market_state
 from models import EngineResult, FundsAlloc
 from scoring import score_all_factors, composite_score
