@@ -5,3 +5,41 @@ MarketState abstraction (separates indicator interpretation from allocation poli
 Capped overlay adjustments (prevents one factor from overwhelming the model)
 Cleaner regime selection logic (expressed in terms of market conditions rather than raw indicators)
 The same external API, so the rest of your project doesn't need to change:
+
+Right now your engine mixes
+indicator interpretation
+with
+portfolio policy
+Some overlays stack aggressively
+Composite score isn't weighted
+ideas
+Growth        x2
+Liquidity     x2
+Credit        x2
+Inflation     x1.5
+Momentum      x1.5
+Valuation     x1
+Drawdown      x1
+Stress        x2
+Too many magic numbers
+Some indicators appear twice
+The scoring ranges are inconsistent
+
+create another intermediate object.
+Something like
+MarketState(
+    inflation="cooling",
+    growth="expanding",
+    liquidity="tight",
+    stress="normal",
+    trend="bullish",
+    policy="restrictive"
+)
+Then the allocation engine only reasons over the abstract market state:
+if (
+    market.growth == "expanding"
+    and market.policy != "restrictive"
+    and market.trend == "bullish"
+):
+    ...
+This separation makes the model easier to audit and easier to evolve as you add or swap indicators.
