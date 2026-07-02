@@ -75,7 +75,7 @@ def age55_target_allocations(score: ArrayLike, return_as: str | None = None) -> 
     xp = np.array([-1.5, -1.0, 0.0, 0.5], dtype=float)
 
     y_c = np.array([0.00, 0.12, 0.30, 0.48], dtype=float)
-    y_s = np.array([0.00, 0.03, 0.08, 0.12], dtype=float)
+    y_s = np.array([0.00, 0.03, 0.80, 0.12], dtype=float)
     y_i = np.array([0.00, 0.05, 0.12, 0.20], dtype=float)
     y_g = np.array([1.00, 0.80, 0.50, 0.20], dtype=float)
 
