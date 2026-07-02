@@ -1,32 +1,34 @@
 """
+Author: Donald J Anthony
+Date: Today's Date
+
 styles.py — CSS and visual tokens for the Streamlit app.
 
 Owns:
-- layout spacing
-- card styling
-- pill styling
-- KPI / metric tile styling
-- badge colors
-- chart container styling
-- reusable visual tokens
+    - Layout spacing
+    - Card styling
+    - Pill styling
+    - KPI / metric tile styling
+    - Badge colors
+    - Chart container styling
+    - Reusable visual tokens
 
 Does not own:
-- app logic
-- rendering logic
-- data logic
-- regime logic
+    - App logic
+    - Rendering logic
+    - Data logic
+    - Regime logic
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
-
 # -----------------------------------------------------------------------------
 # Central style payload
 # -----------------------------------------------------------------------------
-# Keep all visual rules here so app.py can stay a thin orchestration layer.
-# The UI layer should rely on these class names rather than inlining CSS.
+# Keep all visual rules here so app.py can remain a thin orchestration layer.
+# The UI layer should refer to these class names rather than inlining CSS.
 # -----------------------------------------------------------------------------
 APP_STYLES: str = """
 <style>
@@ -109,9 +111,11 @@ APP_STYLES: str = """
 
 
 def inject_styles() -> None:
-    """Inject the app-wide CSS into Streamlit.
+    """
+    Inject the application-wide CSS into the Streamlit app.
 
-    This should be called once near the top of app.py.
+    This function should be called once near the top of app.py so that all
+    subsequent components render with the provided visual tokens and layout styles.
     """
     st.markdown(APP_STYLES, unsafe_allow_html=True)
 
