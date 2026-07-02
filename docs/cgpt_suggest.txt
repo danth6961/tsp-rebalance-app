@@ -1,0 +1,7 @@
+Normalized scoring (consistent score ranges for every factor)
+Weighted composite score (Growth, Liquidity, Stress, etc. contribute according to importance)
+Centralized thresholds (all magic numbers moved into constants.py)
+MarketState abstraction (separates indicator interpretation from allocation policy)
+Capped overlay adjustments (prevents one factor from overwhelming the model)
+Cleaner regime selection logic (expressed in terms of market conditions rather than raw indicators)
+The same external API, so the rest of your project doesn't need to change:
