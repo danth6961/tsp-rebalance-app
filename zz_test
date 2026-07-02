@@ -1,0 +1,95 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import json
+def get_dashboard_stoplights():
+    # 1. Fetch market history
+    sp500 = yf.Ticker("^GSPC")
+    df = sp500.history(period="2y")
+    
+    if df.empty:
+        return json.dumps({"error": "Failed to fetch data"})
+    # 2. Calculate Indicators
+    df['50_DMA'] = df['Close'].rolling(window=50).mean()
+    df['200_DMA'] = df['Close'].rolling(window=200).mean()
+    
+    # ATR 14
+    high_low = df['High'] - df['Low']
+    high_cp = np.abs(df['High'] - df['Close'].shift(1))
+    low_cp = np.abs(df['Low'] - df['Close'].shift(1))
+    df['TR'] = np.max(np.vstack([high_low, high_cp, low_cp]), axis=0)
+    df['ATR_14'] = df['TR'].rolling(window=14).mean()
+    
+    # OBV Engine
+    price_change = df['Close'].diff()
+    vol_dir = np.where(price_change > 0, df['Volume'], np.where(price_change < 0, -df['Volume'], 0))
+    df['OBV'] = np.cumsum(vol_dir)
+    df['OBV_20_EMA'] = df['OBV'].ewm(span=20, adjust=False).mean()
+    
+    df = df.dropna(subset=['50_DMA', '200_DMA', 'ATR_14', 'OBV_20_EMA']).copy()
+    
+    # 3. Process State Machine Tally
+    df['Volatility_Floor'] = df['200_DMA'] - (0.5 * df['ATR_14'])
+    df['Below_Floor'] = df['Close'] < df['Volatility_Floor']
+    
+    below_series = df['Below_Floor']
+    df['Consecutive_Days_Below'] = below_series.groupby((~below_series).cumsum()).cumsum()
+    
+    # Extract Latest Record
+    latest = df.iloc[-1]
+    current_price = float(latest['Close'])
+    dma_200 = float(latest['200_DMA'])
+    dma_50 = float(latest['50_DMA'])
+    floor = float(latest['Volatility_Floor'])
+    consecutive_days = int(latest['Consecutive_Days_Below'])
+    obv_val = float(latest['OBV'])
+    obv_ema = float(latest['OBV_20_EMA'])
+    
+    # 4. State Machine Evaluation (Stoplight Mapping)
+    # Stoplight 1: Price State
+    if consecutive_days == 0:
+        price_signal = "GREEN"
+    elif consecutive_days < 30:
+        price_signal = "YELLOW"
+    else:
+        price_signal = "RED"
+        
+    # Stoplight 2: Momentum Cross
+    momentum_signal = "RED" if dma_50 < dma_200 else "GREEN"
+    
+    # Stoplight 3: Institutional Liquidation
+    liquidation_signal = "RED" if obv_val < obv_ema else "GREEN"
+    
+    # Unified Aggregated System Status
+    if price_signal == "RED" or momentum_signal == "RED":
+        system_status = "BEAR_MARKET_REGIME"
+    elif price_signal == "YELLOW":
+        system_status = "CORRECTION_WARNING"
+    else:
+        system_status = "BULL_MARKET_HEALTHY"
+    # 5. Pack standardized JSON Payload
+    dashboard_payload = {
+        "market": "S&P 500",
+        "current_price": round(current_price, 2),
+        "system_status": system_status,
+        "stoplights": {
+            "price_vs_200dma": {
+                "status": price_signal,
+                "consecutive_days_below_floor": consecutive_days,
+                "days_remaining_to_red": max(0, 30 - consecutive_days),
+                "current_buffer_floor": round(floor, 2)
+            },
+            "momentum_death_cross": {
+                "status": momentum_signal,
+                "spread_pct": round(((dma_50 - dma_200) / dma_200) * 100, 2)
+            },
+            "institutional_liquidation_obv": {
+                "status": liquidation_signal,
+                "obv_to_ema_ratio": round(obv_val / obv_ema, 4)
+            }
+        }
+    }
+    
+    return json.dumps(dashboard_payload, indent=4)
+if __name__ == "__main__":
+    print(get_dashboard_stoplights())
