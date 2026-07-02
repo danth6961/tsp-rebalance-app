@@ -26,6 +26,32 @@ Scores = dict[str, int]
 # - no persistence
 # - no UI logic
 # -----------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class MarketState:
+    """Interpreted macro state used by the tactical engine.
+
+    This abstraction separates raw indicator inputs from allocation policy.
+    It is intentionally categorical so the engine can reason about market
+    conditions without repeatedly evaluating raw thresholds.
+    """
+
+    inflation: str
+    growth: str
+    liquidity: str
+    credit: str
+    stress: str
+    trend: str
+    policy: str
+    valuation: str
+    dxy: str
+    curve: str
+
+    panic: bool = False
+    asymmetric_vol: bool = False
+    f_unlock: bool = False
+    dxy_strong: bool = False
+
 @dataclass
 class MarketData:
     """Normalized macro and market snapshot used by the engine.
