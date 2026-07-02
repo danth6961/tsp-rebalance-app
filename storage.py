@@ -1,19 +1,22 @@
 """
-storage.py — persistence and local state management.
+Author: Donald J Anthony
+Date: Today's Date
+
+storage.py — Persistence and local state management.
 
 Owns:
-- config load/save
-- state load/save
-- daily log append
-- transaction log append
-- month rollover helpers
+    - Config load/save
+    - State load/save
+    - Daily log append
+    - Transaction log append
+    - Month rollover helpers
 
 Does not own:
-- engine scoring
-- UI logic
-- regime selection
-- data fetching
-- IFT decision logic
+    - Engine scoring
+    - UI logic
+    - Regime selection
+    - Data fetching
+    - IFT decision logic
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from constants import BASELINE_ALLOCATIONS, CONFIG_FILE, LOG_FILE, STATE_FILE, T
 # -----------------------------------------------------------------------------
 MAX_HISTORY_ENTRIES: int = 90
 
-# Explicit CSV column orders prevent accidental schema drift.
+# Explicit CSV column orders to prevent accidental schema drift.
 DAILY_LOG_FIELDS: list[str] = [
     "date",
     "action",
@@ -73,20 +76,20 @@ TRANSACTION_FIELDS: list[str] = [
 # Writes a temporary file in the same directory and replaces the target only
 # after the write succeeds.
 # -----------------------------------------------------------------------------
-
-
 def safe_save_json(file_path: Path, data: dict[str, Any]) -> None:
-    """Atomically save JSON to disk.
+    """
+    Atomically save JSON to disk.
 
     Parameters
     ----------
-    file_path:
+    file_path : Path
         Destination JSON file.
-    data:
+    data : dict[str, Any]
         Serializable payload to write.
     """
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Write to a temporary file in the same directory.
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -98,6 +101,7 @@ def safe_save_json(file_path: Path, data: dict[str, Any]) -> None:
         os.fsync(tmp.fileno())
         tmp_path = Path(tmp.name)
 
+    # Atomically replace the target file with the temporary file.
     os.replace(tmp_path, file_path)
 
 
@@ -105,7 +109,21 @@ def safe_load_json(
     file_path: Path,
     default_factory: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
-    """Load JSON, falling back to .bak and then to the default factory."""
+    """
+    Load JSON from file, with fallback to a backup file and then a default.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the target JSON file.
+    default_factory : Callable[[], dict[str, Any]]
+        Function to produce a default dictionary if no file is found.
+
+    Returns
+    -------
+    dict[str, Any]
+        Loaded JSON data or default.
+    """
     if file_path.exists():
         try:
             with file_path.open("r", encoding="utf-8") as f:
@@ -113,11 +131,13 @@ def safe_load_json(
         except Exception:
             pass
 
+    # Fallback to backup file.
     bak_path = file_path.with_suffix(file_path.suffix + ".bak")
     if bak_path.exists():
         try:
             with bak_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
+            # Restore the backup to the original file.
             safe_save_json(file_path, data)
             return data
         except Exception:
@@ -129,10 +149,15 @@ def safe_load_json(
 # -----------------------------------------------------------------------------
 # State defaults and rollover
 # -----------------------------------------------------------------------------
-
-
 def default_state() -> dict[str, Any]:
-    """Return the default persisted application state."""
+    """
+    Return the default persisted application state.
+
+    Returns
+    -------
+    dict[str, Any]
+        Default state dictionary.
+    """
     return {
         "month": date.today().strftime("%Y-%m"),
         "ift_count_this_month": 0,
@@ -147,10 +172,19 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    """Load persisted state without applying monthly rollover."""
+    """
+    Load persisted state without applying monthly rollover.
+
+    Ensures required keys exist even if the file was modified manually.
+
+    Returns
+    -------
+    dict[str, Any]
+        Current persisted state.
+    """
     state = safe_load_json(STATE_FILE, default_state)
 
-    # Ensure required keys always exist even if the file was manually edited.
+    # Ensure all required keys exist with default values.
     state.setdefault("month", date.today().strftime("%Y-%m"))
     state.setdefault("ift_count_this_month", 0)
     state.setdefault("last_ift_date", None)
@@ -165,7 +199,21 @@ def load_state() -> dict[str, Any]:
 
 
 def roll_state_if_new_month(state: dict[str, Any], today: date) -> dict[str, Any]:
-    """Reset monthly counters and recent history when the month changes."""
+    """
+    Reset monthly counters and recent history when the month changes.
+
+    Parameters
+    ----------
+    state : dict[str, Any]
+        The current persisted state.
+    today : date
+        Today's date used for comparison.
+
+    Returns
+    -------
+    dict[str, Any]
+        Updated state with counters reset if a new month is detected.
+    """
     current_month = today.strftime("%Y-%m")
     if state.get("month") != current_month:
         state["month"] = current_month
@@ -179,12 +227,32 @@ def roll_state_if_new_month(state: dict[str, Any], today: date) -> dict[str, Any
 
 
 def load_state_for_today(today: date) -> dict[str, Any]:
-    """Load state and apply monthly rollover in one step."""
+    """
+    Load state and apply monthly rollover in one step.
+
+    Parameters
+    ----------
+    today : date
+        Current date.
+
+    Returns
+    -------
+    dict[str, Any]
+        State updated with monthly rollover logic.
+    """
     return roll_state_if_new_month(load_state(), today)
 
 
 def save_state(state_data: dict[str, Any]) -> None:
-    """Save state after trimming bounded history lists."""
+    """
+    Save persisted state after trimming history lists to a maximum length.
+
+    Parameters
+    ----------
+    state_data : dict[str, Any]
+        The state dictionary to persist.
+    """
+    # Trim history lists to prevent unbounded growth.
     for key in ("recent_regimes", "recent_scores", "recent_allocations", "recent_run_dates"):
         values = state_data.get(key)
         if isinstance(values, list) and len(values) > MAX_HISTORY_ENTRIES:
@@ -196,10 +264,15 @@ def save_state(state_data: dict[str, Any]) -> None:
 # -----------------------------------------------------------------------------
 # Config defaults and persistence
 # -----------------------------------------------------------------------------
-
-
 def default_config() -> dict[str, Any]:
-    """Build the default config using the neutral allocation from constants."""
+    """
+    Build the default configuration using the neutral allocation from constants.
+
+    Returns
+    -------
+    dict[str, Any]
+        Default configuration settings.
+    """
     neutral_alloc = {
         k: float(v)
         for k, v in BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"].items()
@@ -219,7 +292,14 @@ def default_config() -> dict[str, Any]:
 
 
 def load_config() -> dict[str, Any]:
-    """Load config and overlay it on top of defaults."""
+    """
+    Load configuration from disk and overlay it on top of the defaults.
+
+    Returns
+    -------
+    dict[str, Any]
+        Merged configuration dictionary.
+    """
     base = default_config()
     loaded = safe_load_json(CONFIG_FILE, lambda: {})
     base.update(loaded)
@@ -227,17 +307,29 @@ def load_config() -> dict[str, Any]:
 
 
 def save_config(config_data: dict[str, Any]) -> None:
-    """Persist config to disk."""
+    """
+    Persist configuration to disk.
+
+    Parameters
+    ----------
+    config_data : dict[str, Any]
+        Configuration dictionary to save.
+    """
     safe_save_json(CONFIG_FILE, config_data)
 
 
 # -----------------------------------------------------------------------------
 # CSV append helpers
 # -----------------------------------------------------------------------------
-
-
 def append_log_row(row: dict[str, Any]) -> None:
-    """Append one daily log row to the CSV file."""
+    """
+    Append one daily log row to the CSV file.
+
+    Parameters
+    ----------
+    row : dict[str, Any]
+        A dictionary representing a single row in the daily log.
+    """
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     file_exists = LOG_FILE.exists()
 
@@ -247,6 +339,7 @@ def append_log_row(row: dict[str, Any]) -> None:
             fieldnames=DAILY_LOG_FIELDS,
             extrasaction="ignore",
         )
+        # Write header if CSV is being created.
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
@@ -258,7 +351,20 @@ def append_transaction_row(
     to_alloc: dict[str, float],
     regime: str,
 ) -> None:
-    """Append one confirmed IFT transaction row to the audit CSV."""
+    """
+    Append one confirmed IFT transaction row to the audit CSV.
+
+    Parameters
+    ----------
+    date_str : str
+        ISO-formatted date string for the transaction.
+    from_alloc : dict[str, float]
+        Allocation before the transaction.
+    to_alloc : dict[str, float]
+        Allocation after the transaction.
+    regime : str
+        The regime associated with this transaction.
+    """
     row: dict[str, Any] = {
         "date": date_str,
         "regime": regime,
@@ -283,6 +389,7 @@ def append_transaction_row(
             fieldnames=TRANSACTION_FIELDS,
             extrasaction="ignore",
         )
+        # Write header if file does not exist.
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
