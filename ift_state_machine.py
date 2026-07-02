@@ -21,6 +21,7 @@ from typing import Optional, Dict
 
 from constants import G_MOVE_TOLERANCE_PCT, MONTHLY_IFT_LIMIT
 from storage import append_transaction_row, load_state_for_today, save_state
+from utils import get_est_now
 import logging
 
 # Configure module-level logging for audit purposes.
@@ -34,19 +35,8 @@ def is_pure_g_move(target_alloc: Dict[str, float]) -> bool:
 
     A pure G move means the G Fund is very close to 100% (allowing for a small tolerance)
     and all other funds are near 0%.
-
-    Parameters
-    ----------
-    target_alloc : Dict[str, float]
-        Mapping of fund names to allocation percentages.
-
-    Returns
-    -------
-    bool
-        True if the allocation qualifies as a pure G move, else False.
     """
     g: float = float(target_alloc.get("G", 0.0))
-    # Sum allocations for all funds except the G Fund.
     others: float = sum(float(target_alloc.get(fund, 0.0)) for fund in ("C", "I", "S", "F"))
     return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
 
@@ -74,69 +64,23 @@ class IFTStateMachine:
     """
     Manages IFT state transitions ensuring that any state mutations (transaction logging and state persistence)
     occur only through validated pathways.
-
-    Attributes
-    ----------
-    state : Dict[str, object]
-        The current persistent state.
-    today : date
-        The current business date.
     """
 
     def __init__(self, state: Dict[str, object], today: date) -> None:
-        """
-        Initialize the IFTStateMachine with the provided state and date.
-
-        Parameters
-        ----------
-        state : Dict[str, object]
-            Persistent state loaded from storage.
-        today : date
-            Current date for processing state rollover.
-        """
         self.state: Dict[str, object] = state
         self.today: date = today
 
     @classmethod
     def load(cls, today: date) -> IFTStateMachine:
-        """
-        Load persistent state from disk with month rollover applied.
-
-        Parameters
-        ----------
-        today : date
-            Current date to be used for rollover.
-
-        Returns
-        -------
-        IFTStateMachine
-            An instance with current state data.
-        """
         loaded_state: Dict[str, object] = load_state_for_today(today)
         return cls(loaded_state, today)
 
     @property
     def ift_count_this_month(self) -> int:
-        """
-        Retrieve the count of IFT confirmations used in the current month.
-
-        Returns
-        -------
-        int
-            Monthly IFT confirmation count.
-        """
         return int(self.state.get("ift_count_this_month", 0))
 
     @property
     def last_ift_date(self) -> Optional[date]:
-        """
-        Retrieve the most recent IFT confirmation date.
-
-        Returns
-        -------
-        Optional[date]
-            Last IFT confirmation date if available, otherwise None.
-        """
         raw = self.state.get("last_ift_date")
         if not raw:
             return None
@@ -145,25 +89,14 @@ class IFTStateMachine:
     def can_confirm(self, target_alloc: Dict[str, float]) -> IFTDecision:
         """
         Check if a manual IFT confirmation is permitted based on the target allocation and monthly cap.
-
-        Parameters
-        ----------
-        target_alloc : Dict[str, float]
-            Proposed fund allocation for the IFT.
-
-        Returns
-        -------
-        IFTDecision
-            Preliminary decision (without state mutation) indicating if IFT is allowed.
+        Pure G 'safety' moves are always allowed and do not consume the monthly cap.
         """
-        # If the target allocation qualifies as a pure G move, allow it without consuming monthly cap.
         if is_pure_g_move(target_alloc):
             return IFTDecision(
                 allowed=True,
                 reason="G Fund safety move (does not count toward monthly cap)",
                 is_safety_move=True,
             )
-        # Enforce monthly IFT limit.
         if self.ift_count_this_month >= MONTHLY_IFT_LIMIT:
             return IFTDecision(
                 allowed=False,
@@ -181,23 +114,8 @@ class IFTStateMachine:
         """
         Confirm an IFT submission after ensuring that it is valid.
 
-        Performs idempotency checks, updates state timestamps, logs the transaction, and persists state.
-
-        Parameters
-        ----------
-        current_alloc : Dict[str, float]
-            Current allocation before IFT.
-        target_alloc : Dict[str, float]
-            Proposed allocation for IFT.
-        regime : str
-            Regime name associated with the move.
-        confirmation_key : Optional[str], optional
-            Key to ensure idempotent operations, by default None.
-        
-        Returns
-        -------
-        IFTDecision
-            Outcome of the confirmation action, including persistence flags.
+        Performs idempotency checks, enforces noon cutoff with safety exception,
+        updates state timestamps, logs the transaction, and persists state.
         """
         # Idempotency check: Prevent duplicate confirmations.
         if confirmation_key is not None:
@@ -212,19 +130,31 @@ class IFTStateMachine:
                     state_saved=False,
                 )
 
-        # Check if confirmation is allowed by monthly cap and allocation type.
+        # Hard noon cutoff with safety exception (business days only).
+        # If EST time >= 12:00:00 on Mon–Fri and this is not a pure G move, block confirmation.
+        est_now = get_est_now()
+        is_business_day = est_now.weekday() < 5  # 0=Mon ... 6=Sun
+        if is_business_day and est_now.hour >= 12 and not is_pure_g_move(target_alloc):
+            cutoff_time = est_now.strftime("%I:%M %p")
+            logger.info("Noon cutoff enforced at %s; non-safety IFT blocked.", cutoff_time)
+            return IFTDecision(
+                allowed=False,
+                reason=f"Noon cutoff enforced at {cutoff_time} ET — non-safety IFTs are blocked after 12:00 PM.",
+                is_safety_move=False,
+            )
+
+        # Monthly cap and safety-move eligibility check.
         decision: IFTDecision = self.can_confirm(target_alloc)
         if not decision.allowed:
             return decision
 
-        # Update state with current date stamps.
+        # Update state timestamps.
         self.state["last_ift_date"] = self.today.isoformat()
         self.state["last_run_date"] = self.today.isoformat()
-
         if confirmation_key is not None:
             self.state["last_confirmation_key"] = confirmation_key
 
-        # Handle safety moves (pure G move) which do not increment the monthly count.
+        # Handle safety moves (pure G move): allow and persist without consuming cap or writing a tx row.
         if decision.is_safety_move:
             try:
                 save_state(self.state)
@@ -244,12 +174,10 @@ class IFTStateMachine:
                     is_safety_move=True,
                 )
 
-        # For normal IFT submissions, increment the monthly IFT count.
+        # Normal IFT: increment monthly count and write audit trail.
         self.state["ift_count_this_month"] = self.ift_count_this_month + 1
         transaction_written: bool = False
-
         try:
-            # Append a transaction row to the audit log.
             append_transaction_row(
                 self.today.isoformat(),
                 current_alloc,
@@ -260,7 +188,7 @@ class IFTStateMachine:
             logger.info("Transaction row successfully appended.")
         except Exception as exc:
             logger.error("Transaction log append failed: %s", exc)
-            # Even if logging fails, continue to update state but note the failure.
+            # Continue to state save but report the failure.
             decision = IFTDecision(
                 allowed=True,
                 reason=f"Within monthly IFT allowance (warning: transaction log write failed: {exc})",
@@ -270,7 +198,6 @@ class IFTStateMachine:
             )
 
         try:
-            # Persist the updated state.
             save_state(self.state)
             state_saved: bool = True
             logger.info("State successfully saved after IFT confirmation.")
