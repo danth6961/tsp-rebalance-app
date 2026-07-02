@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from constants import DEFAULTS, THRESHOLDS
 from models import MarketData
@@ -9,6 +10,12 @@ from utils import safe_float
 
 @dataclass(frozen=True)
 class MarketState:
+    """
+    Qualitative abstraction of the raw market snapshot.
+
+    The engine should reason over these human-readable regimes instead of
+    re-evaluating raw indicators directly.
+    """
     inflation: str
     growth: str
     liquidity: str
@@ -20,42 +27,64 @@ class MarketState:
     drawdown: str
     dxy: str
 
-    # Helpful diagnostics for auditability
+    # Raw inputs retained for auditability and diagnostics.
     details: dict[str, float] = field(default_factory=dict)
 
 
 def _bucket(value: float, rules: list[tuple[float, str]], default: str) -> str:
+    """Map a numeric value to a qualitative label using ordered thresholds."""
     for threshold, label in rules:
         if value <= threshold:
             return label
     return default
 
 
-def market_state_from_data(data: MarketData | dict[str, object]) -> MarketState:
+def _get_payload(data: MarketData | dict[str, Any]) -> dict[str, Any]:
+    """Support both MarketData objects and raw dict payloads."""
     if isinstance(data, MarketData):
-        d = data.__dict__
-    else:
-        d = data
+        return data.__dict__
+    return data
 
-    pce = safe_float(d.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
-    breakeven = safe_float(d.get("breakeven_inflation"), DEFAULTS["breakeven_inflation"])
-    pmi = safe_float(d.get("ism_pmi"), DEFAULTS["ism_pmi"])
+
+def market_state_from_data(data: MarketData | dict[str, Any]) -> MarketState:
+    """
+    Translate raw market indicators into qualitative market regimes.
+
+    This layer intentionally performs no allocation logic and no scoring.
+    It only converts raw inputs into a regime vocabulary the engine can use.
+    """
+    d = _get_payload(data)
+
+    core_pce_yoy = safe_float(d.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
+    ism_pmi = safe_float(d.get("ism_pmi"), DEFAULTS["ism_pmi"])
     services_pmi = safe_float(d.get("services_pmi"), DEFAULTS["services_pmi"])
-    claims = safe_float(d.get("initial_claims"), DEFAULTS["initial_claims"])
-    sloos = safe_float(d.get("sloos_net_pct"), DEFAULTS["sloos_net_pct"])
-    fed_assets = safe_float(d.get("fed_assets_growth_yoy"), DEFAULTS["fed_assets_growth_yoy"])
+    initial_claims = safe_float(d.get("initial_claims"), DEFAULTS["initial_claims"])
+    breakeven_inflation = safe_float(d.get("breakeven_inflation"), DEFAULTS["breakeven_inflation"])
+    fed_assets_growth_yoy = safe_float(d.get("fed_assets_growth_yoy"), DEFAULTS["fed_assets_growth_yoy"])
+    real_yield_10y = safe_float(d.get("real_yield_10y"), DEFAULTS["real_yield_10y"])
+    sloos_net_pct = safe_float(d.get("sloos_net_pct"), DEFAULTS["sloos_net_pct"])
     hy_oas = safe_float(d.get("hy_oas"), DEFAULTS["hy_oas"])
-    vix = safe_float(d.get("vix_spot"), DEFAULTS["vix_spot"])
-    stlfsi = safe_float(d.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
-    sma_dist = safe_float(d.get("pct_dist_200_sma"), 0.0)
-    drawdown = safe_float(d.get("drawdown_pct"), 0.0)
-    cape = safe_float(d.get("shiller_cape"), DEFAULTS["shiller_cape"])
-    real_yield = safe_float(d.get("real_yield_10y"), DEFAULTS["real_yield_10y"])
-    curve = safe_float(d.get("treasury_10y_3m_spread"), 0.0)
-    dxy = safe_float(d.get("dxy_spot"), DEFAULTS["dxy_spot"])
+    shiller_cape = safe_float(d.get("shiller_cape"), DEFAULTS["shiller_cape"])
+    vix_spot = safe_float(d.get("vix_spot"), DEFAULTS["vix_spot"])
+    pct_dist_200_sma = safe_float(d.get("pct_dist_200_sma"), 0.0)
+    drawdown_pct = safe_float(d.get("drawdown_pct"), 0.0)
+    stlfsi_index = safe_float(d.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
+    bond_yield_10y = safe_float(d.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
+    bond_yield_3m = safe_float(d.get("bond_yield_3m"), 0.0)
+    dxy_spot = safe_float(d.get("dxy_spot"), DEFAULTS["dxy_spot"])
+    treasury_10y_3m_spread = safe_float(d.get("treasury_10y_3m_spread"), 0.0)
+    inflation_shock = safe_float(d.get("inflation_shock"), 0.0)
+    central_bank_stance = safe_float(d.get("central_bank_stance"), 0.0)
+    liquidity_pressure = safe_float(d.get("liquidity_pressure"), 0.0)
+    market_breadth_pct = safe_float(d.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
+    spx_spot = safe_float(d.get("spx_spot"), DEFAULTS["spx_spot"])
+    move_index = safe_float(d.get("move_index"), DEFAULTS["move_index"])
 
+    # -------------------------------------------------------------------------
+    # Regime translation
+    # -------------------------------------------------------------------------
     inflation = _bucket(
-        pce,
+        core_pce_yoy,
         [
             (THRESHOLDS["inflation_cooling"], "cooling"),
             (THRESHOLDS["inflation_stable"], "stable"),
@@ -63,15 +92,59 @@ def market_state_from_data(data: MarketData | dict[str, object]) -> MarketState:
         ],
         "hot",
     )
-    growth = "expanding" if ((0.2 * pmi) + (0.8 * services_pmi)) >= THRESHOLDS["pmi_flat"] else "contracting"
-    liquidity = "loose" if (sloos <= THRESHOLDS["sloos_neutral"] and fed_assets > THRESHOLDS["fed_assets_expanding"]) else "tight"
+    if inflation_shock > 0.5:
+        inflation = "hot"
+
+    growth_score = 0.2 * ism_pmi + 0.8 * services_pmi
+    if growth_score >= THRESHOLDS["pmi_expanding"]:
+        growth = "expanding"
+    elif growth_score >= THRESHOLDS["pmi_ok"]:
+        growth = "steady"
+    elif growth_score >= THRESHOLDS["pmi_contracting"]:
+        growth = "soft"
+    else:
+        growth = "contracting"
+
+    if initial_claims >= THRESHOLDS["claims_severe_pressure"]:
+        growth = "contracting"
+    elif initial_claims >= THRESHOLDS["claims_mild_pressure"] and growth == "expanding":
+        growth = "steady"
+
+    liquidity = "loose" if sloos_net_pct <= THRESHOLDS["sloos_loose"] else "neutral"
+    if fed_assets_growth_yoy > THRESHOLDS["fed_assets_expanding"]:
+        liquidity = "loose"
+    if liquidity_pressure > 0.5:
+        liquidity = "tight"
+
     credit = "healthy" if hy_oas < THRESHOLDS["hy_spread_stress"] else "stressed"
-    stress = "normal" if vix <= THRESHOLDS["vix_stress"] and stlfsi <= THRESHOLDS["stlfsi_moderate"] else "high"
-    trend = "bullish" if sma_dist >= THRESHOLDS["sma_neutral"] else "bearish"
-    policy = "accommodative" if curve >= THRESHOLDS["curve_inverted"] and real_yield <= 2.2 else "restrictive"
-    valuation = "cheap" if cape < 20 else "fair" if cape <= 25 else "expensive"
-    drawdown_state = "contained" if drawdown < THRESHOLDS["drawdown_elevated"] else "damaged"
-    dxy_state = "strong" if dxy >= THRESHOLDS["dxy_tilt_threshold"] else "normal"
+    if hy_oas >= THRESHOLDS["hy_spread_high_stress"]:
+        credit = "high_stress"
+
+    stress = "normal" if (vix_spot <= THRESHOLDS["vix_stress"] and stlfsi_index <= THRESHOLDS["stlfsi_moderate"]) else "high"
+    if vix_spot >= THRESHOLDS["vix_high_stress"]:
+        stress = "extreme"
+
+    trend = "bullish" if pct_dist_200_sma >= 0.0 else "bearish"
+    if pct_dist_200_sma >= THRESHOLDS["sma_bullish"]:
+        trend = "bullish"
+    elif pct_dist_200_sma <= THRESHOLDS["sma_bearish"]:
+        trend = "bearish"
+    else:
+        trend = "neutral"
+
+    policy = "accommodative" if treasury_10y_3m_spread >= THRESHOLDS["curve_inverted"] and real_yield_10y <= 2.2 else "restrictive"
+    if central_bank_stance <= THRESHOLDS["policy_aggressive"]:
+        policy = "accommodative"
+    elif central_bank_stance >= THRESHOLDS["policy_restrictive"]:
+        policy = "restrictive"
+
+    valuation = "cheap" if shiller_cape < 20 else "fair" if shiller_cape <= 25 else "expensive"
+
+    drawdown = "contained" if drawdown_pct < THRESHOLDS["drawdown_moderate"] else "elevated"
+    if drawdown_pct >= THRESHOLDS["drawdown_severe"]:
+        drawdown = "severe"
+
+    dxy = "strong" if dxy_spot >= THRESHOLDS["dxy_tilt_threshold"] else "normal"
 
     return MarketState(
         inflation=inflation,
@@ -82,24 +155,32 @@ def market_state_from_data(data: MarketData | dict[str, object]) -> MarketState:
         trend=trend,
         policy=policy,
         valuation=valuation,
-        drawdown=drawdown_state,
-        dxy=dxy_state,
+        drawdown=drawdown,
+        dxy=dxy,
         details={
-            "pce": pce,
-            "breakeven": breakeven,
-            "pmi": pmi,
+            "core_pce_yoy": core_pce_yoy,
+            "ism_pmi": ism_pmi,
             "services_pmi": services_pmi,
-            "claims": claims,
-            "sloos": sloos,
-            "fed_assets": fed_assets,
+            "initial_claims": initial_claims,
+            "breakeven_inflation": breakeven_inflation,
+            "fed_assets_growth_yoy": fed_assets_growth_yoy,
+            "real_yield_10y": real_yield_10y,
+            "sloos_net_pct": sloos_net_pct,
             "hy_oas": hy_oas,
-            "vix": vix,
-            "stlfsi": stlfsi,
-            "sma_dist": sma_dist,
-            "drawdown": drawdown,
-            "cape": cape,
-            "real_yield": real_yield,
-            "curve": curve,
-            "dxy": dxy,
+            "shiller_cape": shiller_cape,
+            "vix_spot": vix_spot,
+            "pct_dist_200_sma": pct_dist_200_sma,
+            "drawdown_pct": drawdown_pct,
+            "stlfsi_index": stlfsi_index,
+            "bond_yield_10y": bond_yield_10y,
+            "bond_yield_3m": bond_yield_3m,
+            "dxy_spot": dxy_spot,
+            "treasury_10y_3m_spread": treasury_10y_3m_spread,
+            "inflation_shock": inflation_shock,
+            "central_bank_stance": central_bank_stance,
+            "liquidity_pressure": liquidity_pressure,
+            "market_breadth_pct": market_breadth_pct,
+            "spx_spot": spx_spot,
+            "move_index": move_index,
         },
     )
