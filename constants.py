@@ -1,18 +1,34 @@
 """
+Author: Donald J Anthony
+Date: Today's Date
+
 constants.py — Centralized thresholds, weights, configuration settings, file paths,
 and regime metadata.
 
-This file consolidates all “magic numbers,” storage file names, and regime definitions
-used across the application (data_sources.py, ui.py, storage.py, tests, etc.).
+This module consolidates all "magic numbers," storage file names, and regime definitions
+used across the application (data_sources.py, ui.py, storage.py, tests, etc.). It includes:
+
+    - Baseline regime allocations (percentages)
+    - UI metadata for each regime
+    - Default market input values
+    - Network retry settings for data fetching
+    - Indicator thresholds and piecewise scoring information
+    - Composite score factor weights
+    - File persistence paths
+    - Additional application configuration (e.g. proxies)
+
+TODO:
+    - Consider moving regime-specific settings to a configuration file if further customization is required.
 """
 
 from __future__ import annotations
 from pathlib import Path
+from typing import Any, Dict, List
 
 # ----------------------------
 # Baseline regime allocations (percentages).
 # ----------------------------
-BASELINE_ALLOCATIONS = {
+BASELINE_ALLOCATIONS: Dict[str, Dict[str, float]] = {
     "RISK-ON OVERRIDE": {"G": 30.0, "C": 40.0, "I": 20.0, "S": 10.0, "F": 0.0},
     "OPTIMIZED NEUTRAL": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 10.0, "F": 0.0},
     "DEFENSIVE ALLOCATION": {"G": 70.0, "C": 15.0, "I": 10.0, "S": 5.0, "F": 0.0},
@@ -24,7 +40,7 @@ BASELINE_ALLOCATIONS = {
 # ----------------------------
 # REGIME_DEFINITIONS – additional UI metadata for each regime.
 # ----------------------------
-REGIME_DEFINITIONS = {
+REGIME_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "RISK-ON OVERRIDE": {
         "icon": "🔥",
         "score_label": "High",
@@ -66,7 +82,7 @@ REGIME_DEFINITIONS = {
 # ----------------------------
 # Order of regimes for manual override selections.
 # ----------------------------
-REGIME_ORDER = [
+REGIME_ORDER: List[str] = [
     "RISK-ON OVERRIDE",
     "OPTIMIZED NEUTRAL",
     "DEFENSIVE ALLOCATION",
@@ -76,7 +92,7 @@ REGIME_ORDER = [
 # ----------------------------
 # Default values for missing market inputs.
 # ----------------------------
-DEFAULTS = {
+DEFAULTS: Dict[str, float] = {
     "core_pce_yoy": 2.0,
     "ism_pmi": 50.0,
     "services_pmi": 50.0,
@@ -99,63 +115,64 @@ DEFAULTS = {
 # ----------------------------
 # Retry settings for network calls (used in data_sources.py).
 # ----------------------------
-MAX_RETRIES = 3
-RETRY_SLEEP_SEC = 2
+MAX_RETRIES: int = 3  # Maximum number of allowed retries for network calls.
+RETRY_SLEEP_SEC: int = 2  # Sleep duration (in seconds) between retry attempts.
 
 # ----------------------------
 # Indicator thresholds for piecewise interpolation.
 # ----------------------------
+
 # Inflation (using core PCE YoY)
-INFLATION_BREAKPOINTS = [1.8, 2.0, 2.3, 3.0]
-INFLATION_SCORES = [3.0, 1.0, 0.0, -3.0]
-INFLATION_MIN_SCORE = -5.0
+INFLATION_BREAKPOINTS: List[float] = [1.8, 2.0, 2.3, 3.0]
+INFLATION_SCORES: List[float] = [3.0, 1.0, 0.0, -3.0]
+INFLATION_MIN_SCORE: float = -5.0
 
-# Growth (composite PMI = 0.2 * ism_pmi + 0.8 * services_pmi)
-GROWTH_BREAKPOINTS = [48.0, 50.0, 51.5, 55.0]
-GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]
-GROWTH_MAX_SCORE = 3.0
+# Growth (composite PMI = 0.2 * ISM PMI + 0.8 * Services PMI)
+GROWTH_BREAKPOINTS: List[float] = [48.0, 50.0, 51.5, 55.0]
+GROWTH_SCORES: List[float] = [-5.0, -3.0, 0.0, 1.0]
+GROWTH_MAX_SCORE: float = 3.0
 
-# Liquidity (using sloos_net_pct)
-LIQUIDITY_BREAKPOINTS = [-15.0, 5.0]
-LIQUIDITY_SCORES = [3.0, 0.0]
-LIQUIDITY_MIN_SCORE = -5.0
+# Liquidity (using SLOOS net percentage)
+LIQUIDITY_BREAKPOINTS: List[float] = [-15.0, 5.0]
+LIQUIDITY_SCORES: List[float] = [3.0, 0.0]
+LIQUIDITY_MIN_SCORE: float = -5.0
 
-# Credit spreads (using hy_oas)
-CREDIT_BREAKPOINTS = [3.0, 4.0, 5.0, 6.0]
-CREDIT_SCORES = [3.0, 1.0, 0.0, -3.0]
-CREDIT_MIN_SCORE = -5.0
+# Credit spreads (using HY OAS)
+CREDIT_BREAKPOINTS: List[float] = [3.0, 4.0, 5.0, 6.0]
+CREDIT_SCORES: List[float] = [3.0, 1.0, 0.0, -3.0]
+CREDIT_MIN_SCORE: float = -5.0
 
 # Valuation (using Shiller CAPE with adjustments)
-VALUATION_BREAKPOINTS = [20.0, 25.0]
-VALUATION_MIN_SCORE = -5.0
-BASE_CAPE_CEILING = 30.0
-HIGH_EPS_CAPE_CEILING = 35.0
-REAL_YIELD_THRESHOLD = 2.2
+VALUATION_BREAKPOINTS: List[float] = [20.0, 25.0]
+VALUATION_MIN_SCORE: float = -5.0
+BASE_CAPE_CEILING: float = 30.0
+HIGH_EPS_CAPE_CEILING: float = 35.0
+REAL_YIELD_THRESHOLD: float = 2.2
 
 # Market stress (using VIX)
-STRESS_BREAKPOINTS = [12.0, 15.0, 22.0, 30.0]
-STRESS_SCORES = [3.0, 1.0, 0.0, -3.0]
-STRESS_MIN_SCORE = -5.0
+STRESS_BREAKPOINTS: List[float] = [12.0, 15.0, 22.0, 30.0]
+STRESS_SCORES: List[float] = [3.0, 1.0, 0.0, -3.0]
+STRESS_MIN_SCORE: float = -5.0
 
-# Momentum (using distance to 200SMA)
-MOMENTUM_BREAKPOINTS = [-5.0, 0.0, 5.0]
-MOMENTUM_SCORES = [-5.0, -3.0, 1.0]
-MOMENTUM_MAX_SCORE = 3.0
+# Momentum (using distance to 200-day SMA)
+MOMENTUM_BREAKPOINTS: List[float] = [-5.0, 0.0, 5.0]
+MOMENTUM_SCORES: List[float] = [-5.0, -3.0, 1.0]
+MOMENTUM_MAX_SCORE: float = 3.0
 
 # Drawdown (using percent drawdown)
-DRAWDOWN_BREAKPOINTS = [5.0, 10.0, 15.0, 20.0]
-DRAWDOWN_SCORES = [3.0, 1.0, 0.0, -3.0]
-DRAWDOWN_MIN_SCORE = -5.0
+DRAWDOWN_BREAKPOINTS: List[float] = [5.0, 10.0, 15.0, 20.0]
+DRAWDOWN_SCORES: List[float] = [3.0, 1.0, 0.0, -3.0]
+DRAWDOWN_MIN_SCORE: float = -5.0
 
 # ----------------------------
 # Overlay adjustment cap.
 # ----------------------------
-OVERLAY_ADJUSTMENT_CAP = 2.0
+OVERLAY_ADJUSTMENT_CAP: float = 2.0
 
 # ----------------------------
-# Weights for composite score.
+# Weights for composite score factors.
 # ----------------------------
-FACTOR_WEIGHTS = {
+FACTOR_WEIGHTS: Dict[str, float] = {
     "growth": 2.0,
     "liquidity": 2.0,
     "credit_spreads": 2.0,
@@ -169,27 +186,27 @@ FACTOR_WEIGHTS = {
 # ----------------------------
 # DXY / currency tilt threshold.
 # ----------------------------
-DXY_TILT_THRESHOLD = 103.5
+DXY_TILT_THRESHOLD: float = 103.5
 
 # ----------------------------
 # IFT state machine configuration.
 # ----------------------------
-G_MOVE_TOLERANCE_PCT = 0.5
-MONTHLY_IFT_LIMIT = 2
+G_MOVE_TOLERANCE_PCT: float = 0.5  # Tolerance percentage for fund G movement.
+MONTHLY_IFT_LIMIT: int = 2         # Maximum monthly IFT transactions.
 
 # ----------------------------
 # File paths for persistence.
 # ----------------------------
-CONFIG_FILE = Path("tsp_config.json")
-STATE_FILE = Path("tsp_state.json")
-LOG_FILE = Path("tsp_daily_log.csv")
-TRANSACTION_FILE = Path("tsp_transactions.csv")
+CONFIG_FILE: Path = Path("tsp_config.json")         # Path to the configuration file.
+STATE_FILE: Path = Path("tsp_state.json")            # Path to the state storage file.
+LOG_FILE: Path = Path("tsp_daily_log.csv")           # Path to the daily log file.
+TRANSACTION_FILE: Path = Path("tsp_transactions.csv")  # Path to the transactions record file.
 
 # ----------------------------
-# Additional configuration for app.py.
+# Additional configuration for the main app (app.py).
 # ----------------------------
-# PROXIES: mapping of TSP fund proxy tickers.
-PROXIES = {
+# PROXIES: Mapping of TSP fund proxy tickers for substitution.
+PROXIES: Dict[str, str] = {
     "C": "IVV",    # S&P 500 ETF for C Fund
     "S": "IJR",    # Mid/Small Cap ETF for S Fund
     "I": "ACWX",   # International ETF for I Fund
