@@ -1,10 +1,10 @@
+from __future__ import annotations
 """
 constants.py — Centralized thresholds, weights, configuration settings, file paths,
 and regime metadata.
 
-This file is intended to centralize all "magic numbers," storage file names,
-and regime definitions that are shared across modules such as data_sources.py,
-ui.py, storage.py, and tests.
+This file consolidates all "magic numbers," storage file names, and regime definitions
+that are used across the app (data_sources.py, ui.py, storage.py, tests, etc.)
 """
 
 from pathlib import Path
@@ -95,7 +95,7 @@ DEFAULTS = {
 }
 
 # ----------------------------
-# Retry settings for network calls used in data_sources.py.
+# Retry settings for network calls (used in data_sources.py).
 # ----------------------------
 MAX_RETRIES = 3
 RETRY_SLEEP_SEC = 2
@@ -106,41 +106,41 @@ RETRY_SLEEP_SEC = 2
 # Inflation (based on core PCE YoY)
 INFLATION_BREAKPOINTS = [1.8, 2.0, 2.3, 3.0]
 INFLATION_SCORES = [3.0, 1.0, 0.0, -3.0]
-INFLATION_MIN_SCORE = -5.0  # For pce > 3.0
+INFLATION_MIN_SCORE = -5.0
 
-# Growth (composite PMI: 0.2 * ism_pmi + 0.8 * services_pmi)
+# Growth (composite PMI = 0.2 * ism_pmi + 0.8 * services_pmi)
 GROWTH_BREAKPOINTS = [48.0, 50.0, 51.5, 55.0]
 GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]  # Above 55 we assign 3.0
 GROWTH_MAX_SCORE = 3.0
 
-# Liquidity (using sloos_net_pct as primary driver)
+# Liquidity (using sloos_net_pct)
 LIQUIDITY_BREAKPOINTS = [-15.0, 5.0]
 LIQUIDITY_SCORES = [3.0, 0.0]
-LIQUIDITY_MIN_SCORE = -5.0  # If above 5.0
+LIQUIDITY_MIN_SCORE = -5.0
 
 # Credit spreads (using hy_oas)
 CREDIT_BREAKPOINTS = [3.0, 4.0, 5.0, 6.0]
 CREDIT_SCORES = [3.0, 1.0, 0.0, -3.0]
 CREDIT_MIN_SCORE = -5.0
 
-# Valuation (using shiller_cape with adjustments)
+# Valuation (using Shiller CAPE with adjustments)
 VALUATION_BREAKPOINTS = [20.0, 25.0]
 VALUATION_MIN_SCORE = -5.0
 BASE_CAPE_CEILING = 30.0
 HIGH_EPS_CAPE_CEILING = 35.0
-REAL_YIELD_THRESHOLD = 2.2  # Adjust ceiling based on 10Y real yield
+REAL_YIELD_THRESHOLD = 2.2
 
-# Market stress (using vix_spot)
+# Market stress (using VIX)
 STRESS_BREAKPOINTS = [12.0, 15.0, 22.0, 30.0]
 STRESS_SCORES = [3.0, 1.0, 0.0, -3.0]
 STRESS_MIN_SCORE = -5.0
 
-# Momentum (using percent distance from 200SMA)
+# Momentum (using distance to 200SMA)
 MOMENTUM_BREAKPOINTS = [-5.0, 0.0, 5.0]
-MOMENTUM_SCORES = [-5.0, -3.0, 1.0]  # Above 5 assign 3.0
+MOMENTUM_SCORES = [-5.0, -3.0, 1.0]
 MOMENTUM_MAX_SCORE = 3.0
 
-# Drawdown (using percentage drawdown)
+# Drawdown (using percent drawdown)
 DRAWDOWN_BREAKPOINTS = [5.0, 10.0, 15.0, 20.0]
 DRAWDOWN_SCORES = [3.0, 1.0, 0.0, -3.0]
 DRAWDOWN_MIN_SCORE = -5.0
@@ -167,7 +167,7 @@ FACTOR_WEIGHTS = {
 # ----------------------------
 # DXY / currency tilt threshold.
 # ----------------------------
-# Note: Test expectations require the threshold to be 103.5.
+# Set to 103.5 to match test expectations.
 DXY_TILT_THRESHOLD = 103.5
 
 # ----------------------------
@@ -177,3 +177,15 @@ CONFIG_FILE = Path("tsp_config.json")
 STATE_FILE = Path("tsp_state.json")
 LOG_FILE = Path("tsp_daily_log.csv")
 TRANSACTION_FILE = Path("tsp_transactions.csv")
+
+# ----------------------------
+# Additional configuration required by app.py.
+# ----------------------------
+# PROXIES: mapping of TSP fund proxy tickers.
+PROXIES = {
+    "C": "IVV",   # S&P 500 ETF for C Fund
+    "S": "IJR",   # Mid/Small Cap ETF for S Fund
+    "I": "ACWX",  # International ETF for I Fund
+    "F": "BND",   # Bond ETF for F Fund
+    "G": "GSY",   # Short-term T-Bill ETF for G Fund
+}
