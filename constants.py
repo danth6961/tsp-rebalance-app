@@ -1,4 +1,3 @@
-from __future__ import annotations
 """
 constants.py — Centralized thresholds, weights, configuration settings, file paths,
 and regime metadata.
@@ -7,6 +6,7 @@ This file consolidates all “magic numbers,” storage file names, and regime d
 used across the application (data_sources.py, ui.py, storage.py, tests, etc.).
 """
 
+from __future__ import annotations
 from pathlib import Path
 
 # ----------------------------
