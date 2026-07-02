@@ -191,7 +191,7 @@ When uncertain:
 
 -I do not know how to code. You must write complete, production-ready, drop-in files. Do not give me code snippets or placeholders (like "# implement logic here"). Tell me exactly which file to create and where to paste the code.
 -I am not a financial analyst. The current logic in my code might be flawed, inconsistent, or mathematically messy. Your job is to clean it up and flag any logical flaws you find before fixing them.
--Architecture Validation: The blueprint provided below is based on industry best practices (Separation of Concerns, Abstract State Machines, and Centralized Configurations). Implement this exact blueprint. If you see an opportunity to add standard institutional risk controls or logging that would protect a non-technical user, propose them clearly in plain English before changing the blueprint.
+-Architecture Validation: Create a blueprint based on industry best practices (Separation of Concerns, Abstract State Machines, and Centralized Configurations). Implement this exact blueprint. If you see an opportunity to add standard institutional risk controls or logging that would protect a non-technical user, propose them clearly in plain English before changing the blueprint.
 -Be extremely cautious and collaborative. Do not guess or assume. If you lack context, code files, or clear definitions for any variable, stop immediately and ask me clarifying questions in plain, non-technical English.
 
 ### Refactoring Core Principles & Constraints
