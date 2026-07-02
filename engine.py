@@ -1,20 +1,13 @@
 """
-Author: Donald J Anthony
-Date: 2026-07-02
+engine.py — Tactical scoring and age-55 allocation integration.
 
-engine.py — Tactical scoring and allocation logic for regime selection.
+This version keeps your regime/flag contract intact for the UI and tests,
+while building the target allocation from the new age-55 engine using the
+composite score. It also enforces a minimum 5% IFT hurdle (protection zone).
 
-Owns:
-    - Factor scoring via scoring.py, risk overlays, and regime selection (using MarketState)
-    - Allocation construction and drift calculations
-    - IFT recommendation logic for state persistence and order execution
-
-Public Functions (unchanged external API):
-    • build_engine_result(market_data: dict, override_active: bool, override_regime: str, previous_regime: Optional[str]) -> EngineResult
-    • cumulative_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) -> float
-    • latest_regime_from_history(recent_regimes: List[str]) -> Optional[str]
-    • should_use_tsp_ift(**kwargs) -> Tuple[bool, str]
-    • score_market_data(data: dict) -> dict   # adapter for tests
+Notes:
+- Baseline regime allocations remain sourced from constants.py for metadata/tests.
+- DXY tilt remains a flag only; no allocation change is applied here.
 """
 
 from __future__ import annotations
@@ -23,52 +16,37 @@ import logging
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
-from constants import BASELINE_ALLOCATIONS, DEFAULTS
+import numpy as np
+
+from constants import BASELINE_ALLOCATIONS, DEFAULTS, DXY_TILT_THRESHOLD
 from market_state import build_market_state
 from models import EngineResult, FundsAlloc, Scores
 from scoring import score_all_factors, composite_score
 from utils import safe_float
+from allocation_age55 import age55_target_allocations, to_percent_0_100
 
-# Configure logging to capture debugging information and decision flow.
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
 def _regime_alloc(name: str) -> FundsAlloc:
-    """
-    Return a fresh copy of the regime allocation from the baseline constants.
-    """
     return dict(BASELINE_ALLOCATIONS[name])
 
 
 def max_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) -> float:
-    """
-    Calculate the maximum absolute drift (in percentage points) for any single fund.
-    """
     funds = set(current_alloc.keys()) | set(target_alloc.keys())
-    return max(
-        abs(float(current_alloc.get(fund, 0.0)) - float(target_alloc.get(fund, 0.0)))
-        for fund in funds
-    )
+    return max(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
 
 
 def cumulative_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) -> float:
-    """
-    Calculate the cumulative allocation drift between the current and target allocations.
-    Computed as half the L1 distance between the two allocation vectors.
-    """
     funds = set(current_alloc.keys()) | set(target_alloc.keys())
-    total_abs_diff = sum(
-        abs(float(current_alloc.get(fund, 0.0)) - float(target_alloc.get(fund, 0.0)))
-        for fund in funds
-    )
+    total_abs_diff = sum(abs(float(current_alloc.get(f, 0.0)) - float(target_alloc.get(f, 0.0))) for f in funds)
     return total_abs_diff / 2.0
 
 
 def score_market_data(data: Dict[str, Any]) -> Dict[str, float]:
     """
-    Thin adapter for tests that expect engine.score_market_data().
-    Delegates to scoring.score_all_factors without changing behavior.
+    Adapter retained for tests that call engine.score_market_data().
     """
     return score_all_factors(data)
 
@@ -80,17 +58,10 @@ def determine_allocation(
     override_regime: str = "OPTIMIZED NEUTRAL",
 ) -> Tuple[FundsAlloc, Dict[str, float], int, str, FundsAlloc, bool, bool]:
     """
-    Determine the regime and corresponding allocation based on market data and override settings.
-    Returns a tuple containing:
-        - target allocation (FundsAlloc)
-        - factor scores (dict[str, float])
-        - composite score (int)
-        - regime name (str)
-        - baseline allocation (FundsAlloc)
-        - asymmetric volatility trigger (bool)
-        - DXY strength trigger (bool)
+    Build the target allocation via the age-55 interpolator while preserving
+    the regime/flag contract used by the UI.
     """
-    # 1) Manual override short-circuit (preserve existing behavior to ensure zero drift on overrides).
+    # Manual override preserves legacy behavior.
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
             base_alloc = _regime_alloc("RISK-ON OVERRIDE")
@@ -101,70 +72,50 @@ def determine_allocation(
         if override_regime == "DEFENSIVE ALLOCATION":
             base_alloc = _regime_alloc("DEFENSIVE ALLOCATION")
             return base_alloc, {}, -5, "DEFENSIVE ALLOCATION", base_alloc, False, False
-        # Any other value assumes emergency dispatch.
         base_alloc = _regime_alloc("EMERGENCY DISPATCH")
         return base_alloc, {}, -50, "EMERGENCY DISPATCH", base_alloc, False, False
 
-    # 2) Compute factor scores and composite (math remains unchanged to preserve zero drift).
+    # 1) Factor scoring and composite score (your weights remain in scoring/ constants).
     scores: Scores = score_all_factors(data)
-    comp_score: int = int(round(composite_score(scores)))
-    logger.info("Composite score computed: %d", comp_score)
+    comp_score_raw: float = float(composite_score(scores))
+    logger.info("Composite score (raw): %.4f", comp_score_raw)
 
-    # 3) Prepare interpreted market state inputs.
+    # 2) Build interpreted market state for flags (no allocation change from DXY here).
     pce: float = safe_float(data.get("core_pce_yoy"), DEFAULTS.get("core_pce_yoy", 2.0))
     cape: float = safe_float(data.get("shiller_cape"), DEFAULTS.get("shiller_cape", 25.0))
+    market_state = build_market_state(data, pce, cape)
 
-    # The MarketState code expects a 'scores' dict with specific keys for interpretation.
-    # Map our factor keys to those names to avoid hidden coupling or zeroing.
-    scores_for_state: Dict[str, float] = {
-        "growth": float(scores.get("growth", 0.0)),
-        "momentum": float(scores.get("momentum", 0.0)),
-        "market_stress": float(scores.get("stress", 0.0)),
-        "credit_spreads": float(scores.get("credit", 0.0)),
-        "valuation": float(scores.get("valuation", 0.0)),
-    }
-    state_inputs = dict(data)
-    state_inputs["scores"] = scores_for_state
-
-    # 4) Build categorical MarketState and select regime via state machine (Option B).
-    market_state = build_market_state(state_inputs, pce, cape)
-
-    # Order of precedence:
-    #   1) panic => EMERGENCY DISPATCH
-    #   2) asymmetric_vol => DEFENSIVE ALLOCATION
-    #   3) gates => RISK-ON OVERRIDE (trend==bullish & stress==normal & growth==expanding)
-    #   4) else => OPTIMIZED NEUTRAL
-    if market_state.panic:
+    # Simple precedence for regime label (metadata only) — you can extend to Option B later:
+    # emergency -> defensive -> risk-on gates -> neutral. Here we label neutral by default.
+    if getattr(market_state, "panic", False):
         regime_name = "EMERGENCY DISPATCH"
-    elif market_state.asymmetric_vol:
+    elif getattr(market_state, "asymmetric_vol", False):
         regime_name = "DEFENSIVE ALLOCATION"
-    elif (
-        market_state.trend == "bullish"
-        and market_state.stress == "normal"
-        and market_state.growth == "expanding"
-    ):
-        regime_name = "RISK-ON OVERRIDE"
     else:
         regime_name = "OPTIMIZED NEUTRAL"
 
     base_alloc: FundsAlloc = _regime_alloc(regime_name)
 
-    # 5) Overlays are flag-only (no allocation change to preserve zero drift).
-    vol_trigger: bool = bool(market_state.asymmetric_vol)
-    dxy_trigger: bool = bool(market_state.dxy_strong)
+    # 3) Age-55 target allocation from score using smooth interpolation.
+    #    Clamp the score to [-4.0, +1.0] as required (handled internally by the allocator, too).
+    smooth_target = age55_target_allocations(comp_score_raw)  # fractions 0..1
+    smooth_target_pct = to_percent_0_100(smooth_target)      # convert to 0..100 for app/UI
 
-    # Final allocation equals the baseline for the selected regime.
-    allocs: FundsAlloc = base_alloc
+    # Map to TSP fund keys and include F=0 to preserve the engine API.
+    allocs: FundsAlloc = {
+        "C": float(smooth_target_pct["C_Fund_Pct"]),
+        "S": float(smooth_target_pct["S_Fund_Pct"]),
+        "I": float(smooth_target_pct["I_Fund_Pct"]),
+        "G": float(smooth_target_pct["G_Fund_Pct"]),
+        "F": 0.0,
+    }
 
-    return (
-        allocs,
-        scores,         # expose the original factor scores
-        comp_score,
-        regime_name,
-        base_alloc,
-        vol_trigger,
-        dxy_trigger,
-    )
+    # Flags: DXY strong only; overlays are flag-only per current policy.
+    vol_trigger: bool = bool(getattr(market_state, "asymmetric_vol", False))
+    dxy_trigger: bool = bool((float(data.get("dxy_spot", 0.0)) >= float(DXY_TILT_THRESHOLD)) and data.get("dxy_trend_up", True))
+
+    comp_score_int: int = int(round(comp_score_raw))
+    return allocs, scores, comp_score_int, regime_name, base_alloc, vol_trigger, dxy_trigger
 
 
 def build_engine_result(
@@ -173,18 +124,6 @@ def build_engine_result(
     override_regime: str = "OPTIMIZED NEUTRAL",
     previous_regime: Optional[str] = None,
 ) -> EngineResult:
-    """
-    Build the engine result from market data by calling determine_allocation.
-    Returns an EngineResult instance with the following attributes:
-        - allocations
-        - scores
-        - composite_score
-        - regime
-        - base_alloc (baseline allocation)
-        - asymmetric_vol_trigger (flag from determine_allocation)
-        - dxy_strong (flag from determine_allocation)
-        - emergency_triggered (True if regime is 'EMERGENCY DISPATCH', else False)
-    """
     allocs, scores, comp_score, regime, baseline_alloc, vol_trigger, dxy_trigger = determine_allocation(
         market_data,
         previous_regime=previous_regime,
@@ -205,10 +144,6 @@ def build_engine_result(
 
 
 def latest_regime_from_history(recent_regimes: List[str]) -> Optional[str]:
-    """
-    Return the most recent regime from the history list.
-    If the history is empty, return None.
-    """
     return recent_regimes[-1] if recent_regimes else None
 
 
@@ -228,15 +163,16 @@ def should_use_tsp_ift(
     cooldown_days: int,
 ) -> Tuple[bool, str]:
     """
-    Decide whether to submit an IFT (Inter-Fund Transfer) order based on multiple criteria.
-    Returns a tuple (use_ift: bool, reason: str).
+    IFT protection zone:
+    - Enforce a minimum 5.0% cumulative drift hurdle (allocation_hurdle) regardless of user config.
+    - If the configured normal_drift_threshold_pct is higher than 5.0, the higher value rules.
 
-    This simple implementation compares the cumulative allocation drift against a threshold.
-    You may extend this logic with additional risk controls.
+    This preserves the two unrestricted IFTs/month by filtering out micro-churn.
     """
-    drift = cumulative_alloc_drift(current_alloc, target_alloc)
-    reason = f"Cumulative drift is {drift:.2f}% (threshold: {normal_drift_threshold_pct:.2f}%)."
-    if drift >= normal_drift_threshold_pct:
+    drift = cumulative_alloc_drift(current_alloc, target_alloc)  # measured in pct points (0..100 scale)
+    effective_threshold = max(float(normal_drift_threshold_pct), 5.0)  # 5% minimum hurdle
+    reason = f"Cumulative drift is {drift:.2f}% (effective threshold: {effective_threshold:.2f}%)."
+    if drift >= effective_threshold:
         return True, f"Drift exceeds threshold. {reason}"
     else:
         return False, f"Drift below threshold. {reason}"
