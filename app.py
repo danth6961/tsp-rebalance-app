@@ -1,29 +1,33 @@
 """
+Author: Donald J Anthony
+Date: 2026-07-02
+
 app.py — Streamlit orchestration layer.
 
 Owns:
-- page layout
-- sidebar controls
-- fetch/run flow
-- rendering
-- manual confirmation wiring
+    - Page layout
+    - Sidebar controls
+    - Fetch/run flow
+    - Rendering
+    - Manual confirmation wiring
 
 Does not own:
-- scoring logic
-- persistence internals
-- data acquisition
-- CSS definitions
-- regime definitions
+    - Scoring logic
+    - Persistence internals
+    - Data acquisition
+    - CSS definitions
+    - Regime definitions
 
-Author: Donald J Anthony
-Date: 2026-07-02
+This module sets up the Streamlit page, handles user inputs, fetches market data,
+orchestrates the engine execution, and renders the results. It pulls configuration,
+state, and constants from external modules for a modular architecture.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import date
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -69,11 +73,9 @@ from utils import compute_snapshot_quality, get_est_now
 from validation import validate_market_data
 
 # -----------------------------------------------------------------------------
-# Streamlit page setup
+# Streamlit page configuration and session setup
 # -----------------------------------------------------------------------------
-# NOTE: app.py remains the orchestration layer. Styling should continue to live
-# in styles.py, but a small amount of page bootstrapping must stay here.
-# -----------------------------------------------------------------------------
+
 st.set_page_config(
     page_title="TSP Rebalance Engine",
     page_icon="🏛️",
@@ -82,12 +84,9 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# Session-state configuration
+# Editable market fields for session state.
 # -----------------------------------------------------------------------------
-# These keys represent the editable market snapshot and a few derived / panic
-# fields used by the engine and UI.
-# -----------------------------------------------------------------------------
-EDITABLE_KEYS: list[str] = [
+EDITABLE_KEYS: List[str] = [
     "core_pce_yoy",
     "ism_pmi",
     "services_pmi",
@@ -123,17 +122,26 @@ BOOLEAN_KEYS: set[str] = {"dxy_trend_up"}
 TEXT_KEYS: set[str] = {"dxy_range_regime"}
 
 
-def init_session(cfg: dict[str, Any]) -> None:
-    """Initialize Streamlit session state for editable market inputs."""
-    indicators: list[str] = EDITABLE_KEYS + [
+def init_session(cfg: Dict[str, Any]) -> None:
+    """
+    Initialize Streamlit session state with editable market inputs and related keys.
+
+    The function sets defaults for each indicator in the session state so that
+    user edits persist across Streamlit reruns.
+    
+    Args:
+        cfg (Dict[str, Any]): Configuration dictionary loaded from persistent storage.
+    """
+    # Combine preset editable keys with additional calculated items.
+    indicators: List[str] = EDITABLE_KEYS + [
         "vix_3d_panic",
         "spx_3d_panic",
         "vix_last_3",
         "spx_dist_last_3",
     ]
 
+    # Initialize each indicator only if not already set.
     for key in indicators:
-        # Initialize only once per session so edits persist across reruns.
         if key not in st.session_state:
             if key in {"vix_3d_panic", "spx_3d_panic"}:
                 st.session_state[key] = False
@@ -146,9 +154,11 @@ def init_session(cfg: dict[str, Any]) -> None:
             else:
                 st.session_state[key] = float(cfg.get(key, DEFAULTS.get(key, 0.0)))
 
+        # Set the source for each key if it hasn't been initialized.
         if f"{key}_source" not in st.session_state:
             st.session_state[f"{key}_source"] = "CONFIG/DEFAULT"
 
+    # Initialize additional session state fields.
     st.session_state.setdefault("engine_ran", False)
     st.session_state.setdefault("last_engine_result", None)
     st.session_state.setdefault("live_market_data", {})
@@ -156,15 +166,25 @@ def init_session(cfg: dict[str, Any]) -> None:
     st.session_state.setdefault("market_data_warnings", [])
 
 
-def get_current_market_sources() -> dict[str, str]:
-    """Return the current source label for each editable market field."""
-    source_keys: list[str] = EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]
+def get_current_market_sources() -> Dict[str, str]:
+    """
+    Retrieve the current source labels for all editable market fields.
+
+    Returns:
+        Dict[str, str]: Mapping of market field keys to their assigned source label.
+    """
+    source_keys: List[str] = EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]
     return {key: st.session_state.get(f"{key}_source", "CONFIG/DEFAULT") for key in source_keys}
 
 
-def load_editable_market_data() -> dict[str, Any]:
-    """Build the market-data payload from session state."""
-    market: dict[str, Any] = {}
+def load_editable_market_data() -> Dict[str, Any]:
+    """
+    Assemble the market data payload by reading from the session state.
+
+    Returns:
+        Dict[str, Any]: Dictionary of market indicators, ensuring correct type conversions.
+    """
+    market: Dict[str, Any] = {}
     for key in EDITABLE_KEYS:
         if key in BOOLEAN_KEYS:
             market[key] = bool(st.session_state.get(key, False))
@@ -173,6 +193,7 @@ def load_editable_market_data() -> dict[str, Any]:
         else:
             market[key] = st.session_state.get(key, DEFAULTS.get(key, 0.0))
 
+    # Add additional fields that may not be part of EDITABLE_KEYS.
     market["vix_3d_panic"] = bool(st.session_state.get("vix_3d_panic", False))
     market["spx_3d_panic"] = bool(st.session_state.get("spx_3d_panic", False))
     market["vix_last_3"] = st.session_state.get("vix_last_3", [])
@@ -181,18 +202,23 @@ def load_editable_market_data() -> dict[str, Any]:
 
 
 def _render_market_snapshot_controls() -> None:
-    """Render the editable market snapshot cards."""
+    """
+    Render interactive controls for editing the market snapshot.
+
+    This function lays out the editable cards for each market indicator, applying the
+    same aesthetic styling across all cards.
+    """
     st.markdown("### Market Snapshot")
     st.caption("Editable market inputs with the same card aesthetic.")
 
+    # Render a quality badge to indicate the source quality of current data.
     render_snapshot_quality_badge(
         compute_snapshot_quality(get_current_market_sources()),
         st.session_state.get("engine_ran", False),
     )
 
-    # TODO: consider moving this large label/key mapping to a dedicated config
-    # structure to reduce duplication and make future indicator additions easier.
-    market_edit_items: list[tuple[str, str, str]] = [
+    # Define a mapping for each market indicator to be displayed.
+    market_edit_items: List[Tuple[str, str, str]] = [
         ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
         ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
         ("ISM Services PMI", "services_pmi", st.session_state.get("services_pmi_source")),
@@ -224,6 +250,7 @@ def _render_market_snapshot_controls() -> None:
         ("SPX Spot", "spx_spot", st.session_state.get("spx_spot_source")),
     ]
 
+    # Create a grid of columns (4 per row) to display the cards.
     cols = st.columns(4)
     for i, (label, key, source) in enumerate(market_edit_items):
         with cols[i % 4]:
@@ -241,30 +268,45 @@ def _render_market_snapshot_controls() -> None:
             )
 
 
-def _load_market_snapshot(fred_api_key: str, use_live_macro: bool) -> tuple[dict[str, Any], dict[str, str]]:
-    """Fetch market data, or fall back to defaults if the fetch fails."""
+def _load_market_snapshot(fred_api_key: str, use_live_macro: bool) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """
+    Fetch market data from live sources, or return default values if fetching fails.
+
+    Args:
+        fred_api_key (str): API key for live data access.
+        use_live_macro (bool): Flag to determine whether to use live macro data.
+
+    Returns:
+        Tuple[Dict[str, Any], Dict[str, str]]: A tuple containing the market data and the data sources.
+    """
     try:
-        snapshot = get_market_snapshot(fred_api_key if use_live_macro else "")
-        fetched_data = snapshot["market_data"]
-        fetched_sources = snapshot["market_sources"]
+        # Attempt to fetch live market snapshot using FRED key if instructed.
+        snapshot: Dict[str, Any] = get_market_snapshot(fred_api_key if use_live_macro else "")
+        fetched_data: Dict[str, Any] = snapshot["market_data"]
+        fetched_sources: Dict[str, str] = snapshot["market_sources"]
     except Exception:
-        # TODO: replace broad exception handling with a narrower application-
-        # specific exception type once the data layer exposes one.
+        # Fall back to default values if any error occurs.
         fetched_data = {k: DEFAULTS.get(k, 0.0) for k in DEFAULTS.keys()}
         fetched_data["vix_3d_panic"] = False
         fetched_data["spx_3d_panic"] = False
         fetched_data["vix_last_3"] = []
         fetched_data["spx_dist_last_3"] = []
         fetched_sources = {k: "CONFIG/DEFAULT" for k in fetched_data.keys()}
-
     return fetched_data, fetched_sources
 
 
-def _sync_session_with_snapshot(fetched_data: dict[str, Any], fetched_sources: dict[str, str]) -> None:
-    """Sync the fetched market snapshot into Streamlit session state."""
+def _sync_session_with_snapshot(fetched_data: Dict[str, Any], fetched_sources: Dict[str, str]) -> None:
+    """
+    Sync the fetched market snapshot into the Streamlit session state.
+
+    Args:
+        fetched_data (Dict[str, Any]): Market indicator values fetched.
+        fetched_sources (Dict[str, str]): Data source labels for each market indicator.
+    """
     st.session_state["live_market_data"] = fetched_data
     st.session_state["live_market_sources"] = fetched_sources
 
+    # Sync individual editable keys.
     for key in EDITABLE_KEYS:
         if key in BOOLEAN_KEYS:
             st.session_state[key] = bool(fetched_data.get(key, False))
@@ -274,6 +316,7 @@ def _sync_session_with_snapshot(fetched_data: dict[str, Any], fetched_sources: d
             st.session_state[key] = float(fetched_data.get(key, DEFAULTS.get(key, 0.0)))
         st.session_state[f"{key}_source"] = fetched_sources.get(key, "CONFIG/DEFAULT")
 
+    # Sync additional fields that are not in EDITABLE_KEYS.
     st.session_state["vix_3d_panic"] = bool(fetched_data.get("vix_3d_panic", False))
     st.session_state["spx_3d_panic"] = bool(fetched_data.get("spx_3d_panic", False))
     st.session_state["vix_last_3"] = fetched_data.get("vix_last_3", [])
@@ -285,12 +328,26 @@ def _build_snapshot_log_row(
     today: date,
     action: str,
     reason: str,
-    state: dict[str, Any],
-    current_alloc: dict[str, float],
+    state: Dict[str, Any],
+    current_alloc: Dict[str, float],
     result: Any,
-    market_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Build the row written to the daily run log."""
+    market_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Construct the log row to be appended to the daily run log file.
+
+    Args:
+        today (date): The current run date.
+        action (str): The action taken (e.g., "SUBMIT IFT" or "HOLD").
+        reason (str): The reason for the chosen action.
+        state (Dict[str, Any]): The current state of the engine.
+        current_alloc (Dict[str, float]): The current allocation percentages.
+        result (Any): The result from the engine execution that contains regime and scores.
+        market_data (Dict[str, Any]): The market snapshot used.
+
+    Returns:
+        Dict[str, Any]: Log row ready for CSV persistence.
+    """
     return {
         "date": today.isoformat(),
         "action": action,
@@ -307,36 +364,83 @@ def _build_snapshot_log_row(
 
 
 def main() -> None:
-    """Main Streamlit entrypoint."""
+    """
+    Main entrypoint for the Streamlit application.
+
+    This function orchestrates the following:
+        - Injecting custom styles.
+        - Loading configuration and state.
+        - Initializing session state.
+        - Defining sidebar controls for configuration and manual override.
+        - Fetching and syncing live market data.
+        - Executing the engine to compute current regime, scores, and allocation drift.
+        - Rendering the metrics, historical charts, and logs.
+    """
     inject_styles()
 
-    cfg: dict[str, Any] = load_config()
+    # Load persistent configuration and current state.
+    cfg: Dict[str, Any] = load_config()
     today: date = date.today()
-    state: dict[str, Any] = load_state_for_today(today)
+    state: Dict[str, Any] = load_state_for_today(today)
     init_session(cfg)
 
+    # ---------------------------
     # Sidebar controls
+    # ---------------------------
     with st.sidebar:
         st.markdown("## 🏛️ TSP Rebalance Engine")
 
+        # Current allocation editing control.
         with st.expander("💼 Current Allocation", expanded=False):
-            neutral = BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"]
+            neutral: Dict[str, float] = BASELINE_ALLOCATIONS["OPTIMIZED NEUTRAL"]
             st.caption(
                 "Startup allocation is set to the tactical neutral baseline: "
                 f"G {neutral['G']} / C {neutral['C']} / I {neutral['I']} / S {neutral['S']} / F {neutral['F']}."
             )
-            current_alloc: dict[str, float] = {
-                "G": st.number_input("G Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["G"]), step=1.0),
-                "C": st.number_input("C Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["C"]), step=1.0),
-                "I": st.number_input("I Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["I"]), step=1.0),
-                "S": st.number_input("S Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["S"]), step=1.0),
-                "F": st.number_input("F Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["F"]), step=1.0),
+            current_alloc: Dict[str, float] = {
+                "G": st.number_input(
+                    "G Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["G"]),
+                    step=1.0,
+                ),
+                "C": st.number_input(
+                    "C Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["C"]),
+                    step=1.0,
+                ),
+                "I": st.number_input(
+                    "I Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["I"]),
+                    step=1.0,
+                ),
+                "S": st.number_input(
+                    "S Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["S"]),
+                    step=1.0,
+                ),
+                "F": st.number_input(
+                    "F Fund %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cfg["current_alloc"]["F"]),
+                    step=1.0,
+                ),
             }
 
+        # Warn if the current allocation does not sum to 100%
         total_alloc: float = sum(current_alloc.values())
         if abs(total_alloc - 100.0) > 0.5:
             st.warning(f"Current allocation totals {total_alloc:.1f}%. Expected 100.0%.")
 
+        # Rules and live macro-data controls.
         with st.expander("🛡️ Rules", expanded=False):
             allow_second_ift: bool = st.checkbox("Allow second IFT", value=bool(cfg["allow_second_ift"]))
             normal_drift_threshold_pct: float = st.number_input(
@@ -361,34 +465,33 @@ def main() -> None:
             )
             use_live_macro: bool = st.checkbox("Use live macro data", value=bool(cfg["use_live_macro"]))
 
+        # Manual override controls.
         with st.expander("🛠️ Manual Override", expanded=False):
             manual_override_enabled: bool = st.checkbox(
-                "Enable manual override",
-                value=bool(cfg["manual_override_enabled"]),
+                "Enable manual override", value=bool(cfg["manual_override_enabled"])
             )
-            manual_regime_default = str(cfg.get("manual_regime", "OPTIMIZED NEUTRAL"))
-            manual_regime_index = REGIME_ORDER.index(manual_regime_default) if manual_regime_default in REGIME_ORDER else 1
+            manual_regime_default: str = str(cfg.get("manual_regime", "OPTIMIZED NEUTRAL"))
+            manual_regime_index: int = (
+                REGIME_ORDER.index(manual_regime_default) if manual_regime_default in REGIME_ORDER else 1
+            )
             manual_regime: str = st.selectbox("Override regime", REGIME_ORDER, index=manual_regime_index)
 
         st.divider()
         fred_api_key: str = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
         st.divider()
-        confirm_clicked: bool = st.button(
-            "✅ Submit IFT",
-            use_container_width=True,
-            disabled=not st.session_state.get("engine_ran", False),
-        )
+        confirm_clicked: bool = st.button("✅ Submit IFT", use_container_width=True, disabled=not st.session_state.get("engine_ran", False))
         st.divider()
         save_clicked: bool = st.button("💾 Save Config", use_container_width=True)
         reset_state_clicked: bool = st.button("♻️ Reset State", use_container_width=True)
         clear_logs_clicked: bool = st.button("🗑️ Clear Log File", use_container_width=True)
         clear_tx_clicked: bool = st.button("🗑️ Clear Audit Trail", use_container_width=True)
-
         st.divider()
         run_clicked: bool = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
 
+    # ---------------------------
     # Sidebar action handlers
+    # ---------------------------
     if save_clicked:
         cfg["current_alloc"] = current_alloc
         cfg["allow_second_ift"] = allow_second_ift
@@ -401,9 +504,9 @@ def main() -> None:
         cfg["manual_regime"] = manual_regime
         cfg["fred_api_key"] = fred_api_key
 
+        # Save each editable market variable from session state into config.
         for key in EDITABLE_KEYS:
             cfg[key] = st.session_state.get(key, DEFAULTS.get(key, 0.0))
-
         save_config(cfg)
         st.sidebar.success("Config saved.")
         st.rerun()
@@ -436,16 +539,19 @@ def main() -> None:
             TRANSACTION_FILE.unlink()
         st.rerun()
 
-    # Fetch/run flow
+    # ---------------------------
+    # Fetch and run the engine flow
+    # ---------------------------
     if run_clicked:
         with st.spinner("Connecting to live feeds..."):
             fetched_data, fetched_sources = _load_market_snapshot(fred_api_key, bool(use_live_macro))
             _sync_session_with_snapshot(fetched_data, fetched_sources)
 
-        market_data: dict[str, Any] = load_editable_market_data()
-        range_warnings: list[str] = validate_market_data(market_data)
+        market_data: Dict[str, Any] = load_editable_market_data()
+        range_warnings: List[str] = validate_market_data(market_data)
         st.session_state["market_data_warnings"] = range_warnings
 
+        # Build engine result based on live market data and override settings.
         result = build_engine_result(
             market_data,
             override_active=bool(manual_override_enabled),
@@ -454,8 +560,10 @@ def main() -> None:
         )
         st.session_state["last_engine_result"] = result
 
-        last_ift_date = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
+        # Determine last IFT date if available.
+        last_ift_date: Any = date.fromisoformat(state["last_ift_date"]) if state.get("last_ift_date") else None
 
+        # Decide whether to submit an IFT based on drift and other criteria.
         use_ift, reason = should_use_tsp_ift(
             today=today,
             current_alloc=current_alloc,
@@ -472,8 +580,9 @@ def main() -> None:
             cooldown_days=int(cooldown_days),
         )
 
-        action = "SUBMIT IFT" if use_ift else "HOLD"
+        action: str = "SUBMIT IFT" if use_ift else "HOLD"
 
+        # Update state history with the latest engine result.
         state.setdefault("recent_regimes", [])
         state.setdefault("recent_scores", [])
         state.setdefault("recent_allocations", [])
@@ -498,9 +607,12 @@ def main() -> None:
             )
         )
 
-    # Current result used by render path
+    # ---------------------------
+    # Rendering flow: Prepare current result and render display components.
+    # ---------------------------
     market_data = load_editable_market_data()
     result = st.session_state.get("last_engine_result")
+    # Build an engine result if one is not available in the session state.
     if result is None:
         result = build_engine_result(
             market_data,
@@ -527,8 +639,9 @@ def main() -> None:
     )
     action = "SUBMIT IFT" if use_ift else "HOLD"
 
+    # Confirm IFT submission if the corresponding button is clicked.
     if confirm_clicked:
-        machine = IFTStateMachine.load(today)
+        machine: IFTStateMachine = IFTStateMachine.load(today)
         decision = machine.confirm(
             current_alloc=current_alloc,
             target_alloc=result.allocations,
@@ -541,7 +654,7 @@ def main() -> None:
             st.sidebar.warning(decision.reason)
         st.rerun()
 
-    # Main display
+    # Render the top-level metric cards.
     render_metric_cards(
         result.composite_score,
         result.regime,
@@ -550,12 +663,16 @@ def main() -> None:
         reason,
     )
 
+    # Define layout tabs for different visualization components.
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         ["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"]
     )
 
+    # ---------------------------
+    # Tab 1: Allocation and regime overview.
+    # ---------------------------
     with tab1:
-        est_now = get_est_now()
+        est_now: datetime = get_est_now()
         if est_now.hour >= 12:
             st.warning(f"⚠️ Noon cutoff exceeded. Current time: {est_now.strftime('%I:%M %p')}")
         else:
@@ -566,7 +683,7 @@ def main() -> None:
                 f"🛠️ Regime Lock Active: engine is bypassed; allocations are locked to {cfg.get('manual_regime')}."
             )
 
-        cum_drift = cumulative_alloc_drift(current_alloc, result.allocations)
+        cum_drift: float = cumulative_alloc_drift(current_alloc, result.allocations)
         st.markdown("### 🎚️ Portfolio Drift Runway")
         c1, c2 = st.columns([1, 3])
         with c1:
@@ -586,12 +703,19 @@ def main() -> None:
             )
 
         st.markdown("### Allocation Comparison")
-        st.dataframe(make_alloc_chart(result.allocations, current_alloc), use_container_width=True, hide_index=True)
+        st.dataframe(
+            make_alloc_chart(result.allocations, current_alloc),
+            use_container_width=True,
+            hide_index=True,
+        )
         render_regime_cards(result.regime)
 
+    # ---------------------------
+    # Tab 2: Factor Scores and breakdown.
+    # ---------------------------
     with tab2:
         st.markdown("### Factor Scores")
-        factor_items: list[dict[str, Any]] = []
+        factor_items: List[Dict[str, Any]] = []
         for key, label in [
             ("inflation", "Inflation"),
             ("growth", "Growth"),
@@ -618,6 +742,7 @@ def main() -> None:
             )
         render_tile_grid(factor_items, columns=4)
 
+        # Render the market snapshot controls within Tab 2.
         _render_market_snapshot_controls()
 
         render_decision_breakdown(
@@ -635,6 +760,9 @@ def main() -> None:
             score_change_threshold=int(score_change_threshold),
         )
 
+    # ---------------------------
+    # Tab 3: Proxy charts for TSP funds.
+    # ---------------------------
     with tab3:
         st.markdown("### Live TSP Fund Proxy Price Tracking")
         st.write("Proxy ETFs are used because TSP funds do not have direct tickers.")
@@ -649,6 +777,7 @@ def main() -> None:
             "G Fund (T-Bills)",
         ]
 
+        # Show YTD returns for each proxy in the sidebar.
         for idx, (fund_label, ticker) in enumerate(PROXIES.items()):
             with ytd_cols[idx]:
                 ytd_val = fetch_ytd_return(ticker)
@@ -668,7 +797,7 @@ def main() -> None:
             )
 
         ticker = PROXIES[fund_selected]
-        period_map: dict[str, str] = {
+        period_map: Dict[str, str] = {
             "1 Month": "1mo",
             "3 Months": "3mo",
             "6 Months": "6mo",
@@ -677,13 +806,15 @@ def main() -> None:
             "10 Years": "10y",
         }
         proxy_df = get_cached_proxy_df(ticker, period_map[timeframe_selected])
-
         if not proxy_df.empty:
             with col_chart_2:
                 st.line_chart(proxy_df.set_index("Date")["Price"])
         else:
             st.error(f"Failed to fetch market data for proxy ticker: {ticker}.")
 
+    # ---------------------------
+    # Tab 4: Historical score chart.
+    # ---------------------------
     with tab4:
         st.markdown("### Score History")
         score_df = make_score_chart(state)
@@ -692,6 +823,9 @@ def main() -> None:
         else:
             st.info("No score history yet.")
 
+    # ---------------------------
+    # Tab 5: Logs, recent state, and audit trail.
+    # ---------------------------
     with tab5:
         st.markdown("### Recent State Overview")
         recent_state_cards(state)
@@ -750,10 +884,7 @@ def main() -> None:
                     data=json.dumps(
                         {
                             "market_data": market_data,
-                            "market_sources": {
-                                k: st.session_state.get(f"{k}_source")
-                                for k in market_data.keys()
-                            },
+                            "market_sources": {k: st.session_state.get(f"{k}_source") for k in market_data.keys()},
                             "factor_scores": result.scores,
                             "regime": result.regime,
                             "total_score": result.composite_score,
