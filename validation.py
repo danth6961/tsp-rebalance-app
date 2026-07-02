@@ -1,54 +1,72 @@
 """
-validation.py — domain-range validation for market inputs.
+Author: Donald J Anthony
+Date: Today's Date
+
+validation.py — Domain-range validation for market inputs.
 
 Owns plausibility checks only. This module answers whether a value is
 plausible, not whether it is numeric.
 
-Warnings are returned as data, not raised as exceptions.
+Warnings are returned as data (strings), not raised as exceptions.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, List
 
 from constants import REGIME_DEFINITIONS
 
 
 # -----------------------------------------------------------------------------
-# Validation result contract
-# -----------------------------------------------------------------------------
-# A structured warning is more useful than a raw string when the UI or logger
-# wants to display, filter, or group validation issues.
+# Validation Result Contract
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ValidationWarning:
-    """Structured warning emitted by validation helpers."""
+    """
+    Structured warning emitted by validation helpers.
 
+    Attributes
+    ----------
+    field : str
+        The field name that the warning is associated with.
+    message : str
+        Explanation of the warning.
+    severity : str
+        Level of severity (e.g., "info", "warning", or "error").
+    """
     field: str
     message: str
-    severity: str = "warning"  # "info", "warning", or "error"
+    severity: str = "warning"
 
 
 # -----------------------------------------------------------------------------
-# Range validation contract
-# -----------------------------------------------------------------------------
-# Each rule describes a plausible range for one market input.
-# These ranges are intentionally wide so they catch broken feeds and unit errors
-# without suppressing valid tail-risk market conditions.
+# Range Validation Contract
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class RangeRule:
-    """Plausible range for one market input field."""
+    """
+    Plausible range for one market input field.
 
+    Attributes
+    ----------
+    field : str
+        The market input field name.
+    lo : float
+        Lower bound for plausibility.
+    hi : float
+        Upper bound for plausibility.
+    rationale : str
+        Explanation of why this range is chosen.
+    """
     field: str
     lo: float
     hi: float
     rationale: str
 
 
-# Wide bands catch bad inputs and broken scrapers, not normal market extremes.
-# Genuine tail-risk readings should still pass through.
+# Wide bands catch broken feeds and unit errors without filtering out
+# genuine tail-risk market conditions.
 RANGE_RULES: tuple[RangeRule, ...] = (
     RangeRule(
         "vix_spot",
@@ -132,26 +150,24 @@ RANGE_RULES: tuple[RangeRule, ...] = (
 
 
 # -----------------------------------------------------------------------------
-# Market validation
+# Market Validation Functions
 # -----------------------------------------------------------------------------
-# The goal here is to identify suspicious inputs, not to reject all volatility.
-# Real market extremes should usually be allowed through, especially in stress.
-# -----------------------------------------------------------------------------
-
-
 def validate_market_data(data: dict[str, Any]) -> list[str]:
-    """Return warnings for market fields outside plausible ranges.
+    """
+    Return a list of warning messages for market fields outside plausible ranges.
+
+    Checks that each field in the provided market snapshot is within its defined range.
+    Non-numeric values generate warnings instead of exceptions.
 
     Parameters
     ----------
-    data:
-        Raw or normalized market snapshot. Non-numeric values are warned on
-        rather than raising exceptions.
+    data : dict[str, Any]
+        Raw or normalized market snapshot.
 
     Returns
     -------
     list[str]
-        Human-readable warning messages.
+        List of human-readable warning messages.
     """
     warnings: list[str] = []
 
@@ -168,6 +184,7 @@ def validate_market_data(data: dict[str, Any]) -> list[str]:
             )
             continue
 
+        # Generate warning if the value is out of the acceptable range.
         if not (rule.lo <= value <= rule.hi):
             warnings.append(
                 f"{rule.field}: {value:g} is outside the plausible range "
@@ -178,30 +195,28 @@ def validate_market_data(data: dict[str, Any]) -> list[str]:
 
 
 # -----------------------------------------------------------------------------
-# Allocation validation
+# Allocation Validation Functions
 # -----------------------------------------------------------------------------
-# Regime allocations should sum to approximately 100%, with a small tolerance
-# for rounding drift after normalization.
-# -----------------------------------------------------------------------------
-
-
 def validate_allocation_sums_to_100(
     alloc: dict[str, float],
     tolerance_pct: float = 0.5,
 ) -> list[str]:
-    """Return a warning if an allocation does not sum to ~100%.
+    """
+    Return warnings if an allocation does not sum to approximately 100%.
+
+    Allows a small tolerance to handle rounding drift after normalization.
 
     Parameters
     ----------
-    alloc:
-        Allocation mapping, typically G/C/I/S/F weights.
-    tolerance_pct:
-        Acceptable absolute deviation from 100.0.
+    alloc : dict[str, float]
+        Allocation mapping, typically fund percentages for G, C, I, S, and F.
+    tolerance_pct : float, optional
+        Acceptable absolute deviation from 100.0, by default 0.5.
 
     Returns
     -------
     list[str]
-        Empty if valid, otherwise a single warning message.
+        Empty list if valid; otherwise, a list containing one warning message.
     """
     total = sum(float(v) for v in alloc.values())
     if abs(total - 100.0) > tolerance_pct:
@@ -213,9 +228,22 @@ def validate_allocation_keys(
     alloc: dict[str, float],
     expected_keys: tuple[str, ...] = ("G", "C", "I", "S", "F"),
 ) -> list[str]:
-    """Check that an allocation contains the expected fund keys.
+    """
+    Check that an allocation contains the expected fund keys.
 
-    This is useful for catching malformed configs or partial writes.
+    This helps identify malformed configurations or partial data.
+
+    Parameters
+    ----------
+    alloc : dict[str, float]
+        Allocation mapping.
+    expected_keys : tuple[str, ...], optional
+        Expected fund keys, by default ("G", "C", "I", "S", "F").
+
+    Returns
+    -------
+    list[str]
+        Warning messages for missing or extra keys.
     """
     missing = [key for key in expected_keys if key not in alloc]
     extra = [key for key in alloc.keys() if key not in expected_keys]
@@ -229,23 +257,28 @@ def validate_allocation_keys(
 
 
 # -----------------------------------------------------------------------------
-# Snapshot quality validation
+# Snapshot Quality Validation
 # -----------------------------------------------------------------------------
-# These helpers are intentionally lightweight. They can be extended later to
-# evaluate freshness, fallback usage, and confidence metadata.
-# -----------------------------------------------------------------------------
-
-
 def validate_snapshot_quality(snapshot: dict[str, Any]) -> list[str]:
-    """Validate basic snapshot quality flags.
+    """
+    Validate basic snapshot quality flags.
 
     Expected optional fields:
-    - source_quality
-    - is_fallback
-    - freshness_days
+      - source_quality
+      - is_fallback
+      - freshness_days
 
-    This function is deliberately permissive: it warns if these fields exist
-    and look suspicious, but it does not require them.
+    The function warns if these fields exist and appear suspicious, but does not mandate them.
+
+    Parameters
+    ----------
+    snapshot : dict[str, Any]
+        Snapshot dictionary which may include quality metrics.
+
+    Returns
+    -------
+    list[str]
+        List of warning messages.
     """
     warnings: list[str] = []
 
@@ -272,15 +305,20 @@ def validate_snapshot_quality(snapshot: dict[str, Any]) -> list[str]:
 
 
 # -----------------------------------------------------------------------------
-# Regime definition validation
+# Regime Definition Validation
 # -----------------------------------------------------------------------------
-# This is a lightweight structural check to make sure regime cards still carry
-# the metadata expected by the UI and tests.
-# -----------------------------------------------------------------------------
-
-
 def validate_regime_definitions() -> list[str]:
-    """Validate that regime definitions include the expected UI fields."""
+    """
+    Validate that regime definitions include the expected UI fields.
+
+    This lightweight check ensures that each regime in REGIME_DEFINITIONS contains
+    all metadata keys required by the UI.
+
+    Returns
+    -------
+    list[str]
+        List of warning messages for regimes missing required fields.
+    """
     required_keys = {"icon", "score_label", "profile", "allocation", "description", "color", "bg"}
     warnings: list[str] = []
 
