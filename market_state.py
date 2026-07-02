@@ -11,10 +11,9 @@ from utils import safe_float
 @dataclass(frozen=True)
 class MarketState:
     """
-    Qualitative abstraction of the raw market snapshot.
+    Qualitative abstraction of a raw market snapshot.
 
-    The engine should reason over these human-readable regimes instead of
-    re-evaluating raw indicators directly.
+    Engine logic should reason over these regimes rather than raw indicators.
     """
     inflation: str
     growth: str
@@ -26,32 +25,23 @@ class MarketState:
     valuation: str
     drawdown: str
     dxy: str
-
-    # Raw inputs retained for auditability and diagnostics.
     details: dict[str, float] = field(default_factory=dict)
 
 
+def _get_payload(data: MarketData | dict[str, Any]) -> dict[str, Any]:
+    return data.__dict__ if isinstance(data, MarketData) else data
+
+
 def _bucket(value: float, rules: list[tuple[float, str]], default: str) -> str:
-    """Map a numeric value to a qualitative label using ordered thresholds."""
     for threshold, label in rules:
         if value <= threshold:
             return label
     return default
 
 
-def _get_payload(data: MarketData | dict[str, Any]) -> dict[str, Any]:
-    """Support both MarketData objects and raw dict payloads."""
-    if isinstance(data, MarketData):
-        return data.__dict__
-    return data
-
-
 def market_state_from_data(data: MarketData | dict[str, Any]) -> MarketState:
     """
-    Translate raw market indicators into qualitative market regimes.
-
-    This layer intentionally performs no allocation logic and no scoring.
-    It only converts raw inputs into a regime vocabulary the engine can use.
+    Translate raw market inputs into qualitative regimes.
     """
     d = _get_payload(data)
 
@@ -69,20 +59,12 @@ def market_state_from_data(data: MarketData | dict[str, Any]) -> MarketState:
     pct_dist_200_sma = safe_float(d.get("pct_dist_200_sma"), 0.0)
     drawdown_pct = safe_float(d.get("drawdown_pct"), 0.0)
     stlfsi_index = safe_float(d.get("stlfsi_index"), DEFAULTS["stlfsi_index"])
-    bond_yield_10y = safe_float(d.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
-    bond_yield_3m = safe_float(d.get("bond_yield_3m"), 0.0)
     dxy_spot = safe_float(d.get("dxy_spot"), DEFAULTS["dxy_spot"])
     treasury_10y_3m_spread = safe_float(d.get("treasury_10y_3m_spread"), 0.0)
     inflation_shock = safe_float(d.get("inflation_shock"), 0.0)
     central_bank_stance = safe_float(d.get("central_bank_stance"), 0.0)
     liquidity_pressure = safe_float(d.get("liquidity_pressure"), 0.0)
-    market_breadth_pct = safe_float(d.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
-    spx_spot = safe_float(d.get("spx_spot"), DEFAULTS["spx_spot"])
-    move_index = safe_float(d.get("move_index"), DEFAULTS["move_index"])
 
-    # -------------------------------------------------------------------------
-    # Regime translation
-    # -------------------------------------------------------------------------
     inflation = _bucket(
         core_pce_yoy,
         [
@@ -124,7 +106,7 @@ def market_state_from_data(data: MarketData | dict[str, Any]) -> MarketState:
     if vix_spot >= THRESHOLDS["vix_high_stress"]:
         stress = "extreme"
 
-    trend = "bullish" if pct_dist_200_sma >= 0.0 else "bearish"
+    trend = "bullish" if pct_dist_200_sma >= THRESHOLDS["sma_neutral"] else "bearish"
     if pct_dist_200_sma >= THRESHOLDS["sma_bullish"]:
         trend = "bullish"
     elif pct_dist_200_sma <= THRESHOLDS["sma_bearish"]:
@@ -139,7 +121,6 @@ def market_state_from_data(data: MarketData | dict[str, Any]) -> MarketState:
         policy = "restrictive"
 
     valuation = "cheap" if shiller_cape < 20 else "fair" if shiller_cape <= 25 else "expensive"
-
     drawdown = "contained" if drawdown_pct < THRESHOLDS["drawdown_moderate"] else "elevated"
     if drawdown_pct >= THRESHOLDS["drawdown_severe"]:
         drawdown = "severe"
@@ -172,15 +153,10 @@ def market_state_from_data(data: MarketData | dict[str, Any]) -> MarketState:
             "pct_dist_200_sma": pct_dist_200_sma,
             "drawdown_pct": drawdown_pct,
             "stlfsi_index": stlfsi_index,
-            "bond_yield_10y": bond_yield_10y,
-            "bond_yield_3m": bond_yield_3m,
             "dxy_spot": dxy_spot,
             "treasury_10y_3m_spread": treasury_10y_3m_spread,
             "inflation_shock": inflation_shock,
             "central_bank_stance": central_bank_stance,
             "liquidity_pressure": liquidity_pressure,
-            "market_breadth_pct": market_breadth_pct,
-            "spx_spot": spx_spot,
-            "move_index": move_index,
         },
     )
