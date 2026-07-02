@@ -167,8 +167,13 @@ FACTOR_WEIGHTS = {
 # ----------------------------
 # DXY / currency tilt threshold.
 # ----------------------------
-# Set to 103.5 to match test expectations.
 DXY_TILT_THRESHOLD = 103.5
+
+# ----------------------------
+# IFT state machine configuration.
+# ----------------------------
+G_MOVE_TOLERANCE_PCT = 0.5
+MONTHLY_IFT_LIMIT = 2
 
 # ----------------------------
 # File paths for persistence.
@@ -179,13 +184,13 @@ LOG_FILE = Path("tsp_daily_log.csv")
 TRANSACTION_FILE = Path("tsp_transactions.csv")
 
 # ----------------------------
-# Additional configuration required by app.py.
+# Additional configuration for app.py.
 # ----------------------------
 # PROXIES: mapping of TSP fund proxy tickers.
 PROXIES = {
-    "C": "IVV",   # S&P 500 ETF for C Fund
-    "S": "IJR",   # Mid/Small Cap ETF for S Fund
-    "I": "ACWX",  # International ETF for I Fund
-    "F": "BND",   # Bond ETF for F Fund
-    "G": "GSY",   # Short-term T-Bill ETF for G Fund
+    "C": "IVV",
+    "S": "IJR",
+    "I": "ACWX",
+    "F": "BND",
+    "G": "GSY",
 }
