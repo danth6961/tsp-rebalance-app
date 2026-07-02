@@ -23,7 +23,7 @@ The app analyzes market and macro inputs, scores the current environment, maps t
 
 ## Current Tactical Allocation Model
 
-The current baseline regime targets are defined in `constants.py` and should be treated as the source of truth for regime allocations. This is reinforced by the consistency tests, which verify alignment across the engine, UI, validation layer, and IFT state machine  
+The current baseline regime targets must be defined in `constants.py` and should be treated as the source of truth for regime allocations. T  
 
 ### Risk-On Override
 - G: 30%
@@ -66,20 +66,6 @@ The F Fund is treated as a conditional overlay only. It is added only when the e
 
 The codebase is split into clear modules so that decision logic, persistence, presentation, and styling do not drift into one another.
 
-### Core logic
-- `engine.py` — factor scoring, regime selection, allocation logic, and IFT recommendation logic
-- `data_sources.py` — market and macro data acquisition
-- `validation.py` — input and allocation validation
-- `ift_state_machine.py` — monthly IFT rule enforcement and pure-G safety handling
-- `storage.py` — config, state, and CSV persistence
-- `constants.py` — shared defaults, paths, thresholds, regime definitions
-- `models.py` — typed data models
-- `utils.py` — general helper functions
-
-### Presentation
-- `ui.py` — reusable Streamlit display helpers
-- `styles.py` — CSS and visual tokens
-
 ### Application entrypoint
 - `app.py` — Streamlit app orchestration and UI wiring
 
@@ -96,7 +82,7 @@ The codebase is split into clear modules so that decision logic, persistence, pr
 9. The result is logged locally.
 10. Manual confirmation updates the transaction state.
 
-## Data Inputs Used by the Engine
+## Possible Data Inputs Used by the Engine
 
 The scoring engine uses inputs such as:
 - Core PCE YoY
