@@ -1,21 +1,56 @@
+"""
+Author: Donald J Anthony
+Date: Today's Date
+
+data_sources.py — Module responsible for fetching market and economic data from various external providers.
+
+Provides:
+    - Functions to fetch data from FRED, DBNomics, Trading Economics, Yahoo Finance, Multpl.com, and Barchart.
+    - Helper functions for computing derived market overlays and snapshot indicators.
+    - Caching utilities and retry logic for robust network operations.
+
+NOTE:
+    Some functions use broad exception handling for simplicity.
+    Consider using more specific exception types in a production environment.
+"""
+
+from __future__ import annotations
+
 import json
-import urllib.request
-import urllib.parse
 import re
-from datetime import datetime
+import time
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Optional, Any, List, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-import yfinance as yf
 import streamlit as st
+import yfinance as yf
 from bs4 import BeautifulSoup
 
 from constants import DEFAULTS, MAX_RETRIES, RETRY_SLEEP_SEC
 from utils import clean_and_parse_float
 
 
-def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kwargs):
+def retry_call(func: Any, *args: Any, retries: int = MAX_RETRIES, sleep_sec: int = RETRY_SLEEP_SEC, **kwargs: Any) -> Any:
+    """
+    Execute a function and retry if an exception occurs.
+
+    Args:
+        func: The function to call.
+        *args: Positional arguments for the function.
+        retries (int): Maximum number of retries.
+        sleep_sec (int): Seconds to sleep between retries.
+        **kwargs: Keyword arguments for the function.
+
+    Returns:
+        Any: The result of the function if successful.
+
+    Raises:
+        Exception: The last exception raised if all retries fail.
+    """
     last_err = None
     for attempt in range(retries):
         try:
@@ -23,15 +58,29 @@ def retry_call(func, *args, retries=MAX_RETRIES, sleep_sec=RETRY_SLEEP_SEC, **kw
         except Exception as e:
             last_err = e
             if attempt < retries - 1:
-                import time
                 time.sleep(sleep_sec)
     raise last_err
 
 
 def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tuple[str, float]]:
+    """
+    Fetch data points from FRED via API.
+
+    Args:
+        series_id (str): The FRED series identifier.
+        api_key (str): API key required to access FRED data.
+        limit (int): Maximum number of data points to fetch.
+
+    Returns:
+        List[Tuple[str, float]]: A list of tuples with date and value.
+    """
     if not api_key:
         return []
-    url = f"https://api.stlouisfed.org/fred/series/observations?series_id={urllib.parse.quote(series_id)}&api_key={urllib.parse.quote(api_key)}&file_type=json&sort_order=desc&limit={limit}"
+    url = (
+        f"https://api.stlouisfed.org/fred/series/observations?"
+        f"series_id={urllib.parse.quote(series_id)}&api_key={urllib.parse.quote(api_key)}"
+        f"&file_type=json&sort_order=desc&limit={limit}"
+    )
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         req = urllib.request.Request(url, headers=headers)
@@ -50,6 +99,15 @@ def fetch_via_fred_api(series_id: str, api_key: str, limit: int = 1) -> List[Tup
 
 
 def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
+    """
+    Fetch data points from DBNomics API.
+
+    Args:
+        series_id (str): The series identifier.
+
+    Returns:
+        List[Tuple[str, float]]: A list of tuples with date and value.
+    """
     url = f"https://api.db.nomics.world/v22/series/FRED/FRED/{urllib.parse.quote(series_id)}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -73,13 +131,23 @@ def fetch_from_dbnomics(series_id: str) -> List[Tuple[str, float]]:
 
 
 def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
+    """
+    Fetch the latest data point from FRED using API or fallback options.
+
+    Args:
+        series_id (str): The FRED series identifier.
+        api_key (Optional[str]): API key for FRED.
+
+    Returns:
+        Optional[float]: The latest data value or None if unavailable.
+    """
     if api_key:
         try:
             data_points = fetch_via_fred_api(series_id, api_key, limit=5)
             if data_points:
                 return data_points[-1][1]
         except Exception:
-            pass
+            pass  # Fallback to alternative source
 
     try:
         data_points = fetch_from_dbnomics(series_id)
@@ -88,7 +156,7 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
     except Exception:
         pass
 
-    def _load_fred():
+    def _load_fred() -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -109,6 +177,17 @@ def fetch_fred_latest(series_id: str, api_key: Optional[str] = None) -> Optional
 
 
 def fetch_fred_series_latest_points(series_id: str, api_key: Optional[str] = None, limit: int = 10) -> List[Tuple[str, float]]:
+    """
+    Fetch the latest N points of a FRED series.
+
+    Args:
+        series_id (str): The FRED series identifier.
+        api_key (Optional[str]): API key for FRED.
+        limit (int): Number of latest points to return.
+
+    Returns:
+        List[Tuple[str, float]]: A list of data point tuples.
+    """
     if api_key:
         try:
             pts = fetch_via_fred_api(series_id, api_key, limit=limit)
@@ -124,7 +203,7 @@ def fetch_fred_series_latest_points(series_id: str, api_key: Optional[str] = Non
     except Exception:
         pass
 
-    def _load():
+    def _load() -> List[Tuple[str, float]]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id={urllib.parse.quote(series_id)}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -133,11 +212,11 @@ def fetch_fred_series_latest_points(series_id: str, api_key: Optional[str] = Non
         if df.empty or len(df.columns) < 2:
             return []
         value_col = df.columns[1]
-        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
-        if series.empty:
+        series_data = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if series_data.empty:
             return []
         result = []
-        tail = series.tail(limit)
+        tail = series_data.tail(limit)
         for idx, val in tail.items():
             result.append((str(idx), float(val)))
         return result
@@ -149,6 +228,15 @@ def fetch_fred_series_latest_points(series_id: str, api_key: Optional[str] = Non
 
 
 def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
+    """
+    Fetch the year-over-year percentage change in the Core PCE Price Index.
+
+    Args:
+        api_key (Optional[str]): API key for FRED.
+
+    Returns:
+        Optional[float]: Yield percentage value or None if not available.
+    """
     def calc_yoy(points: List[Tuple[str, float]]) -> Optional[float]:
         if len(points) < 13:
             return None
@@ -173,7 +261,7 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
     except Exception:
         pass
 
-    def _load_fred_yoy():
+    def _load_fred_yoy() -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=PCEPILFE"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -182,11 +270,11 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
         if df.empty or len(df.columns) < 2:
             return None
         value_col = df.columns[1]
-        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
-        if len(series) < 13:
+        series_data = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if len(series_data) < 13:
             return None
-        latest_val = float(series.iloc[-1])
-        past_val = float(series.iloc[-13])
+        latest_val = float(series_data.iloc[-1])
+        past_val = float(series_data.iloc[-13])
         return round(((latest_val - past_val) / past_val) * 100.0, 2)
 
     try:
@@ -196,6 +284,15 @@ def fetch_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
 
 
 def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float]:
+    """
+    Fetch the year-over-year growth rate of Fed assets.
+
+    Args:
+        api_key (Optional[str]): API key for FRED.
+
+    Returns:
+        Optional[float]: The calculated growth rate percentage or None.
+    """
     def calc_yoy(points: List[Tuple[str, float]]) -> Optional[float]:
         if len(points) < 53:
             return None
@@ -220,7 +317,7 @@ def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float
     except Exception:
         pass
 
-    def _load():
+    def _load() -> Optional[float]:
         base_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
         url = f"{base_url}?id=WALCL"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -229,11 +326,11 @@ def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float
         if df.empty or len(df.columns) < 2:
             return None
         value_col = df.columns[1]
-        series = pd.to_numeric(df[value_col], errors="coerce").dropna()
-        if len(series) < 53:
+        series_data = pd.to_numeric(df[value_col], errors="coerce").dropna()
+        if len(series_data) < 53:
             return None
-        latest_val = float(series.iloc[-1])
-        past_val = float(series.iloc[-53])
+        latest_val = float(series_data.iloc[-1])
+        past_val = float(series_data.iloc[-53])
         return round(((latest_val - past_val) / past_val) * 100.0, 2)
 
     try:
@@ -243,28 +340,34 @@ def fetch_fed_assets_yoy_growth(api_key: Optional[str] = None) -> Optional[float
 
 
 def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
-    results = {"core_pce_yoy": None, "ism_pmi": None, "services_pmi": None}
+    """
+    Extract key economic indicators from the Trading Economics HTML content.
+
+    Args:
+        html (str): HTML content from the Trading Economics indicators page.
+
+    Returns:
+        Dict[str, Optional[float]]: A dictionary with keys "core_pce_yoy", "ism_pmi", "services_pmi".
+    """
+    results: Dict[str, Optional[float]] = {"core_pce_yoy": None, "ism_pmi": None, "services_pmi": None}
 
     try:
+        # Attempt to parse tables from HTML
         dfs = pd.read_html(html)
         for df in dfs:
             if df.empty or len(df.columns) < 2:
                 continue
-
             col_name = df.columns[0]
             for _, row in df.iterrows():
                 indicator_text = str(row[col_name]).strip()
-
                 if "Core PCE Price Index" in indicator_text:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["core_pce_yoy"] = val
-
                 if "ISM Manufacturing PMI" in indicator_text or "Manufacturing PMI" in indicator_text:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
                         results["ism_pmi"] = val
-
                 if "ISM Services PMI" in indicator_text or "Services PMI" in indicator_text:
                     val = clean_and_parse_float(row.iloc[1])
                     if val is not None:
@@ -273,9 +376,9 @@ def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
         pass
 
     try:
+        # Fallback: Use BeautifulSoup to search in plain text
         soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True)
-
         if results["ism_pmi"] is None:
             for label in ["ISM Manufacturing PMI", "Manufacturing PMI"]:
                 if label in text:
@@ -283,7 +386,6 @@ def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
                     if match:
                         results["ism_pmi"] = clean_and_parse_float(match.group(1))
                         break
-
         if results["services_pmi"] is None:
             for label in ["ISM Services PMI", "Services PMI"]:
                 if label in text:
@@ -291,7 +393,6 @@ def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
                     if match:
                         results["services_pmi"] = clean_and_parse_float(match.group(1))
                         break
-
         if results["core_pce_yoy"] is None and "Core PCE Price Index" in text:
             match = re.search(r"Core PCE Price Index.*?([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
             if match:
@@ -303,6 +404,12 @@ def _extract_te_indicator_from_html(html: str) -> Dict[str, Optional[float]]:
 
 
 def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
+    """
+    Fetch core economic indicators from the Trading Economics indicators page.
+
+    Returns:
+        Dict[str, Optional[float]]: Dictionary with indicator keys and their float values.
+    """
     url = "https://tradingeconomics.com/united-states/indicators"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
     try:
@@ -315,7 +422,13 @@ def fetch_indicators_from_te_indicators_page() -> Dict[str, Optional[float]]:
 
 
 def fetch_shiller_cape_live() -> Optional[float]:
-    def _load():
+    """
+    Fetch the current Shiller CAPE value from Multpl.com.
+
+    Returns:
+        Optional[float]: The Shiller CAPE ratio or None if not available.
+    """
+    def _load() -> Optional[float]:
         url = "https://www.multpl.com/shiller-pe"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -335,7 +448,13 @@ def fetch_shiller_cape_live() -> Optional[float]:
 
 
 def fetch_multpl_earnings_growth() -> Optional[float]:
-    def _load():
+    """
+    Fetch the S&P 500 earnings growth rate from Multpl.com.
+
+    Returns:
+        Optional[float]: The percentage growth rate or None.
+    """
+    def _load() -> Optional[float]:
         url = "https://www.multpl.com/s-p-500-earnings-growth"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -357,6 +476,12 @@ def fetch_multpl_earnings_growth() -> Optional[float]:
 
 
 def fetch_barchart_s5th_fallback() -> Optional[float]:
+    """
+    Fallback method to fetch the S5TH value from Barchart.
+
+    Returns:
+        Optional[float]: The price value or None.
+    """
     url = "https://www.barchart.com/stocks/quotes/$S5TH"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -379,7 +504,18 @@ def fetch_barchart_s5th_fallback() -> Optional[float]:
 
 
 def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d") -> List[float]:
-    def _load():
+    """
+    Fetch historical closing prices for a ticker using yfinance.
+
+    Args:
+        ticker (str): Stock or index ticker.
+        period (str): Time period (e.g., "1y").
+        interval (str): Data interval (e.g., "1d").
+
+    Returns:
+        List[float]: List of closing prices.
+    """
+    def _load() -> List[float]:
         df = yf.download(
             ticker,
             period=period,
@@ -408,7 +544,17 @@ def fetch_yfinance_closes(ticker: str, period: str = "1y", interval: str = "1d")
 
 
 def fetch_yfinance_dataframe(ticker: str, period: str = "1y") -> pd.DataFrame:
-    def _load():
+    """
+    Download historical data for a ticker and return a DataFrame with Date and Price.
+
+    Args:
+        ticker (str): Stock or index ticker.
+        period (str): Time period (e.g., "1y").
+
+    Returns:
+        pd.DataFrame: DataFrame containing Date and Price columns.
+    """
+    def _load() -> pd.DataFrame:
         df = yf.download(
             ticker,
             period=period,
@@ -442,7 +588,16 @@ def fetch_yfinance_dataframe(ticker: str, period: str = "1y") -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def calc_spx_metrics_from_closes(closes: List[float]):
+def calc_spx_metrics_from_closes(closes: List[float]) -> Tuple[float, float, float]:
+    """
+    Calculate SPX metrics: % distance from 200-day SMA, drawdown percentage, and current SPX spot.
+
+    Args:
+        closes (List[float]): List of SPX closing prices.
+
+    Returns:
+        Tuple[float, float, float]: (distance from SMA, drawdown %, current SPX spot)
+    """
     if len(closes) < 200:
         return 0.0, 0.0, 0.0
     current_spot = closes[-1]
@@ -454,6 +609,15 @@ def calc_spx_metrics_from_closes(closes: List[float]):
 
 
 def derive_macro_overlays(market: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Derive macro overlay metrics from the market snapshot.
+
+    Args:
+        market (Dict[str, Any]): Market data dictionary with various indicators.
+
+    Returns:
+        Dict[str, float]: Derived overlay metrics including treasury spread, inflation shock, etc.
+    """
     pce = clean_and_parse_float(market.get("core_pce_yoy")) or DEFAULTS["core_pce_yoy"]
     fed_assets = clean_and_parse_float(market.get("fed_assets_growth_yoy")) or DEFAULTS["fed_assets_growth_yoy"]
     real_yield = clean_and_parse_float(market.get("real_yield_10y")) or DEFAULTS["real_yield_10y"]
@@ -463,10 +627,8 @@ def derive_macro_overlays(market: Dict[str, Any]) -> Dict[str, float]:
 
     bond_yield_10y = clean_and_parse_float(market.get("bond_yield_10y")) or DEFAULTS["bond_yield_10y"]
     bond_yield_3m = clean_and_parse_float(market.get("bond_yield_3m"))
-
     if bond_yield_3m is None:
         bond_yield_3m = fetch_fred_latest("DGS3MO", market.get("fred_api_key"))
-
     if bond_yield_3m is not None:
         treasury_10y_3m_spread = round(bond_yield_10y - bond_yield_3m, 3)
     else:
@@ -506,6 +668,15 @@ def derive_macro_overlays(market: Dict[str, Any]) -> Dict[str, float]:
 
 
 def derive_dxy_overlay(dxy_closes: List[float]) -> Dict[str, Any]:
+    """
+    Derive DXY-related overlays from historical DXY closing prices.
+
+    Args:
+        dxy_closes (List[float]): List of DXY closing prices.
+
+    Returns:
+        Dict[str, Any]: A dictionary with DXY SMA values, trend status, and regime.
+    """
     if not dxy_closes:
         return {
             "dxy_sma_5": 0.0,
@@ -513,12 +684,10 @@ def derive_dxy_overlay(dxy_closes: List[float]) -> Dict[str, Any]:
             "dxy_trend_up": False,
             "dxy_range_regime": "UNKNOWN",
         }
-
     latest = float(dxy_closes[-1])
     sma_5 = sum(dxy_closes[-5:]) / min(len(dxy_closes), 5)
     sma_20 = sum(dxy_closes[-20:]) / min(len(dxy_closes), 20)
     trend_up = sma_5 > sma_20
-
     if latest < 95:
         regime = "WEAK"
     elif latest < 101:
@@ -529,7 +698,6 @@ def derive_dxy_overlay(dxy_closes: List[float]) -> Dict[str, Any]:
         regime = "VERY STRONG"
     else:
         regime = "EXTREME"
-
     return {
         "dxy_sma_5": round(sma_5, 2),
         "dxy_sma_20": round(sma_20, 2),
@@ -540,51 +708,133 @@ def derive_dxy_overlay(dxy_closes: List[float]) -> Dict[str, Any]:
 
 @st.cache_data(ttl=3600)
 def cached_fred(series_id: str, api_key: Optional[str] = None) -> Optional[float]:
+    """
+    Cached fetch for the latest FRED series value.
+
+    Args:
+        series_id (str): FRED series identifier.
+        api_key (Optional[str]): API key for FRED.
+
+    Returns:
+        Optional[float]: Latest value or None.
+    """
     return fetch_fred_latest(series_id, api_key)
 
 
 @st.cache_data(ttl=3600)
 def cached_fred_core_pce_yoy(api_key: Optional[str] = None) -> Optional[float]:
+    """
+    Cached fetch for Core PCE YoY from FRED.
+
+    Args:
+        api_key (Optional[str]): API key for FRED.
+
+    Returns:
+        Optional[float]: Latest Core PCE YoY value.
+    """
     return fetch_fred_core_pce_yoy(api_key)
 
 
 @st.cache_data(ttl=3600)
 def cached_fred_fed_assets_yoy(api_key: Optional[str] = None) -> Optional[float]:
+    """
+    Cached fetch for Fed Assets YoY growth.
+
+    Args:
+        api_key (Optional[str]): API key for FRED.
+
+    Returns:
+        Optional[float]: Growth percentage.
+    """
     return fetch_fed_assets_yoy_growth(api_key)
 
 
 @st.cache_data(ttl=3600)
 def get_te_live_data() -> Dict[str, Optional[float]]:
+    """
+    Cached fetch for live indicators from Trading Economics.
+
+    Returns:
+        Dict[str, Optional[float]]: Dictionary of indicators.
+    """
     return fetch_indicators_from_te_indicators_page()
 
 
 @st.cache_data(ttl=3600)
 def cached_shiller_cape_live() -> Optional[float]:
+    """
+    Cached fetch for the live Shiller CAPE ratio.
+
+    Returns:
+        Optional[float]: Shiller CAPE value.
+    """
     return fetch_shiller_cape_live()
 
 
 @st.cache_data(ttl=3600)
 def cached_barchart_s5th() -> Optional[float]:
+    """
+    Cached fallback fetch for S5TH via Barchart.
+
+    Returns:
+        Optional[float]: S5TH price.
+    """
     return fetch_barchart_s5th_fallback()
 
 
 @st.cache_data(ttl=3600)
 def cached_multpl_earnings_growth() -> Optional[float]:
+    """
+    Cached fetch for S&P 500 earnings growth from Multpl.com.
+
+    Returns:
+        Optional[float]: Earnings growth percentage.
+    """
     return fetch_multpl_earnings_growth()
 
 
 @st.cache_data(ttl=3600)
 def cached_yahoo_closes(ticker: str, period: str, interval: str) -> List[float]:
+    """
+    Cached fetch for historical closing prices from Yahoo Finance.
+
+    Args:
+        ticker (str): Ticker symbol.
+        period (str): Time period.
+        interval (str): Data interval.
+
+    Returns:
+        List[float]: List of closing prices.
+    """
     return fetch_yfinance_closes(ticker, period=period, interval=interval)
 
 
 @st.cache_data(ttl=3600)
 def get_cached_proxy_df(ticker: str, period: str) -> pd.DataFrame:
+    """
+    Cached fetch for a dataframe of proxy prices from Yahoo Finance.
+
+    Args:
+        ticker (str): Proxy ticker.
+        period (str): Time period.
+
+    Returns:
+        pd.DataFrame: DataFrame with Date and Price.
+    """
     return fetch_yfinance_dataframe(ticker, period)
 
 
 @st.cache_data(ttl=3600)
 def fetch_ytd_return(ticker: str) -> Optional[float]:
+    """
+    Cached fetch for the Year-To-Date return for a given ticker.
+
+    Args:
+        ticker (str): Proxy ticker.
+
+    Returns:
+        Optional[float]: YTD return percentage or None.
+    """
     df = get_cached_proxy_df(ticker, "1y")
     if df.empty:
         return None
@@ -599,8 +849,18 @@ def fetch_ytd_return(ticker: str) -> Optional[float]:
 
 @st.cache_data(ttl=3600)
 def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Fetch a complete market snapshot, aggregating various sources.
+
+    Args:
+        api_key (Optional[str]): API key for FRED live data.
+
+    Returns:
+        Dict[str, Any]: A dictionary with "market_data" and "market_sources".
+    """
     results: Dict[str, Any] = {}
 
+    # Use a ThreadPool to fetch multiple data sources concurrently.
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {
             executor.submit(cached_fred, "DRTSCIS", api_key): "sloos_val",
@@ -632,6 +892,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
             except Exception:
                 results[key] = None
 
+    # Extract the fetched time series data.
     vix_closes = results.get("vix_closes") or []
     dxy_closes = results.get("dxy_closes") or []
     spx_closes = results.get("spx_closes") or []
@@ -666,11 +927,6 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     final_real_yield = results.get("real_yield_10y_val") if results.get("real_yield_10y_val") is not None else DEFAULTS["real_yield_10y"]
     final_move = move_closes[-1] if move_closes else DEFAULTS["move_index"]
 
-    # Previously this field was hardcoded to the static default regardless
-    # of use_live_macro, meaning fetch_multpl_earnings_growth() was dead
-    # code and the CAPE-ceiling adjustment in engine.py's valuation scoring
-    # was permanently anchored to a stale assumption. Now it's fetched live
-    # like the other snapshot fields, with the same live/fallback pattern.
     fwd_eps_live = results.get("fwd_eps_val")
     final_fwd_eps = fwd_eps_live if fwd_eps_live is not None else DEFAULTS["fwd_eps_growth_yoy"]
     fwd_eps_source = "LIVE (Multpl.com Earnings Growth)" if fwd_eps_live is not None else "CONFIG/DEFAULT"
@@ -698,7 +954,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
     vix_last_3 = [round(x, 2) for x in vix_closes[-3:]] if len(vix_closes) >= 3 else []
 
     spx_3d_panic = False
-    spx_dist_last_3 = []
+    spx_dist_last_3: List[float] = []
     if len(spx_closes) >= 202:
         sma_0 = sum(spx_closes[-200:]) / 200.0
         dist_0 = ((spx_closes[-1] - sma_0) / sma_0) * 100.0
@@ -709,7 +965,7 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         spx_dist_last_3 = [round(dist_2, 2), round(dist_1, 2), round(dist_0, 2)]
         spx_3d_panic = all(x <= -5.0 for x in [dist_2, dist_1, dist_0])
 
-    market_data = {
+    market_data: Dict[str, Any] = {
         "core_pce_yoy": final_pce,
         "ism_pmi": final_pmi,
         "services_pmi": final_services,
@@ -738,10 +994,11 @@ def get_market_snapshot(api_key: Optional[str] = None) -> Dict[str, Any]:
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
 
+    # Update with derived overlays.
     market_data.update(derive_macro_overlays(market_data))
     market_data.update(derive_dxy_overlay(dxy_closes))
 
-    market_sources = {
+    market_sources: Dict[str, str] = {
         "core_pce_yoy": pce_source,
         "ism_pmi": "LIVE (Trading Economics)" if te_pmi is not None else "CONFIG/DEFAULT",
         "services_pmi": "LIVE (Trading Economics)" if te_services is not None else "CONFIG/DEFAULT",
