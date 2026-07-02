@@ -81,7 +81,7 @@ def determine_allocation(
 
     # Compute continuous factor scores
     scores = score_all_factors(data)
-    comp_score = composite_score(scores)
+    comp_score = int(round(composite_score(scores)))
 
     # For some overlays and regime logic, also extract raw values.
     pce = safe_float(data.get("core_pce_yoy"),  DEFAULTS["core_pce_yoy"] if "core_pce_yoy" in DEFAULTS else 2.0)
