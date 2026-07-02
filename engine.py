@@ -107,7 +107,7 @@ def determine_allocation(
 
     # Build market state from raw data.
     market_state = build_market_state(data, pce, cape)
-    # For this example, we use the 'dxy' field of market_state to decide the regime.
+    # Use the 'dxy' field of market_state to decide the regime.
     regime_name: str = market_state.dxy
     logger.info("Market state returned regime (%s)", regime_name)
 
@@ -150,6 +150,9 @@ def build_engine_result(
         - scores
         - composite_score
         - regime
+        - base_alloc (baseline allocation)
+        - asymmetric_vol_trigger (flag from determine_allocation)
+        - dxy_strong (flag from determine_allocation)
         - emergency_triggered (True if regime is 'EMERGENCY DISPATCH', else False)
     """
     allocs, scores, comp_score, regime, baseline_alloc, vol_trigger, dxy_trigger = determine_allocation(
@@ -164,6 +167,9 @@ def build_engine_result(
         scores=scores,
         composite_score=comp_score,
         regime=regime,
+        base_alloc=baseline_alloc,
+        asymmetric_vol_trigger=vol_trigger,
+        dxy_strong=dxy_trigger,
         emergency_triggered=emergency_triggered,
     )
 
