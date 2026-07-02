@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 ui.py — Presentation helpers for Streamlit rendering.
 
@@ -9,6 +7,7 @@ Owns:
 - This updated version ensures that numbers (including each factor’s score) are
   displayed rounded to two decimal places for clarity.
 """
+from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
