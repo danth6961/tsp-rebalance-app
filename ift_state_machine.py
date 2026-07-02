@@ -1,22 +1,26 @@
 """
+Author: Donald J Anthony
+Date: Today's Date
+
 ift_state_machine.py — Single-writer IFT state management.
 
 Owns:
-- IFT eligibility checks
-- Monthly cap enforcement and idempotency confirmation
-- Persistent audit logging for state mutations
+    - IFT eligibility checks
+    - Monthly cap enforcement and idempotency confirmation
+    - Persistent audit logging for state mutations
 
 Note:
-This module intentionally does not own scoring logic, UI rendering, or data fetching.
+    This module intentionally does not own scoring logic, UI rendering, or data fetching.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Dict
 
-from storage import append_transaction_row, load_state_for_today, save_state
 from constants import G_MOVE_TOLERANCE_PCT, MONTHLY_IFT_LIMIT
+from storage import append_transaction_row, load_state_for_today, save_state
 import logging
 
 # Configure module-level logging for audit purposes.
@@ -27,21 +31,23 @@ logger.setLevel(logging.INFO)
 def is_pure_g_move(target_alloc: Dict[str, float]) -> bool:
     """
     Determine if the target allocation is a pure G Fund move.
-    
-    A pure G move means the G Fund is very close to 100% (allowing for a small tolerance) and all other funds are near 0.
-    
+
+    A pure G move means the G Fund is very close to 100% (allowing for a small tolerance)
+    and all other funds are near 0%.
+
     Parameters
     ----------
     target_alloc : Dict[str, float]
         Mapping of fund names to allocation percentages.
-    
+
     Returns
     -------
     bool
         True if the allocation qualifies as a pure G move, else False.
     """
-    g = float(target_alloc.get("G", 0.0))
-    others = sum(float(target_alloc.get(fund, 0.0)) for fund in ("C", "I", "S", "F"))
+    g: float = float(target_alloc.get("G", 0.0))
+    # Sum allocations for all funds except the G Fund.
+    others: float = sum(float(target_alloc.get(fund, 0.0)) for fund in ("C", "I", "S", "F"))
     return abs(g - 100.0) <= G_MOVE_TOLERANCE_PCT and others <= G_MOVE_TOLERANCE_PCT
 
 
@@ -49,13 +55,13 @@ def is_pure_g_move(target_alloc: Dict[str, float]) -> bool:
 class IFTDecision:
     """
     Container for IFT eligibility and confirmation results.
-    
+
     Attributes:
         allowed (bool): True if an IFT is permitted.
         reason (str): Explanation for the decision.
-        is_safety_move (bool): True if the move is a safety move (pure G fund move).
+        is_safety_move (bool): True if the move is a safety move (pure G Fund move).
         transaction_written (bool): True if the transaction log was successfully written.
-        state_saved (bool): True if state update was saved to storage.
+        state_saved (bool): True if state update was successfully persisted.
     """
     allowed: bool
     reason: str
@@ -69,12 +75,25 @@ class IFTStateMachine:
     Manages IFT state transitions ensuring that any state mutations (transaction logging and state persistence)
     occur only through validated pathways.
 
-    Attributes:
-        state (Dict[str, object]): The current persistent state.
-        today (date): The current business date.
+    Attributes
+    ----------
+    state : Dict[str, object]
+        The current persistent state.
+    today : date
+        The current business date.
     """
 
     def __init__(self, state: Dict[str, object], today: date) -> None:
+        """
+        Initialize the IFTStateMachine with the provided state and date.
+
+        Parameters
+        ----------
+        state : Dict[str, object]
+            Persistent state loaded from storage.
+        today : date
+            Current date for processing state rollover.
+        """
         self.state: Dict[str, object] = state
         self.today: date = today
 
@@ -82,28 +101,29 @@ class IFTStateMachine:
     def load(cls, today: date) -> IFTStateMachine:
         """
         Load persistent state from disk with month rollover applied.
-        
+
         Parameters
         ----------
         today : date
             Current date to be used for rollover.
-        
+
         Returns
         -------
         IFTStateMachine
             An instance with current state data.
         """
-        return cls(load_state_for_today(today), today)
+        loaded_state: Dict[str, object] = load_state_for_today(today)
+        return cls(loaded_state, today)
 
     @property
     def ift_count_this_month(self) -> int:
         """
         Retrieve the count of IFT confirmations used in the current month.
-        
+
         Returns
         -------
         int
-            Monthly IFT count.
+            Monthly IFT confirmation count.
         """
         return int(self.state.get("ift_count_this_month", 0))
 
@@ -111,11 +131,11 @@ class IFTStateMachine:
     def last_ift_date(self) -> Optional[date]:
         """
         Retrieve the most recent IFT confirmation date.
-        
+
         Returns
         -------
         Optional[date]
-            Date if available, otherwise None.
+            Last IFT confirmation date if available, otherwise None.
         """
         raw = self.state.get("last_ift_date")
         if not raw:
@@ -125,23 +145,25 @@ class IFTStateMachine:
     def can_confirm(self, target_alloc: Dict[str, float]) -> IFTDecision:
         """
         Check if a manual IFT confirmation is permitted based on the target allocation and monthly cap.
-        
+
         Parameters
         ----------
         target_alloc : Dict[str, float]
             Proposed fund allocation for the IFT.
-        
+
         Returns
         -------
         IFTDecision
-            Preliminary decision without performing state mutation.
+            Preliminary decision (without state mutation) indicating if IFT is allowed.
         """
+        # If the target allocation qualifies as a pure G move, allow it without consuming monthly cap.
         if is_pure_g_move(target_alloc):
             return IFTDecision(
                 allowed=True,
                 reason="G Fund safety move (does not count toward monthly cap)",
                 is_safety_move=True,
             )
+        # Enforce monthly IFT limit.
         if self.ift_count_this_month >= MONTHLY_IFT_LIMIT:
             return IFTDecision(
                 allowed=False,
@@ -158,9 +180,9 @@ class IFTStateMachine:
     ) -> IFTDecision:
         """
         Confirm an IFT submission after ensuring that it is valid.
-        
+
         Performs idempotency checks, updates state timestamps, logs the transaction, and persists state.
-        
+
         Parameters
         ----------
         current_alloc : Dict[str, float]
@@ -175,9 +197,9 @@ class IFTStateMachine:
         Returns
         -------
         IFTDecision
-            Outcome of the confirmation action including persistence flags.
+            Outcome of the confirmation action, including persistence flags.
         """
-        # Idempotency check: prevent duplicate confirmations.
+        # Idempotency check: Prevent duplicate confirmations.
         if confirmation_key is not None:
             last_key = str(self.state.get("last_confirmation_key", ""))
             if last_key == confirmation_key:
@@ -190,18 +212,19 @@ class IFTStateMachine:
                     state_saved=False,
                 )
 
-        decision = self.can_confirm(target_alloc)
+        # Check if confirmation is allowed by monthly cap and allocation type.
+        decision: IFTDecision = self.can_confirm(target_alloc)
         if not decision.allowed:
             return decision
 
-        # Update state timestamps (recording even safety moves).
+        # Update state with current date stamps.
         self.state["last_ift_date"] = self.today.isoformat()
         self.state["last_run_date"] = self.today.isoformat()
 
         if confirmation_key is not None:
             self.state["last_confirmation_key"] = confirmation_key
 
-        # Handle safety moves: these do not consume the monthly allowance.
+        # Handle safety moves (pure G move) which do not increment the monthly count.
         if decision.is_safety_move:
             try:
                 save_state(self.state)
@@ -221,11 +244,12 @@ class IFTStateMachine:
                     is_safety_move=True,
                 )
 
-        # Process a normal IFT submission.
+        # For normal IFT submissions, increment the monthly IFT count.
         self.state["ift_count_this_month"] = self.ift_count_this_month + 1
-        transaction_written = False
+        transaction_written: bool = False
 
         try:
+            # Append a transaction row to the audit log.
             append_transaction_row(
                 self.today.isoformat(),
                 current_alloc,
@@ -236,7 +260,7 @@ class IFTStateMachine:
             logger.info("Transaction row successfully appended.")
         except Exception as exc:
             logger.error("Transaction log append failed: %s", exc)
-            # We record the failure in the decision without aborting state update.
+            # Even if logging fails, continue to update state but note the failure.
             decision = IFTDecision(
                 allowed=True,
                 reason=f"Within monthly IFT allowance (warning: transaction log write failed: {exc})",
@@ -246,8 +270,9 @@ class IFTStateMachine:
             )
 
         try:
+            # Persist the updated state.
             save_state(self.state)
-            state_saved = True
+            state_saved: bool = True
             logger.info("State successfully saved after IFT confirmation.")
         except Exception as e:
             logger.error("Failed to persist state after IFT confirmation: %s", e)
