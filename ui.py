@@ -1,12 +1,19 @@
 """
+Author: Donald J Anthony
+Date: Today's Date
+
 ui.py — Presentation helpers for Streamlit rendering.
 
 Owns:
-- Cards, charts, tables, badges, and detailed breakdown views.
-- It renders the market snapshot, regime cards, metric cards, and decision breakdown.
-- This updated version ensures that numbers (including each factor’s score) are
-  displayed rounded to two decimal places for clarity.
+    - Cards, charts, tables, badges, and detailed breakdown views.
+    - Rendering of the market snapshot, regime cards, metric cards, and decision breakdown.
+    - Ensures that numbers (including each factor’s score) are displayed rounded to two decimal places for clarity.
+
+Does not own:
+    - Business/app logic
+    - Data processing/modeling
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -17,15 +24,39 @@ from models import EngineResult
 # -----------------------------------------------------------------------------
 # Helper Functions for Display
 # -----------------------------------------------------------------------------
-
 def _safe_text(value: any) -> str:
-    """Return a display-safe string for a given value."""
+    """
+    Return a display-safe string for a provided value.
+
+    Parameters
+    ----------
+    value : any
+        The value to be converted.
+
+    Returns
+    -------
+    str
+        String representation of the value, or an empty string if None.
+    """
     if value is None:
         return ""
     return str(value)
 
+
 def _source_pill_class(source: any) -> str:
-    """Map a source label to a CSS pill class."""
+    """
+    Map a source label to a CSS pill class.
+
+    Parameters
+    ----------
+    source : any
+        The source label to be converted.
+
+    Returns
+    -------
+    str
+        CSS class name for the pill based on the source content.
+    """
     source_str = _safe_text(source).upper()
     if "LIVE" in source_str:
         return "pill-live"
@@ -33,9 +64,30 @@ def _source_pill_class(source: any) -> str:
         return "pill-failed"
     return "pill-default"
 
+
 def tile_html(title: str, value: str, note: str = "", icon: str = "", color: str = "#3b82f6", bg: str | None = None) -> str:
     """
     Build HTML for a KPI-style tile.
+
+    Parameters
+    ----------
+    title : str
+        Title for the tile.
+    value : str
+        Value to display within the tile.
+    note : str, optional
+        Additional note below the value.
+    icon : str, optional
+        Icon to prepend to the title.
+    color : str, optional
+        Color used for border accents and text.
+    bg : str | None, optional
+        Background color for the tile if provided.
+
+    Returns
+    -------
+    str
+        A string containing the HTML markup for the tile.
     """
     bg_style = f"background-color: {bg};" if bg else ""
     icon_html = f"{icon} " if icon else ""
@@ -48,12 +100,23 @@ def tile_html(title: str, value: str, note: str = "", icon: str = "", color: str
     </div>
     """
 
+
 # -----------------------------------------------------------------------------
 # Snapshot Quality Badge
 # -----------------------------------------------------------------------------
-
 def render_snapshot_quality_badge(quality: dict[str, any], engine_ran: bool) -> None:
-    """Render the live-data quality badge."""
+    """
+    Render the live-data quality badge.
+
+    If the engine has not run, an informational message is displayed to instruct the user.
+
+    Parameters
+    ----------
+    quality : dict[str, any]
+        Dictionary containing quality metrics (e.g., live_pct, border, color, bg, headline, and counts).
+    engine_ran : bool
+        Flag indicating whether the engine has executed.
+    """
     if not engine_ran:
         st.info("Run **Fetch & Run Engine** to load market data and see how much of the snapshot is live.")
         return
@@ -80,10 +143,10 @@ def render_snapshot_quality_badge(quality: dict[str, any], engine_ran: bool) -> 
         unsafe_allow_html=True,
     )
 
+
 # -----------------------------------------------------------------------------
 # Metric Cards
 # -----------------------------------------------------------------------------
-
 def render_metric_cards(
     composite_score: float,
     regime: str,
@@ -93,26 +156,49 @@ def render_metric_cards(
 ) -> None:
     """
     Render the top-level metric cards on the dashboard.
-    The Composite Score is now formatted to show two decimal places (e.g., +12.34).
+
+    The composite score is displayed with two decimal places for clarity.
+
+    Parameters
+    ----------
+    composite_score : float
+        The engine's composite score.
+    regime : str
+        The detected market regime.
+    action : str
+        The recommended action (e.g., "SUBMIT IFT" or "HOLD").
+    ift_count_this_month : int
+        The count of IFTs executed in the current month.
+    reason : str
+        The rationale behind the engine's recommendation.
     """
     cols = st.columns(4)
     cards = [
-        # Composite score displayed with two decimals.
         ("Composite Score", f"{composite_score:+.2f}", "Engine output", "📊", "#3b82f6"),
         ("Regime", regime, "Current market regime", "🧭", "#8b5cf6"),
         ("Action", action, reason, "✅", "#16a34a"),
         ("IFT Count", str(ift_count_this_month), "This month", "📁", "#f59e0b"),
     ]
+    # Render each metric card by mapping each card tuple to a column.
     for col, (title, value, note, icon, color) in zip(cols, cards):
         with col:
             st.markdown(tile_html(title, value, note=note, icon=icon, color=color), unsafe_allow_html=True)
 
+
 # -----------------------------------------------------------------------------
 # Grid and Editable Tiles
 # -----------------------------------------------------------------------------
-
 def render_tile_grid(items: list[dict[str, any]], columns: int = 4) -> None:
-    """Render a responsive grid of KPI tiles."""
+    """
+    Render a responsive grid of KPI tiles.
+
+    Parameters
+    ----------
+    items : list[dict[str, any]]
+        List of dictionaries representing individual tile data.
+    columns : int, optional
+        Number of columns to display in the grid.
+    """
     if not items:
         return
     cols = st.columns(columns)
@@ -130,6 +216,7 @@ def render_tile_grid(items: list[dict[str, any]], columns: int = 4) -> None:
                 unsafe_allow_html=True,
             )
 
+
 def render_editable_metric_tile(
     label: str,
     value: any,
@@ -139,7 +226,28 @@ def render_editable_metric_tile(
     fmt: str = "%.2f",
     color: str = "#3b82f6",
 ) -> None:
-    """Render an editable metric tile for numeric, boolean, or text values."""
+    """
+    Render an editable metric tile for numeric, boolean, or text values.
+
+    Displays a label, the current value (formatted appropriately), and a source indicator (pill).
+
+    Parameters
+    ----------
+    label : str
+        The label for the metric.
+    value : any
+        The current value of the metric.
+    source : any
+        The data source, used to select a corresponding CSS styling.
+    key : str
+        Unique key for the Streamlit widget.
+    step : float, optional
+        Numeric step increment (for number inputs).
+    fmt : str, optional
+        Format string for numeric display.
+    color : str, optional
+        Color used for edging the tile.
+    """
     pill_class = _source_pill_class(source)
     label_text = _safe_text(label)
     source_text = _safe_text(source)
@@ -159,6 +267,7 @@ def render_editable_metric_tile(
             shown = f"{float(display_value):.2f}"
         else:
             shown = _safe_text(value)
+        # Render the tile with the metric information.
         st.markdown(
             f"""
             <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
@@ -171,6 +280,7 @@ def render_editable_metric_tile(
             """,
             unsafe_allow_html=True,
         )
+        # Render the appropriate Streamlit widget based on value's type.
         if is_bool:
             st.checkbox(label_text, value=bool(value), key=key, label_visibility="collapsed")
         elif is_numeric:
@@ -178,20 +288,35 @@ def render_editable_metric_tile(
         else:
             st.text_input(label_text, value=_safe_text(value), key=key, label_visibility="collapsed")
 
+
 # -----------------------------------------------------------------------------
 # State Display
 # -----------------------------------------------------------------------------
-
 def recent_state_cards(state: dict[str, any]) -> None:
-    """Render a compact state summary with the last run timestamp."""
+    """
+    Render a compact state summary card showing the last engine run timestamp.
+
+    Parameters
+    ----------
+    state : dict[str, any]
+        The current application state.
+    """
     last_run = state.get("last_run_date") or "—"
     st.markdown(
         tile_html("Last Run", last_run, note="Most recent engine execution", icon="🕒", color="#3b82f6"),
         unsafe_allow_html=True,
     )
 
+
 def render_history_table(state: dict[str, any]) -> None:
-    """Render the recent run history table."""
+    """
+    Render a table of recent run history from the state.
+
+    Parameters
+    ----------
+    state : dict[str, any]
+        The current application state containing recent history.
+    """
     recent_regimes = state.get("recent_regimes", [])
     recent_scores = state.get("recent_scores", [])
     recent_allocations = state.get("recent_allocations", [])
@@ -209,8 +334,21 @@ def render_history_table(state: dict[str, any]) -> None:
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
+
 def make_score_chart(state: dict[str, any]) -> pd.DataFrame | None:
-    """Build a score history dataframe with dates on the x-axis."""
+    """
+    Build a score history DataFrame with dates on the x-axis.
+
+    Parameters
+    ----------
+    state : dict[str, any]
+        The application state containing recent scores and run dates.
+
+    Returns
+    -------
+    pd.DataFrame | None
+        A DataFrame with Date as the index and Score values, or None if empty.
+    """
     scores = state.get("recent_scores", [])
     dates = state.get("recent_run_dates", [])
     if not scores:
@@ -225,8 +363,23 @@ def make_score_chart(state: dict[str, any]) -> pd.DataFrame | None:
         return pd.DataFrame({"Score": scores})
     return df.set_index("Date")
 
+
 def make_alloc_chart(target_alloc: dict[str, float], current_alloc: dict[str, float]) -> pd.DataFrame:
-    """Build a fund allocation comparison dataframe."""
+    """
+    Build a fund allocation comparison DataFrame.
+
+    Parameters
+    ----------
+    target_alloc : dict[str, float]
+        The target allocation percentages.
+    current_alloc : dict[str, float]
+        The current allocation percentages.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame comparing current and target allocations along with the delta.
+    """
     rows: list[dict[str, any]] = []
     for fund in ["G", "C", "I", "S", "F"]:
         rows.append({
@@ -237,20 +390,46 @@ def make_alloc_chart(target_alloc: dict[str, float], current_alloc: dict[str, fl
         })
     return pd.DataFrame(rows)
 
+
 # -----------------------------------------------------------------------------
 # Regime Cards
 # -----------------------------------------------------------------------------
-
 def _regime_alloc_display(name: str, info: dict[str, any]) -> str:
-    """Format a regime allocation for display."""
+    """
+    Format a regime allocation for display purposes.
+
+    Parameters
+    ----------
+    name : str
+        The regime name.
+    info : dict[str, any]
+        Information dictionary containing allocation and display settings.
+
+    Returns
+    -------
+    str
+        A formatted string representing the allocation.
+    """
     if "alloc_display" in info:
         return str(info["alloc_display"])
     alloc = info.get("allocation", {})
     fund_order = ["G", "C", "I", "S", "F"]
     return " / ".join(f"{fund} {alloc.get(fund, 0)}%" for fund in fund_order)
 
+
 def _render_single_regime_card(name: str, info: dict[str, any], is_active: bool) -> None:
-    """Render one regime card."""
+    """
+    Render a single regime card with styling based on active status.
+
+    Parameters
+    ----------
+    name : str
+        The regime name.
+    info : dict[str, any]
+        The regime metadata including icon, color, and description.
+    is_active : bool
+        Flag indicating whether this regime is currently active.
+    """
     border = info["color"] if is_active else "rgba(148,163,184,0.18)"
     bg = info["bg"] if is_active else "rgba(248, 250, 252, 0.5)"
     badge = "★ ACTIVE ENVIRONMENT" if is_active else ""
@@ -269,8 +448,16 @@ def _render_single_regime_card(name: str, info: dict[str, any], is_active: bool)
         unsafe_allow_html=True,
     )
 
+
 def render_regime_cards(active_regime: str) -> None:
-    """Render the strategic regime directory cards."""
+    """
+    Render the strategic regime directory cards.
+
+    Parameters
+    ----------
+    active_regime : str
+        Name of the currently active regime.
+    """
     st.markdown("### 🧭 Strategic Regime Directory")
     st.caption("The engine maps composite score to one of the policy regimes below.")
     cols = st.columns(len(REGIME_ORDER))
@@ -279,10 +466,11 @@ def render_regime_cards(active_regime: str) -> None:
         with col:
             _render_single_regime_card(name, info, active_regime == name)
 
+
 # -----------------------------------------------------------------------------
 # Decision Breakdown
 # -----------------------------------------------------------------------------
-
+# FACTOR_ROWS contains tuples mapping display names to score keys and source descriptions.
 FACTOR_ROWS: list[tuple[str, str, str]] = [
     ("Inflation", "inflation", "Core PCE / Breakevens"),
     ("Growth", "growth", "PMI / Services PMI / Claims"),
@@ -298,6 +486,7 @@ FACTOR_ROWS: list[tuple[str, str, str]] = [
     ("Liquidity Pressure", "liquidity_pressure", "SLOOS / Fed assets / STLFSI / MOVE"),
 ]
 
+
 def render_decision_breakdown(
     result: EngineResult,
     action: str,
@@ -312,7 +501,39 @@ def render_decision_breakdown(
     normal_drift_threshold_pct: float,
     score_change_threshold: int,
 ) -> None:
-    """Render the engine decision breakdown panel."""
+    """
+    Render a detailed breakdown of the engine's decision.
+
+    This breakdown includes a summary of core metrics, factor score details, and
+    interpretations that lead to the final IFT recommendation.
+
+    Parameters
+    ----------
+    result : EngineResult
+        Engine output containing allocations, scores, and decision flags.
+    action : str
+        Final recommended action (e.g., "SUBMIT IFT").
+    reason : str
+        Explanation for the decision.
+    state : dict[str, any]
+        Application state containing IFT counts and history.
+    current_alloc : dict[str, float]
+        Current portfolio allocation.
+    dxy_range_regime : str
+        The qualitative DXY regime.
+    dxy_trend_up : bool
+        Flag indicating if the DXY is trending upward.
+    cooldown_days : int
+        The number of days enforced as a cooldown period.
+    confirmation_days : int
+        The required number of stable days for confirmation.
+    allow_second_ift : bool
+        Flag indicating if a second IFT is permitted.
+    normal_drift_threshold_pct : float
+        The threshold percentage for acceptable portfolio drift.
+    score_change_threshold : int
+        The minimum score change required to trigger rebalancing.
+    """
     st.markdown("### 🔍 Engine Decision Breakdown")
     with st.expander("📖 Detailed Decision Trace & Factor Attribution", expanded=False):
         st.markdown("#### 1) Decision Summary")
@@ -326,6 +547,7 @@ def render_decision_breakdown(
         with sum_cols[3]:
             st.markdown(f"**Emergency Trigger**  \n{'Yes' if result.emergency_triggered else 'No'}")
         st.caption(f"IFT Decision Reason: {reason}")
+
         st.markdown("#### 2) Factor Score Detail")
         factor_rows: list[dict[str, any]] = []
         for display_name, score_key, source_text in FACTOR_ROWS:
@@ -347,6 +569,7 @@ def render_decision_breakdown(
                 "Source / Logic": source_text,
             })
         st.dataframe(pd.DataFrame(factor_rows), use_container_width=True, hide_index=True)
+
         st.markdown("#### 3) Factor Interpretation")
         pos_factors: list[str] = []
         neg_factors: list[str] = []
@@ -372,6 +595,7 @@ def render_decision_breakdown(
             st.markdown("**🔴 Negative Drags**")
             for item in neg_factors or ["None"]:
                 st.markdown(f"- {item}")
+
         st.markdown("#### 4) Regime and Allocation Build")
         build_cols = st.columns(2)
         with build_cols[0]:
@@ -392,6 +616,7 @@ def render_decision_breakdown(
         st.dataframe(make_alloc_chart(result.allocations, current_alloc),
                      use_container_width=True,
                      hide_index=True)
+
         st.markdown("#### 5) IFT Decision Logic")
         ift_cols = st.columns(4)
         with ift_cols[0]:
@@ -410,10 +635,10 @@ def render_decision_breakdown(
         st.write(f"- Final IFT recommendation: **{action}**")
         st.write(f"- Reason: {reason}")
 
+
 # -----------------------------------------------------------------------------
 # __all__ Declaration
 # -----------------------------------------------------------------------------
-
 __all__ = [
     "_safe_text",
     "_source_pill_class",
