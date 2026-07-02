@@ -1,20 +1,14 @@
 from __future__ import annotations
-
 from typing import Any
-
 from constants import DXY_TILT_THRESHOLD, DEFAULTS
 from models import MarketState
 from utils import safe_float
 
-
-def build_market_state(data: dict[str, Any], scores: dict[str, int]) -> MarketState:
+def build_market_state(data: dict[str, Any], scores: dict[str, float]) -> MarketState:
     """
     Convert raw market inputs and factor scores into a categorical MarketState.
-
-    This function is intentionally limited to interpretation only.
-    It does not select a regime or build an allocation.
+    This function interprets indicators and does not select a regime.
     """
-
     pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
     bond_yield = safe_float(data.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
     move_index = safe_float(data.get("move_index"), DEFAULTS["move_index"])
