@@ -6,8 +6,8 @@ ui.py — Presentation helpers for Streamlit rendering.
 Owns:
 - Cards, charts, tables, badges, and detailed breakdown views.
 - It renders the market snapshot, regime cards, metric cards, and decision breakdown.
-- This updated version ensures that numbers shown in the metric tiles (like the Composite Score)
-  are rounded to two decimal places for clarity.
+- This updated version ensures that numbers (including each factor’s score) are
+  displayed rounded to two decimal places for clarity.
 """
 
 import pandas as pd
@@ -77,7 +77,8 @@ def render_snapshot_quality_badge(quality: dict[str, any], engine_ran: bool) -> 
                 </div>
             </div>
         </div>
-        """, unsafe_allow_html=True
+        """,
+        unsafe_allow_html=True,
     )
 
 # -----------------------------------------------------------------------------
@@ -97,7 +98,7 @@ def render_metric_cards(
     """
     cols = st.columns(4)
     cards = [
-        # Using {:.2f} to round the composite score to two decimals
+        # Composite score displayed with two decimals.
         ("Composite Score", f"{composite_score:+.2f}", "Engine output", "📊", "#3b82f6"),
         ("Regime", regime, "Current market regime", "🧭", "#8b5cf6"),
         ("Action", action, reason, "✅", "#16a34a"),
@@ -115,7 +116,6 @@ def render_tile_grid(items: list[dict[str, any]], columns: int = 4) -> None:
     """Render a responsive grid of KPI tiles."""
     if not items:
         return
-
     cols = st.columns(columns)
     for idx, item in enumerate(items):
         with cols[idx % columns]:
@@ -144,18 +144,15 @@ def render_editable_metric_tile(
     pill_class = _source_pill_class(source)
     label_text = _safe_text(label)
     source_text = _safe_text(source)
-
     is_bool = isinstance(value, bool)
     is_numeric = False
     display_value: any = value
-
     if not is_bool:
         try:
             display_value = float(value)
             is_numeric = True
         except Exception:
             is_numeric = False
-
     with st.container():
         if is_bool:
             shown = "Yes" if value else "No"
@@ -163,14 +160,11 @@ def render_editable_metric_tile(
             shown = f"{float(display_value):.2f}"
         else:
             shown = _safe_text(value)
-
         st.markdown(
             f"""
             <div class="small-kpi" style="border-left: 5px solid {color}; margin-bottom: 0.4rem;">
                 <div class="small-kpi-title">{label_text}</div>
-                <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.15rem;">
-                    {shown}
-                </div>
+                <div class="small-kpi-value" style="color:#0f172a; margin-top: 0.15rem;">{shown}</div>
                 <div style="margin-top: 0.35rem;">
                     <span class="pill {pill_class}">{source_text}</span>
                 </div>
@@ -178,7 +172,6 @@ def render_editable_metric_tile(
             """,
             unsafe_allow_html=True,
         )
-
         if is_bool:
             st.checkbox(label_text, value=bool(value), key=key, label_visibility="collapsed")
         elif is_numeric:
@@ -204,7 +197,6 @@ def render_history_table(state: dict[str, any]) -> None:
     recent_scores = state.get("recent_scores", [])
     recent_allocations = state.get("recent_allocations", [])
     recent_run_dates = state.get("recent_run_dates", [])
-
     rows: list[dict[str, any]] = []
     n = max(len(recent_regimes), len(recent_scores), len(recent_allocations), len(recent_run_dates))
     for i in range(n):
@@ -335,12 +327,10 @@ def render_decision_breakdown(
         with sum_cols[3]:
             st.markdown(f"**Emergency Trigger**  \n{'Yes' if result.emergency_triggered else 'No'}")
         st.caption(f"IFT Decision Reason: {reason}")
-
         st.markdown("#### 2) Factor Score Detail")
         factor_rows: list[dict[str, any]] = []
         for display_name, score_key, source_text in FACTOR_ROWS:
             raw_score = result.scores.get(score_key, 0)
-            # Determine interpretation based on raw score value
             if raw_score >= 3:
                 strength = "Strong Positive"
             elif raw_score > 0:
@@ -358,7 +348,6 @@ def render_decision_breakdown(
                 "Source / Logic": source_text,
             })
         st.dataframe(pd.DataFrame(factor_rows), use_container_width=True, hide_index=True)
-
         st.markdown("#### 3) Factor Interpretation")
         pos_factors: list[str] = []
         neg_factors: list[str] = []
@@ -384,7 +373,6 @@ def render_decision_breakdown(
             st.markdown("**🔴 Negative Drags**")
             for item in neg_factors or ["None"]:
                 st.markdown(f"- {item}")
-
         st.markdown("#### 4) Regime and Allocation Build")
         build_cols = st.columns(2)
         with build_cols[0]:
@@ -402,11 +390,9 @@ def render_decision_breakdown(
             st.write(f"- Strong DXY adjustment: `{'Yes' if result.dxy_strong else 'No'}`")
             st.write(f"- Macro overlays active: `{'Yes' if any(result.scores.get(k, 0) != 0 for k in ['yield_curve','inflation_shock','central_bank','liquidity_pressure']) else 'No'}`")
         st.markdown("**Final Target Allocation**")
-        st.dataframe(
-            make_alloc_chart(result.allocations, current_alloc),
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.dataframe(make_alloc_chart(result.allocations, current_alloc),
+                     use_container_width=True,
+                     hide_index=True)
         st.markdown("#### 5) IFT Decision Logic")
         ift_cols = st.columns(4)
         with ift_cols[0]:
@@ -419,15 +405,9 @@ def render_decision_breakdown(
             st.metric("Allow 2nd IFT", "Yes" if allow_second_ift else "No")
         st.write(f"- Normal drift threshold: `{float(normal_drift_threshold_pct):.2f}%`")
         st.write(f"- Score change threshold: `{int(score_change_threshold)}`")
-        st.write(
-            f"- Confirmation rule: requires {confirmation_days} stable days plus 1 prior point for score-change comparison."
-        )
-        st.write(
-            f"- Recent regime history: `{state.get('recent_regimes', [])[-(confirmation_days + 1):]}`"
-        )
-        st.write(
-            f"- Recent score history: `{state.get('recent_scores', [])[-(confirmation_days + 1):]}`"
-        )
+        st.write(f"- Confirmation rule: requires {confirmation_days} stable days plus 1 prior point for score-change comparison.")
+        st.write(f"- Recent regime history: `{state.get('recent_regimes', [])[-(confirmation_days + 1):]}`")
+        st.write(f"- Recent score history: `{state.get('recent_scores', [])[-(confirmation_days + 1):]}`")
         st.write(f"- Final IFT recommendation: **{action}**")
         st.write(f"- Reason: {reason}")
 
