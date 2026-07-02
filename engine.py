@@ -14,6 +14,7 @@ Public Functions (unchanged external API):
     • cumulative_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) -> float
     • latest_regime_from_history(recent_regimes: List[str]) -> Optional[str]
     • should_use_tsp_ift(**kwargs) -> Tuple[bool, str]
+    • score_market_data(data: dict) -> dict   # adapter for tests
 """
 
 from __future__ import annotations
@@ -22,8 +23,8 @@ import logging
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
-from constants import BASELINE_ALLOCATIONS, DEFAULTS, DXY_TILT_THRESHOLD
-from market_state import build_market_state  # MarketState factory; interprets raw indicators.
+from constants import BASELINE_ALLOCATIONS, DEFAULTS
+from market_state import build_market_state
 from models import EngineResult, FundsAlloc, Scores
 from scoring import score_all_factors, composite_score
 from utils import safe_float
@@ -64,6 +65,14 @@ def cumulative_alloc_drift(current_alloc: FundsAlloc, target_alloc: FundsAlloc) 
     return total_abs_diff / 2.0
 
 
+def score_market_data(data: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Thin adapter for tests that expect engine.score_market_data().
+    Delegates to scoring.score_all_factors without changing behavior.
+    """
+    return score_all_factors(data)
+
+
 def determine_allocation(
     data: Dict[str, Any],
     previous_regime: Optional[str] = None,
@@ -81,7 +90,7 @@ def determine_allocation(
         - asymmetric volatility trigger (bool)
         - DXY strength trigger (bool)
     """
-    # If manual override is active, return the forced regime allocation immediately.
+    # 1) Manual override short-circuit (preserve existing behavior to ensure zero drift on overrides).
     if override_active:
         if override_regime == "RISK-ON OVERRIDE":
             base_alloc = _regime_alloc("RISK-ON OVERRIDE")
@@ -96,39 +105,60 @@ def determine_allocation(
         base_alloc = _regime_alloc("EMERGENCY DISPATCH")
         return base_alloc, {}, -50, "EMERGENCY DISPATCH", base_alloc, False, False
 
-    # Compute continuous factor scores via scoring functions.
+    # 2) Compute factor scores and composite (math remains unchanged to preserve zero drift).
     scores: Scores = score_all_factors(data)
     comp_score: int = int(round(composite_score(scores)))
     logger.info("Composite score computed: %d", comp_score)
 
-    # Extract core macro indicators using safe conversion.
+    # 3) Prepare interpreted market state inputs.
     pce: float = safe_float(data.get("core_pce_yoy"), DEFAULTS.get("core_pce_yoy", 2.0))
     cape: float = safe_float(data.get("shiller_cape"), DEFAULTS.get("shiller_cape", 25.0))
 
-    # Build market state from raw data.
-    market_state = build_market_state(data, pce, cape)
-    # Use the 'dxy' field of market_state to decide the regime.
-    regime_name: str = market_state.dxy
-    logger.info("Market state returned regime (%s)", regime_name)
+    # The MarketState code expects a 'scores' dict with specific keys for interpretation.
+    # Map our factor keys to those names to avoid hidden coupling or zeroing.
+    scores_for_state: Dict[str, float] = {
+        "growth": float(scores.get("growth", 0.0)),
+        "momentum": float(scores.get("momentum", 0.0)),
+        "market_stress": float(scores.get("stress", 0.0)),
+        "credit_spreads": float(scores.get("credit", 0.0)),
+        "valuation": float(scores.get("valuation", 0.0)),
+    }
+    state_inputs = dict(data)
+    state_inputs["scores"] = scores_for_state
 
-    # Ensure regime_name is a valid key in BASELINE_ALLOCATIONS.
-    # If not, default to "OPTIMIZED NEUTRAL".
-    if regime_name not in BASELINE_ALLOCATIONS:
-        logger.warning("Regime '%s' not recognized. Defaulting to OPTIMIZED NEUTRAL.", regime_name)
+    # 4) Build categorical MarketState and select regime via state machine (Option B).
+    market_state = build_market_state(state_inputs, pce, cape)
+
+    # Order of precedence:
+    #   1) panic => EMERGENCY DISPATCH
+    #   2) asymmetric_vol => DEFENSIVE ALLOCATION
+    #   3) gates => RISK-ON OVERRIDE (trend==bullish & stress==normal & growth==expanding)
+    #   4) else => OPTIMIZED NEUTRAL
+    if market_state.panic:
+        regime_name = "EMERGENCY DISPATCH"
+    elif market_state.asymmetric_vol:
+        regime_name = "DEFENSIVE ALLOCATION"
+    elif (
+        market_state.trend == "bullish"
+        and market_state.stress == "normal"
+        and market_state.growth == "expanding"
+    ):
+        regime_name = "RISK-ON OVERRIDE"
+    else:
         regime_name = "OPTIMIZED NEUTRAL"
 
     base_alloc: FundsAlloc = _regime_alloc(regime_name)
 
-    # Determine risk trigger flags.
-    vol_trigger: bool = False  # Placeholder for asymmetric volatility logic.
-    dxy_trigger: bool = (data.get("dxy_spot", 0) >= DXY_TILT_THRESHOLD)
+    # 5) Overlays are flag-only (no allocation change to preserve zero drift).
+    vol_trigger: bool = bool(market_state.asymmetric_vol)
+    dxy_trigger: bool = bool(market_state.dxy_strong)
 
-    # For now, final allocation is the baseline.
+    # Final allocation equals the baseline for the selected regime.
     allocs: FundsAlloc = base_alloc
 
     return (
         allocs,
-        scores,
+        scores,         # expose the original factor scores
         comp_score,
         regime_name,
         base_alloc,
@@ -200,7 +230,7 @@ def should_use_tsp_ift(
     """
     Decide whether to submit an IFT (Inter-Fund Transfer) order based on multiple criteria.
     Returns a tuple (use_ift: bool, reason: str).
-    
+
     This simple implementation compares the cumulative allocation drift against a threshold.
     You may extend this logic with additional risk controls.
     """
