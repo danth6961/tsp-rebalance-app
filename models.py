@@ -26,32 +26,6 @@ Scores = dict[str, int]
 # - no persistence
 # - no UI logic
 # -----------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class MarketState:
-    """Interpreted macro state used by the tactical engine.
-
-    This abstraction separates raw indicator inputs from allocation policy.
-    It is intentionally categorical so the engine can reason about market
-    conditions without repeatedly evaluating raw thresholds.
-    """
-
-    inflation: str
-    growth: str
-    liquidity: str
-    credit: str
-    stress: str
-    trend: str
-    policy: str
-    valuation: str
-    dxy: str
-    curve: str
-
-    panic: bool = False
-    asymmetric_vol: bool = False
-    f_unlock: bool = False
-    dxy_strong: bool = False
-
 @dataclass
 class MarketData:
     """Normalized macro and market snapshot used by the engine.
@@ -102,6 +76,34 @@ class MarketData:
 
     # Snapshot assembly time in UTC-localized or ISO-formatted form
     timestamp: datetime | None = None
+
+
+# -----------------------------------------------------------------------------
+# Interpreted market state contract
+# -----------------------------------------------------------------------------
+# MarketState separates raw indicator interpretation from tactical policy.
+# This is the abstraction layer used by the engine to reason in categorical
+# market conditions instead of repeatedly checking raw thresholds.
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class MarketState:
+    """Categorical macro state used by tactical allocation logic."""
+
+    inflation: str
+    growth: str
+    liquidity: str
+    credit: str
+    stress: str
+    trend: str
+    policy: str
+    valuation: str
+    dxy: str
+    curve: str
+
+    panic: bool = False
+    asymmetric_vol: bool = False
+    f_unlock: bool = False
+    dxy_strong: bool = False
 
 
 # -----------------------------------------------------------------------------
@@ -217,6 +219,7 @@ __all__ = [
     "FundsAlloc",
     "Scores",
     "MarketData",
+    "MarketState",
     "EngineResult",
     "Config",
     "AppState",
