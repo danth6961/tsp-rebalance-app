@@ -1,177 +1,114 @@
-from __future__ import annotations
+"""
+constants.py — Centralized thresholds, weights, and configuration settings.
+"""
 
-from pathlib import Path
-
-# -----------------------------------------------------------------------------
-# Runtime and retry configuration
-# -----------------------------------------------------------------------------
-# These values are shared across data fetching, caching, and app orchestration.
-# Keep them here so the rest of the codebase does not hardcode operational
-# behavior in multiple places.
-# -----------------------------------------------------------------------------
-MAX_RETRIES: int = 3
-RETRY_SLEEP_SEC: float = 1.5
-CACHE_TTL_SEC: int = 3600
-
-# -----------------------------------------------------------------------------
-# Persistence file locations
-# -----------------------------------------------------------------------------
-# Flat-file persistence is acceptable for a single-user Streamlit application,
-# but the paths must remain centralized so storage.py, app.py, and tests all
-# reference the same canonical locations.
-# -----------------------------------------------------------------------------
-STATE_FILE: Path = Path("tsp_state.json")
-CONFIG_FILE: Path = Path("tsp_config.json")
-LOG_FILE: Path = Path("tsp_daily_log.csv")
-TRANSACTION_FILE: Path = Path("tsp_transactions.csv")
-
-# -----------------------------------------------------------------------------
-# Default fallback market / macro values
-# -----------------------------------------------------------------------------
-# These values are used when live data is unavailable or a source fails.
-# They should be treated as fallback inputs and not as live observations.
-# -----------------------------------------------------------------------------
-DEFAULTS: dict[str, float] = {
-    "core_pce_yoy": 3.4,
-    "ism_pmi": 54.0,
-    "services_pmi": 54.5,
-    "initial_claims": 215.0,
-    "breakeven_inflation": 2.25,
-    "fed_assets_growth_yoy": -4.5,
-    "real_yield_10y": 2.00,
-    "move_index": 105.0,
-    "sloos_net_pct": 6.6,
-    "hy_oas": 2.76,
-    "shiller_cape": 39.66,
-    "fwd_eps_growth_yoy": 31.21,
-    "stlfsi_index": -0.9568,
-    "bond_yield_3m": 4.20,
-    "bond_yield_10y": 4.50,
-    "market_breadth_pct": 73.20,
-    "vix_spot": 19.0,
-    "dxy_spot": 105.80,
-    "spx_spot": 5000.0,
+# ----------------------------
+# Baseline regimes allocations (percentages).
+# (These must sum to 100, though engine.py normalizes on its own.)
+# ----------------------------
+BASELINE_ALLOCATIONS = {
+    "RISK-ON OVERRIDE": {"G": 10.0, "C": 40.0, "I": 30.0, "S": 10.0, "F": 10.0},
+    "OPTIMIZED NEUTRAL": {"G": 20.0, "C": 30.0, "I": 30.0, "S": 10.0, "F": 10.0},
+    "DEFENSIVE ALLOCATION": {"G": 40.0, "C": 20.0, "I": 20.0, "S": 10.0, "F": 10.0},
+    "EMERGENCY DISPATCH": {"G": 60.0, "C": 10.0, "I": 10.0, "S": 10.0, "F": 10.0},
 }
 
-# -----------------------------------------------------------------------------
-# Macro / market thresholds
-# -----------------------------------------------------------------------------
-# DXY tilt threshold is intentionally centralized so the engine, tests, and
-# documentation all use the exact same trigger level.
-# -----------------------------------------------------------------------------
-DXY_TILT_THRESHOLD: float = 103.5
-
-# -----------------------------------------------------------------------------
-# Fund proxy symbols
-# -----------------------------------------------------------------------------
-# These proxies are used when the app needs market-surrogate instruments for
-# display, validation, or historical approximation.
-# -----------------------------------------------------------------------------
-PROXIES: dict[str, str] = {
-    "C Fund (S&P 500 Stock Index)": "SPY",
-    "S Fund (Mid/Small Cap Stock Index)": "VXF",
-    "I Fund (New Benchmark: ACWI ex USA ex China/HK)": "ACWX",
-    "F Fund (U.S. Aggregate Bond Index)": "AGG",
-    "G Fund (Short-Term U.S. Treasury Bills)": "BIL",
+# ----------------------------
+# Default values for missing market inputs.
+# ----------------------------
+DEFAULTS = {
+    "core_pce_yoy": 2.0,
+    "ism_pmi": 50.0,
+    "services_pmi": 50.0,
+    "initial_claims": 250.0,
+    "breakeven_inflation": 2.0,
+    "fed_assets_growth_yoy": 0.0,
+    "real_yield_10y": 1.5,
+    "sloos_net_pct": 0.0,
+    "hy_oas": 4.0,
+    "shiller_cape": 25.0,
+    "fwd_eps_growth_yoy": 10.0,
+    "vix_spot": 15.0,
+    "stlfsi_index": 0.0,
+    "move_index": 100.0,
+    "bond_yield_10y": 2.0,
+    "dxy_spot": 95.0,
+    "market_breadth_pct": 70.0,
+    # You can add other defaults as needed.
 }
 
-# -----------------------------------------------------------------------------
-# Regime definitions
-# -----------------------------------------------------------------------------
-# This is the single source of truth for regime names, descriptions, display
-# metadata, and canonical allocations.
-#
-# Other modules should import from here instead of duplicating allocations or
-# labels. This prevents drift between engine.py, app.py, ui.py, and storage.py.
-# -----------------------------------------------------------------------------
-REGIME_DEFINITIONS: dict[str, dict[str, object]] = {
-    "RISK-ON OVERRIDE": {
-        "icon": "🚀",
-        "score_label": "Score: ≥ +5",
-        "profile": "Aggressive Profile",
-        "allocation": {"G": 30, "C": 40, "I": 20, "S": 10, "F": 0},
-        "description": "Strong macro backdrop and solid upward momentum.",
-        "color": "#10b981",
-        "bg": "rgba(16, 185, 129, 0.08)",
-    },
-    "OPTIMIZED NEUTRAL": {
-        "icon": "⚖️",
-        "score_label": "Score: 0 to +4",
-        "profile": "Balanced Profile",
-        "allocation": {"G": 40, "C": 30, "I": 20, "S": 10, "F": 0},
-        "description": "Default balanced state when signals are constructive but mixed.",
-        "color": "#3b82f6",
-        "bg": "rgba(59, 130, 246, 0.08)",
-    },
-    "DEFENSIVE ALLOCATION": {
-        "icon": "🛡️",
-        "score_label": "Score: < 0",
-        "profile": "Defensive Profile",
-        "allocation": {"G": 70, "C": 15, "I": 10, "S": 5, "F": 0},
-        "description": "Used when risk rises or the composite turns negative.",
-        "color": "#f59e0b",
-        "bg": "rgba(245, 158, 11, 0.08)",
-    },
-    "EMERGENCY DISPATCH": {
-        "icon": "🚨",
-        "score_label": "Score: -50",
-        "profile": "Maximum Defense",
-        "allocation": {"G": 100, "C": 0, "I": 0, "S": 0, "F": 0},
-        "alloc_display": "G 90% / F 10% (or G 100% / F 0%)",
-        "description": "3-day panic valve breach.",
-        "color": "#ef4444",
-        "bg": "rgba(239, 68, 68, 0.08)",
-    },
+# ----------------------------
+# Indicator thresholds for piecewise interpolation.
+# ----------------------------
+# Inflation (using core PCE YoY as the driver)
+INFLATION_BREAKPOINTS = [1.8, 2.0, 2.3, 3.0]  # pce thresholds
+INFLATION_SCORES = [3.0, 1.0, 0.0, -3.0]       # score values in the segments
+INFLATION_MIN_SCORE = -5.0  # for pce > 3.0
+
+# Growth (using composite PMI = 0.2 * ism_pmi + 0.8 * services_pmi)
+GROWTH_BREAKPOINTS = [48.0, 50.0, 51.5, 55.0]
+GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]  # note: above 55 we assign 3.0
+GROWTH_MAX_SCORE = 3.0
+
+# Liquidity (using sloos_net_pct as primary driver)
+LIQUIDITY_BREAKPOINTS = [-15.0, 5.0]
+LIQUIDITY_SCORES = [3.0, 0.0]
+LIQUIDITY_MIN_SCORE = -5.0  # if above 5.0
+
+# Credit spreads (using hy_oas)
+CREDIT_BREAKPOINTS = [3.0, 4.0, 5.0, 6.0]
+CREDIT_SCORES = [3.0, 1.0, 0.0, -3.0]
+CREDIT_MIN_SCORE = -5.0
+
+# Valuation (using shiller_cape and adjustments via fwd_eps and real_yield_10y)
+VALUATION_BREAKPOINTS = [20.0, 25.0]  # if cape <20 -> 3, if cape <=25 -> 0, then negative if between 25 and active ceiling
+VALUATION_MIN_SCORE = -5.0  # if cape > active ceiling, but active ceiling may vary.
+# For simplicity, we define two regimes based on fwd_eps.
+BASE_CAPE_CEILING = 30.0
+HIGH_EPS_CAPE_CEILING = 35.0
+REAL_YIELD_THRESHOLD = 2.2  # if real_yield_10y > 2.2, reduce ceiling by 5; if < 0.5 raise ceiling by 3
+
+# Market stress (using vix_spot)
+STRESS_BREAKPOINTS = [12.0, 15.0, 22.0, 30.0]
+STRESS_SCORES = [3.0, 1.0, 0.0, -3.0]
+STRESS_MIN_SCORE = -5.0
+
+# Momentum (using sma_dist: percentage distance from 200 SMA)
+MOMENTUM_BREAKPOINTS = [-5.0, 0.0, 5.0]
+MOMENTUM_SCORES = [-5.0, -3.0, 1.0]  # if sma_dist >5 -> 3 (set separately)
+MOMENTUM_MAX_SCORE = 3.0
+
+# Drawdown (using drawdown percentage)
+DRAWDOWN_BREAKPOINTS = [5.0, 10.0, 15.0, 20.0]
+DRAWDOWN_SCORES = [3.0, 1.0, 0.0, -3.0]
+DRAWDOWN_MIN_SCORE = -5.0
+
+# ----------------------------
+# Overlay adjustment caps.
+# ----------------------------
+OVERLAY_ADJUSTMENT_CAP = 2.0  # maximum magnitude of any overlay adjustment
+
+# ----------------------------
+# Weights for composite score.
+# ----------------------------
+FACTOR_WEIGHTS = {
+    "growth": 2.0,
+    "liquidity": 2.0,
+    "credit_spreads": 2.0,
+    "market_stress": 2.0,
+    "inflation": 1.5,
+    "momentum": 1.5,
+    "valuation": 1.0,
+    "drawdown": 1.0,
 }
 
-# -----------------------------------------------------------------------------
-# Regime display order
-# -----------------------------------------------------------------------------
-# Keep the order stable for UI cards, dropdowns, and documentation.
-# -----------------------------------------------------------------------------
-REGIME_ORDER: list[str] = [
-    "RISK-ON OVERRIDE",
-    "OPTIMIZED NEUTRAL",
-    "DEFENSIVE ALLOCATION",
-    "EMERGENCY DISPATCH",
-]
+# ----------------------------
+# DXY / currency tilt threshold.
+# ----------------------------
+DXY_TILT_THRESHOLD = 100.0  # example value; adjust as needed
 
-# -----------------------------------------------------------------------------
-# Derived allocation map
-# -----------------------------------------------------------------------------
-# This is generated from REGIME_DEFINITIONS to prevent drift. The emergency
-# F-unlocked variant is exposed as an overlay allocation rather than a full
-# top-level regime card.
-# -----------------------------------------------------------------------------
-BASELINE_ALLOCATIONS: dict[str, dict[str, int]] = {
-    name: dict(info["allocation"]) for name, info in REGIME_DEFINITIONS.items()
-}
-BASELINE_ALLOCATIONS["EMERGENCY DISPATCH (F-Unlocked)"] = {
-    "G": 90,
-    "C": 0,
-    "I": 0,
-    "S": 0,
-    "F": 10,
-}
-
-# -----------------------------------------------------------------------------
-# Explicit public exports
-# -----------------------------------------------------------------------------
-# This keeps the module interface clear and prevents accidental reliance on
-# internal helper names if new constants are added later.
-# -----------------------------------------------------------------------------
-__all__: list[str] = [
-    "MAX_RETRIES",
-    "RETRY_SLEEP_SEC",
-    "CACHE_TTL_SEC",
-    "STATE_FILE",
-    "CONFIG_FILE",
-    "LOG_FILE",
-    "TRANSACTION_FILE",
-    "DEFAULTS",
-    "DXY_TILT_THRESHOLD",
-    "PROXIES",
-    "REGIME_DEFINITIONS",
-    "REGIME_ORDER",
-    "BASELINE_ALLOCATIONS",
-]
+# ----------------------------
+# IFT state machine configuration.
+# ----------------------------
+G_MOVE_TOLERANCE_PCT = 0.5
+MONTHLY_IFT_LIMIT = 2
