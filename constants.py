@@ -3,8 +3,8 @@ from __future__ import annotations
 constants.py — Centralized thresholds, weights, configuration settings, file paths,
 and regime metadata.
 
-This file consolidates all "magic numbers," storage file names, and regime definitions
-that are used across the app (data_sources.py, ui.py, storage.py, tests, etc.)
+This file consolidates all “magic numbers,” storage file names, and regime definitions
+used across the application (data_sources.py, ui.py, storage.py, tests, etc.).
 """
 
 from pathlib import Path
@@ -13,14 +13,16 @@ from pathlib import Path
 # Baseline regime allocations (percentages).
 # ----------------------------
 BASELINE_ALLOCATIONS = {
-    "RISK-ON OVERRIDE": {"G": 10.0, "C": 40.0, "I": 30.0, "S": 10.0, "F": 10.0},
-    "OPTIMIZED NEUTRAL": {"G": 20.0, "C": 30.0, "I": 30.0, "S": 10.0, "F": 10.0},
-    "DEFENSIVE ALLOCATION": {"G": 40.0, "C": 20.0, "I": 20.0, "S": 10.0, "F": 10.0},
-    "EMERGENCY DISPATCH": {"G": 60.0, "C": 10.0, "I": 10.0, "S": 10.0, "F": 10.0},
+    "RISK-ON OVERRIDE": {"G": 30.0, "C": 40.0, "I": 20.0, "S": 10.0, "F": 0.0},
+    "OPTIMIZED NEUTRAL": {"G": 40.0, "C": 30.0, "I": 20.0, "S": 10.0, "F": 0.0},
+    "DEFENSIVE ALLOCATION": {"G": 70.0, "C": 15.0, "I": 10.0, "S": 5.0, "F": 0.0},
+    "EMERGENCY DISPATCH": {"G": 100.0, "C": 0.0, "I": 0.0, "S": 0.0, "F": 0.0},
+    # Note: With F Unlock enabled in the engine logic, an Emergency Dispatch may become:
+    # {"G": 90.0, "C": 0.0, "I": 0.0, "S": 0.0, "F": 10.0}
 }
 
 # ----------------------------
-# REGIME_DEFINITIONS - additional UI metadata for each regime.
+# REGIME_DEFINITIONS – additional UI metadata for each regime.
 # ----------------------------
 REGIME_DEFINITIONS = {
     "RISK-ON OVERRIDE": {
@@ -55,7 +57,7 @@ REGIME_DEFINITIONS = {
         "score_label": "Critical",
         "profile": "Emergency",
         "allocation": BASELINE_ALLOCATIONS["EMERGENCY DISPATCH"],
-        "description": "An extreme market downturn regime; shift to only the safest assets.",
+        "description": "An extreme market downturn regime. With F Unlock, funds may shift from G to F.",
         "color": "#ef4444",
         "bg": "#fef2f2",
     },
@@ -103,14 +105,14 @@ RETRY_SLEEP_SEC = 2
 # ----------------------------
 # Indicator thresholds for piecewise interpolation.
 # ----------------------------
-# Inflation (based on core PCE YoY)
+# Inflation (using core PCE YoY)
 INFLATION_BREAKPOINTS = [1.8, 2.0, 2.3, 3.0]
 INFLATION_SCORES = [3.0, 1.0, 0.0, -3.0]
 INFLATION_MIN_SCORE = -5.0
 
 # Growth (composite PMI = 0.2 * ism_pmi + 0.8 * services_pmi)
 GROWTH_BREAKPOINTS = [48.0, 50.0, 51.5, 55.0]
-GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]  # Above 55 we assign 3.0
+GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]
 GROWTH_MAX_SCORE = 3.0
 
 # Liquidity (using sloos_net_pct)
@@ -188,9 +190,9 @@ TRANSACTION_FILE = Path("tsp_transactions.csv")
 # ----------------------------
 # PROXIES: mapping of TSP fund proxy tickers.
 PROXIES = {
-    "C": "IVV",
-    "S": "IJR",
-    "I": "ACWX",
-    "F": "BND",
-    "G": "GSY",
+    "C": "IVV",    # S&P 500 ETF for C Fund
+    "S": "IJR",    # Mid/Small Cap ETF for S Fund
+    "I": "ACWX",   # International ETF for I Fund
+    "F": "BND",    # Bond ETF for F Fund
+    "G": "GSY",    # Short-term T-Bill ETF for G Fund
 }
