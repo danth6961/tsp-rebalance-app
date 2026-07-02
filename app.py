@@ -14,12 +14,16 @@ Does not own:
 - data acquisition
 - CSS definitions
 - regime definitions
+
+Author: Donald J Anthony
+Date: 2026-07-02
 """
 
 from __future__ import annotations
 
 import json
 from datetime import date
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -67,9 +71,8 @@ from validation import validate_market_data
 # -----------------------------------------------------------------------------
 # Streamlit page setup
 # -----------------------------------------------------------------------------
-# The architecture expects app.py to remain the orchestration layer, with CSS
-# moved out into styles.py in the long term. For now, the style block is kept
-# here only so the application stays runnable.
+# NOTE: app.py remains the orchestration layer. Styling should continue to live
+# in styles.py, but a small amount of page bootstrapping must stay here.
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="TSP Rebalance Engine",
@@ -120,9 +123,9 @@ BOOLEAN_KEYS: set[str] = {"dxy_trend_up"}
 TEXT_KEYS: set[str] = {"dxy_range_regime"}
 
 
-def init_session(cfg: dict[str, object]) -> None:
+def init_session(cfg: dict[str, Any]) -> None:
     """Initialize Streamlit session state for editable market inputs."""
-    indicators = EDITABLE_KEYS + [
+    indicators: list[str] = EDITABLE_KEYS + [
         "vix_3d_panic",
         "spx_3d_panic",
         "vix_last_3",
@@ -130,6 +133,7 @@ def init_session(cfg: dict[str, object]) -> None:
     ]
 
     for key in indicators:
+        # Initialize only once per session so edits persist across reruns.
         if key not in st.session_state:
             if key in {"vix_3d_panic", "spx_3d_panic"}:
                 st.session_state[key] = False
@@ -154,16 +158,13 @@ def init_session(cfg: dict[str, object]) -> None:
 
 def get_current_market_sources() -> dict[str, str]:
     """Return the current source label for each editable market field."""
-    source_keys = EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]
-    return {
-        key: st.session_state.get(f"{key}_source", "CONFIG/DEFAULT")
-        for key in source_keys
-    }
+    source_keys: list[str] = EDITABLE_KEYS + ["vix_3d_panic", "spx_3d_panic"]
+    return {key: st.session_state.get(f"{key}_source", "CONFIG/DEFAULT") for key in source_keys}
 
 
-def load_editable_market_data() -> dict[str, object]:
+def load_editable_market_data() -> dict[str, Any]:
     """Build the market-data payload from session state."""
-    market: dict[str, object] = {}
+    market: dict[str, Any] = {}
     for key in EDITABLE_KEYS:
         if key in BOOLEAN_KEYS:
             market[key] = bool(st.session_state.get(key, False))
@@ -189,6 +190,8 @@ def _render_market_snapshot_controls() -> None:
         st.session_state.get("engine_ran", False),
     )
 
+    # TODO: consider moving this large label/key mapping to a dedicated config
+    # structure to reduce duplication and make future indicator additions easier.
     market_edit_items: list[tuple[str, str, str]] = [
         ("Core PCE YoY", "core_pce_yoy", st.session_state.get("core_pce_yoy_source")),
         ("ISM Manufacturing PMI", "ism_pmi", st.session_state.get("ism_pmi_source")),
@@ -238,13 +241,15 @@ def _render_market_snapshot_controls() -> None:
             )
 
 
-def _load_market_snapshot(fred_api_key: str, use_live_macro: bool) -> tuple[dict[str, object], dict[str, str]]:
+def _load_market_snapshot(fred_api_key: str, use_live_macro: bool) -> tuple[dict[str, Any], dict[str, str]]:
     """Fetch market data, or fall back to defaults if the fetch fails."""
     try:
         snapshot = get_market_snapshot(fred_api_key if use_live_macro else "")
         fetched_data = snapshot["market_data"]
         fetched_sources = snapshot["market_sources"]
     except Exception:
+        # TODO: replace broad exception handling with a narrower application-
+        # specific exception type once the data layer exposes one.
         fetched_data = {k: DEFAULTS.get(k, 0.0) for k in DEFAULTS.keys()}
         fetched_data["vix_3d_panic"] = False
         fetched_data["spx_3d_panic"] = False
@@ -255,10 +260,7 @@ def _load_market_snapshot(fred_api_key: str, use_live_macro: bool) -> tuple[dict
     return fetched_data, fetched_sources
 
 
-def _sync_session_with_snapshot(
-    fetched_data: dict[str, object],
-    fetched_sources: dict[str, str],
-) -> None:
+def _sync_session_with_snapshot(fetched_data: dict[str, Any], fetched_sources: dict[str, str]) -> None:
     """Sync the fetched market snapshot into Streamlit session state."""
     st.session_state["live_market_data"] = fetched_data
     st.session_state["live_market_sources"] = fetched_sources
@@ -283,11 +285,11 @@ def _build_snapshot_log_row(
     today: date,
     action: str,
     reason: str,
-    state: dict[str, object],
+    state: dict[str, Any],
     current_alloc: dict[str, float],
-    result,
-    market_data: dict[str, object],
-) -> dict[str, object]:
+    result: Any,
+    market_data: dict[str, Any],
+) -> dict[str, Any]:
     """Build the row written to the daily run log."""
     return {
         "date": today.isoformat(),
@@ -307,10 +309,10 @@ def _build_snapshot_log_row(
 def main() -> None:
     """Main Streamlit entrypoint."""
     inject_styles()
-    
-    cfg = load_config()
-    today = date.today()
-    state = load_state_for_today(today)
+
+    cfg: dict[str, Any] = load_config()
+    today: date = date.today()
+    state: dict[str, Any] = load_state_for_today(today)
     init_session(cfg)
 
     # Sidebar controls
@@ -323,7 +325,7 @@ def main() -> None:
                 "Startup allocation is set to the tactical neutral baseline: "
                 f"G {neutral['G']} / C {neutral['C']} / I {neutral['I']} / S {neutral['S']} / F {neutral['F']}."
             )
-            current_alloc = {
+            current_alloc: dict[str, float] = {
                 "G": st.number_input("G Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["G"]), step=1.0),
                 "C": st.number_input("C Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["C"]), step=1.0),
                 "I": st.number_input("I Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["I"]), step=1.0),
@@ -331,72 +333,62 @@ def main() -> None:
                 "F": st.number_input("F Fund %", min_value=0.0, max_value=100.0, value=float(cfg["current_alloc"]["F"]), step=1.0),
             }
 
-        total_alloc = sum(current_alloc.values())
+        total_alloc: float = sum(current_alloc.values())
         if abs(total_alloc - 100.0) > 0.5:
             st.warning(f"Current allocation totals {total_alloc:.1f}%. Expected 100.0%.")
 
         with st.expander("🛡️ Rules", expanded=False):
-            allow_second_ift = st.checkbox("Allow second IFT", value=bool(cfg["allow_second_ift"]))
-            normal_drift_threshold_pct = st.number_input(
+            allow_second_ift: bool = st.checkbox("Allow second IFT", value=bool(cfg["allow_second_ift"]))
+            normal_drift_threshold_pct: float = st.number_input(
                 "Normal drift threshold %",
                 value=float(cfg["normal_drift_threshold_pct"]),
                 step=0.5,
             )
-            score_change_threshold = st.number_input(
+            score_change_threshold: int = st.number_input(
                 "Score change threshold",
                 value=int(cfg["score_change_threshold"]),
                 step=1,
             )
-            confirmation_days = st.number_input(
+            confirmation_days: int = st.number_input(
                 "Confirmation days",
                 value=int(cfg["confirmation_days"]),
                 step=1,
             )
-            cooldown_days = st.number_input(
+            cooldown_days: int = st.number_input(
                 "Cooldown days",
                 value=int(cfg["cooldown_days"]),
                 step=1,
             )
-            use_live_macro = st.checkbox("Use live macro data", value=bool(cfg["use_live_macro"]))
+            use_live_macro: bool = st.checkbox("Use live macro data", value=bool(cfg["use_live_macro"]))
 
         with st.expander("🛠️ Manual Override", expanded=False):
-            manual_override_enabled = st.checkbox(
+            manual_override_enabled: bool = st.checkbox(
                 "Enable manual override",
                 value=bool(cfg["manual_override_enabled"]),
             )
             manual_regime_default = str(cfg.get("manual_regime", "OPTIMIZED NEUTRAL"))
-            manual_regime_index = (
-                REGIME_ORDER.index(manual_regime_default)
-                if manual_regime_default in REGIME_ORDER
-                else 1
-            )
-            manual_regime = st.selectbox(
-                "Override regime",
-                REGIME_ORDER,
-                index=manual_regime_index,
-            )
+            manual_regime_index = REGIME_ORDER.index(manual_regime_default) if manual_regime_default in REGIME_ORDER else 1
+            manual_regime: str = st.selectbox("Override regime", REGIME_ORDER, index=manual_regime_index)
 
         st.divider()
-        fred_api_key = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
+        fred_api_key: str = st.text_input("FRED API Key", value=str(cfg.get("fred_api_key", "")), type="password")
 
         st.divider()
-        confirm_clicked = st.button(
+        confirm_clicked: bool = st.button(
             "✅ Submit IFT",
             use_container_width=True,
             disabled=not st.session_state.get("engine_ran", False),
         )
         st.divider()
-        save_clicked = st.button("💾 Save Config", use_container_width=True)
-        reset_state_clicked = st.button("♻️ Reset State", use_container_width=True)
-        clear_logs_clicked = st.button("🗑️ Clear Log File", use_container_width=True)
-        clear_tx_clicked = st.button("🗑️ Clear Audit Trail", use_container_width=True)
-        
-        st.divider()
-        run_clicked = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
+        save_clicked: bool = st.button("💾 Save Config", use_container_width=True)
+        reset_state_clicked: bool = st.button("♻️ Reset State", use_container_width=True)
+        clear_logs_clicked: bool = st.button("🗑️ Clear Log File", use_container_width=True)
+        clear_tx_clicked: bool = st.button("🗑️ Clear Audit Trail", use_container_width=True)
 
-    # -----------------------------------------------------------------------------
+        st.divider()
+        run_clicked: bool = st.button("🚀 Fetch & Run Engine", use_container_width=True, type="primary")
+
     # Sidebar action handlers
-    # -----------------------------------------------------------------------------
     if save_clicked:
         cfg["current_alloc"] = current_alloc
         cfg["allow_second_ift"] = allow_second_ift
@@ -444,16 +436,14 @@ def main() -> None:
             TRANSACTION_FILE.unlink()
         st.rerun()
 
-    # -----------------------------------------------------------------------------
     # Fetch/run flow
-    # -----------------------------------------------------------------------------
     if run_clicked:
         with st.spinner("Connecting to live feeds..."):
             fetched_data, fetched_sources = _load_market_snapshot(fred_api_key, bool(use_live_macro))
             _sync_session_with_snapshot(fetched_data, fetched_sources)
 
-        market_data = load_editable_market_data()
-        range_warnings = validate_market_data(market_data)
+        market_data: dict[str, Any] = load_editable_market_data()
+        range_warnings: list[str] = validate_market_data(market_data)
         st.session_state["market_data_warnings"] = range_warnings
 
         result = build_engine_result(
@@ -508,9 +498,7 @@ def main() -> None:
             )
         )
 
-    # -----------------------------------------------------------------------------
     # Current result used by render path
-    # -----------------------------------------------------------------------------
     market_data = load_editable_market_data()
     result = st.session_state.get("last_engine_result")
     if result is None:
@@ -553,9 +541,7 @@ def main() -> None:
             st.sidebar.warning(decision.reason)
         st.rerun()
 
-    # -----------------------------------------------------------------------------
     # Main display
-    # -----------------------------------------------------------------------------
     render_metric_cards(
         result.composite_score,
         result.regime,
@@ -563,7 +549,7 @@ def main() -> None:
         int(state.get("ift_count_this_month", 0)),
         reason,
     )
-    
+
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         ["📈 Allocation", "🧠 Factors", "📊 Proxy Charts", "🕒 History", "📁 Logs & State"]
     )
@@ -605,7 +591,7 @@ def main() -> None:
 
     with tab2:
         st.markdown("### Factor Scores")
-        factor_items: list[dict[str, object]] = []
+        factor_items: list[dict[str, Any]] = []
         for key, label in [
             ("inflation", "Inflation"),
             ("growth", "Growth"),
@@ -682,7 +668,7 @@ def main() -> None:
             )
 
         ticker = PROXIES[fund_selected]
-        period_map = {
+        period_map: dict[str, str] = {
             "1 Month": "1mo",
             "3 Months": "3mo",
             "6 Months": "6mo",
