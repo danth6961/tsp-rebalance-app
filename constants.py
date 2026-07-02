@@ -1,6 +1,8 @@
 """
-constants.py — Centralized thresholds, weights, and configuration settings.
+constants.py — Centralized thresholds, weights, configuration settings, and file paths.
 """
+
+from pathlib import Path
 
 # ----------------------------
 # Baseline regimes allocations (percentages).
@@ -34,20 +36,20 @@ DEFAULTS = {
     "bond_yield_10y": 2.0,
     "dxy_spot": 95.0,
     "market_breadth_pct": 70.0,
-    # You can add other defaults as needed.
+    # Add other defaults as needed.
 }
 
 # ----------------------------
 # Indicator thresholds for piecewise interpolation.
 # ----------------------------
 # Inflation (using core PCE YoY as the driver)
-INFLATION_BREAKPOINTS = [1.8, 2.0, 2.3, 3.0]  # pce thresholds
-INFLATION_SCORES = [3.0, 1.0, 0.0, -3.0]       # score values in the segments
+INFLATION_BREAKPOINTS = [1.8, 2.0, 2.3, 3.0]
+INFLATION_SCORES = [3.0, 1.0, 0.0, -3.0]
 INFLATION_MIN_SCORE = -5.0  # for pce > 3.0
 
 # Growth (using composite PMI = 0.2 * ism_pmi + 0.8 * services_pmi)
 GROWTH_BREAKPOINTS = [48.0, 50.0, 51.5, 55.0]
-GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]  # note: above 55 we assign 3.0
+GROWTH_SCORES = [-5.0, -3.0, 0.0, 1.0]  # above 55 we assign 3.0
 GROWTH_MAX_SCORE = 3.0
 
 # Liquidity (using sloos_net_pct as primary driver)
@@ -60,10 +62,9 @@ CREDIT_BREAKPOINTS = [3.0, 4.0, 5.0, 6.0]
 CREDIT_SCORES = [3.0, 1.0, 0.0, -3.0]
 CREDIT_MIN_SCORE = -5.0
 
-# Valuation (using shiller_cape and adjustments via fwd_eps and real_yield_10y)
+# Valuation (using shiller_cape with adjustments)
 VALUATION_BREAKPOINTS = [20.0, 25.0]  # if cape <20 -> 3, if cape <=25 -> 0, then negative if between 25 and active ceiling
-VALUATION_MIN_SCORE = -5.0  # if cape > active ceiling, but active ceiling may vary.
-# For simplicity, we define two regimes based on fwd_eps.
+VALUATION_MIN_SCORE = -5.0
 BASE_CAPE_CEILING = 30.0
 HIGH_EPS_CAPE_CEILING = 35.0
 REAL_YIELD_THRESHOLD = 2.2  # if real_yield_10y > 2.2, reduce ceiling by 5; if < 0.5 raise ceiling by 3
@@ -75,7 +76,7 @@ STRESS_MIN_SCORE = -5.0
 
 # Momentum (using sma_dist: percentage distance from 200 SMA)
 MOMENTUM_BREAKPOINTS = [-5.0, 0.0, 5.0]
-MOMENTUM_SCORES = [-5.0, -3.0, 1.0]  # if sma_dist >5 -> 3 (set separately)
+MOMENTUM_SCORES = [-5.0, -3.0, 1.0]  # above 5 we assign 3
 MOMENTUM_MAX_SCORE = 3.0
 
 # Drawdown (using drawdown percentage)
@@ -86,7 +87,7 @@ DRAWDOWN_MIN_SCORE = -5.0
 # ----------------------------
 # Overlay adjustment caps.
 # ----------------------------
-OVERLAY_ADJUSTMENT_CAP = 2.0  # maximum magnitude of any overlay adjustment
+OVERLAY_ADJUSTMENT_CAP = 2.0
 
 # ----------------------------
 # Weights for composite score.
@@ -105,10 +106,31 @@ FACTOR_WEIGHTS = {
 # ----------------------------
 # DXY / currency tilt threshold.
 # ----------------------------
-DXY_TILT_THRESHOLD = 100.0  # example value; adjust as needed
+DXY_TILT_THRESHOLD = 100.0  # adjust as needed
 
 # ----------------------------
 # IFT state machine configuration.
 # ----------------------------
 G_MOVE_TOLERANCE_PCT = 0.5
 MONTHLY_IFT_LIMIT = 2
+
+# ----------------------------
+# Additional configuration required by app.py.
+# ----------------------------
+# LOG_FILE: the file where run logs are stored.
+LOG_FILE = Path("tsp_daily_log.csv")
+
+# TRANSACTION_FILE: the file where IFT audit/trail transactions are stored.
+TRANSACTION_FILE = Path("tsp_transactions.csv")
+
+# PROXIES: a mapping for TSP fund proxy tickers. Adjust these as needed.
+PROXIES = {
+    "C": "IVV",   # example: S&P 500 ETF for C Fund
+    "S": "IJR",   # example: ETF for Mid/Small Cap for S Fund
+    "I": "ACWX",  # example: International ETF for I Fund
+    "F": "BND",   # example: Bond ETF for F Fund
+    "G": "GSY",   # example: Short-term T-Bill ETF for G Fund
+}
+
+# REGIME_ORDER: the order of regimes for manual override selections.
+REGIME_ORDER = ["RISK-ON OVERRIDE", "OPTIMIZED NEUTRAL", "DEFENSIVE ALLOCATION", "EMERGENCY DISPATCH"]
