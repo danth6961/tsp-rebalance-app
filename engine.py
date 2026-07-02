@@ -349,11 +349,27 @@ def determine_allocation(
         base_alloc = _regime_alloc("EMERGENCY DISPATCH")
         return base_alloc, scores, -50, "EMERGENCY DISPATCH", base_alloc, False, False
 
+    # Core regime inputs
+    pce = safe_float(data.get("core_pce_yoy"), DEFAULTS["core_pce_yoy"])
+    cape = safe_float(data.get("shiller_cape"), DEFAULTS["shiller_cape"])
+    move_index = safe_float(data.get("move_index"), DEFAULTS["move_index"])
+    bond_yield = safe_float(data.get("bond_yield_10y"), DEFAULTS["bond_yield_10y"])
+    dxy_spot = safe_float(data.get("dxy_spot"), DEFAULTS["dxy_spot"])
+    dxy_trend_up = bool(data.get("dxy_trend_up", False))
+    market_breadth = safe_float(data.get("market_breadth_pct"), DEFAULTS["market_breadth_pct"])
+    vix_3d_panic = bool(data.get("vix_3d_panic", False))
+    spx_3d_panic = bool(data.get("spx_3d_panic", False))
+
+    # Overlay inputs
+    treasury_10y_3m_spread = safe_float(data.get("treasury_10y_3m_spread"), 0.0)
+    inflation_shock = safe_float(data.get("inflation_shock"), 0.0)
+    central_bank_stance = safe_float(data.get("central_bank_stance"), 0.0)
+    liquidity_pressure = safe_float(data.get("liquidity_pressure"), 0.0)
+
     market = build_market_state(data, scores)
 
     composite_score = sum(scores.values())
     momentum_breaker = scores.get("momentum", 0) <= -3
-
     asymmetric_vol_trigger = market.asymmetric_vol
     f_fund_unlocked = market.f_unlock
     dxy_strong = market.dxy_strong
